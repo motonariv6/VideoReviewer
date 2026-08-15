@@ -60,6 +60,7 @@ const els = {
   filterSourceType: document.getElementById('filter-source-type'),
   filterAvailability: document.getElementById('filter-availability'),
   filterSort: document.getElementById('filter-sort'),
+  btnBulkDelete: document.getElementById('btn-bulk-delete'),
   addLocalFileInput: document.getElementById('library-add-file'),
   btnAddUrlModal: document.getElementById('btn-add-url-modal'),
   
@@ -221,6 +222,7 @@ function initEventListeners() {
     state.filters.sort = els.filterSort.value;
     renderLibrary();
   });
+  els.btnBulkDelete.addEventListener('click', handleBulkDelete);
   
   // Settings triggers
   els.btnSettings.addEventListener('click', openSettingsModal);
@@ -476,27 +478,8 @@ async function syncActiveDirectoryPermissions() {
   }
 }
 
-// Navigate Screen: Library (XSS Safe DOM creation)
-function renderLibrary() {
-  clearImageBlobUrls();
-
-  // Populate Tags list in filter select (XSS Safe)
-  const oldVal = els.filterTag.value;
-  els.filterTag.innerHTML = '';
-  
-  const defaultOpt = document.createElement('option');
-  defaultOpt.value = '';
-  defaultOpt.textContent = 'すべて';
-  els.filterTag.appendChild(defaultOpt);
-  
-  db.getTags().forEach(tag => {
-    const opt = document.createElement('option');
-    opt.value = tag.id;
-    opt.textContent = tag.name;
-    els.filterTag.appendChild(opt);
-  });
-  els.filterTag.value = oldVal;
-
+// Reusable helper to filter videos
+function getFilteredVideosList() {
   let videos = db.getVideos();
 
   // 1. Text Search Filter
@@ -540,8 +523,91 @@ function renderLibrary() {
 
   // 6. Availability Status Filter
   if (state.filters.availability) {
-    videos = videos.filter(v => v.availabilityStatus === state.filters.availability);
+    if (state.filters.availability === 'no-directory') {
+      videos = videos.filter(v => v.sourceType === 'directory' && !db.getDirectorySource(v.directoryId));
+    } else if (state.filters.availability === 'isolated') {
+      videos = videos.filter(v => 
+        v.availabilityStatus === 'missing' ||
+        v.availabilityStatus === 'scan-error' ||
+        v.availabilityStatus === 'unsupported' ||
+        (v.sourceType === 'directory' && !db.getDirectorySource(v.directoryId))
+      );
+    } else {
+      videos = videos.filter(v => v.availabilityStatus === state.filters.availability);
+    }
   }
+
+  return videos;
+}
+
+// Bulk delete link-broken and error videos
+async function handleBulkDelete() {
+  const availabilityFilter = els.filterAvailability.value;
+  if (!['missing', 'scan-error', 'no-directory', 'isolated'].includes(availabilityFilter)) return;
+
+  const filteredVideos = getFilteredVideosList();
+  if (filteredVideos.length === 0) return;
+
+  const confirmMsg = `表示中のリンク切れ・エラー動画 ${filteredVideos.length}本 を一括削除します。\n評価、タグ、コメント、タイムラインメモもすべて削除されます。実際の動画ファイルは削除されません。\n\n本当によろしいですか？`;
+  if (!confirm(confirmMsg)) return;
+
+  let successCount = 0;
+  let failCount = 0;
+  
+  for (const v of filteredVideos) {
+    try {
+      if (state.currentVideoId === v.id) {
+        revokeActiveBlobUrl();
+        state.activeVideoFile = null;
+      }
+      const success = await db.deleteVideoCascade(v.id);
+      if (success) {
+        state.videoFilesMap.delete(v.id);
+        successCount++;
+      } else {
+        failCount++;
+      }
+    } catch (err) {
+      console.error(`Failed to delete video ${v.id}:`, err);
+      failCount++;
+    }
+  }
+
+  showToast(`${successCount}本の動画を一覧から削除しました。実ファイルは削除されていません。`);
+  if (failCount > 0) {
+    showToast(`${failCount}本の動画の削除に失敗しました。`, 'error');
+  }
+  
+  const currentVideoStillExists = db.getVideo(state.currentVideoId);
+  if (state.currentVideoId && !currentVideoStillExists) {
+    handleBackToLibrary();
+  } else {
+    renderLibrary();
+  }
+}
+
+// Navigate Screen: Library (XSS Safe DOM creation)
+function renderLibrary() {
+  clearImageBlobUrls();
+
+  // Populate Tags list in filter select (XSS Safe)
+  const oldVal = els.filterTag.value;
+  els.filterTag.innerHTML = '';
+  
+  const defaultOpt = document.createElement('option');
+  defaultOpt.value = '';
+  defaultOpt.textContent = 'すべて';
+  els.filterTag.appendChild(defaultOpt);
+  
+  db.getTags().forEach(tag => {
+    const opt = document.createElement('option');
+    opt.value = tag.id;
+    opt.textContent = tag.name;
+    els.filterTag.appendChild(opt);
+  });
+  els.filterTag.value = oldVal;
+
+  let videos = getFilteredVideosList();
 
   // 7. Sort Videos
   videos.sort((a, b) => {
@@ -579,6 +645,16 @@ function renderLibrary() {
     return 0;
   });
 
+  // Dynamic Bulk Delete Button update
+  const availabilityFilter = els.filterAvailability.value;
+  const isIsolatedFilter = ['missing', 'scan-error', 'no-directory', 'isolated'].includes(availabilityFilter);
+  if (isIsolatedFilter && videos.length > 0) {
+    els.btnBulkDelete.classList.remove('hidden');
+    els.btnBulkDelete.textContent = `表示中の${videos.length}本を一括削除`;
+  } else {
+    els.btnBulkDelete.classList.add('hidden');
+  }
+
   // Render Grid Cards securely using DOM API (XSS Safe)
   els.videoGrid.innerHTML = '';
   if (videos.length === 0) {
@@ -609,8 +685,9 @@ function renderLibrary() {
       // Construct card securely
       const card = document.createElement('article');
       card.className = 'glass-card video-card';
-      
+
       // Bind status styles
+      const hasDirectorySource = v.sourceType === 'directory' ? !!db.getDirectorySource(v.directoryId) : true;
       if (v.availabilityStatus === 'missing') {
         card.classList.add('status-missing');
       } else if (v.availabilityStatus === 'permission-required') {
@@ -619,6 +696,8 @@ function renderLibrary() {
         card.classList.add('status-unsupported');
       } else if (v.availabilityStatus === 'scan-error') {
         card.classList.add('status-scan-error');
+      } else if (v.sourceType === 'directory' && !hasDirectorySource) {
+        card.classList.add('status-no-directory');
       }
       
       card.addEventListener('click', () => switchScreenToEditor(v.id));
@@ -641,8 +720,14 @@ function renderLibrary() {
       fallbackSvg.innerHTML = `<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />`;
       thumbDiv.appendChild(fallbackSvg);
 
-      // Status Banners on Thumbnail (Missing / Permission required / Unsupported / Scan Error)
-      if (v.availabilityStatus === 'missing') {
+      // Status Banners on Thumbnail (Missing / Permission required / Unsupported / Scan Error / No Directory)
+      if (v.sourceType === 'directory' && !hasDirectorySource) {
+        const noDirBadge = document.createElement('span');
+        noDirBadge.className = 'video-card-badge';
+        noDirBadge.style.backgroundColor = 'var(--color-error)';
+        noDirBadge.textContent = '参照フォルダなし';
+        thumbDiv.appendChild(noDirBadge);
+      } else if (v.availabilityStatus === 'missing') {
         const missingBadge = document.createElement('span');
         missingBadge.className = 'video-card-badge';
         missingBadge.style.backgroundColor = 'var(--color-error)';
@@ -684,12 +769,70 @@ function renderLibrary() {
       const bodyDiv = document.createElement('div');
       bodyDiv.className = 'video-card-body';
 
+      // Title Container to hold title text and delete button side-by-side
+      const titleContainer = document.createElement('div');
+      titleContainer.style.display = 'flex';
+      titleContainer.style.justifyContent = 'space-between';
+      titleContainer.style.alignItems = 'flex-start';
+      titleContainer.style.gap = '8px';
+
       // Title heading
       const titleH4 = document.createElement('h4');
       titleH4.className = 'video-card-title';
       titleH4.title = v.title;
       titleH4.textContent = v.title;
-      bodyDiv.appendChild(titleH4);
+      titleH4.style.flex = '1';
+      titleContainer.appendChild(titleH4);
+
+      // Card Delete Button
+      const delBtn = document.createElement('button');
+      delBtn.className = 'btn btn-icon btn-delete-card';
+      delBtn.title = 'ライブラリから削除';
+      delBtn.style.padding = '2px';
+      delBtn.style.color = 'var(--color-text-muted)';
+      delBtn.style.cursor = 'pointer';
+      delBtn.style.flexShrink = '0';
+      delBtn.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" style="width:16px;height:16px" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+      </svg>`;
+
+      // Hover styling
+      delBtn.addEventListener('mouseenter', () => { delBtn.style.color = 'var(--color-error)'; });
+      delBtn.addEventListener('mouseleave', () => { delBtn.style.color = 'var(--color-text-muted)'; });
+
+      // Click event handles cascade delete safely
+      delBtn.addEventListener('click', async (e) => {
+        e.stopPropagation(); // Avoid opening the editing workspace
+        
+        const confirmMsg = `一覧からこの動画を削除します。評価、タグ、コメント、タイムラインメモも削除されます。実際の動画ファイルは削除されません。\n\n動画: 「${v.title}」\n本当に削除しますか？`;
+        if (confirm(confirmMsg)) {
+          try {
+            if (state.currentVideoId === v.id) {
+              revokeActiveBlobUrl();
+              state.activeVideoFile = null;
+            }
+            const success = await db.deleteVideoCascade(v.id);
+            if (success) {
+              state.videoFilesMap.delete(v.id);
+              showToast('一覧から削除しました。実ファイルは削除されていません。');
+              
+              const currentVideoStillExists = db.getVideo(state.currentVideoId);
+              if (state.currentVideoId && !currentVideoStillExists) {
+                handleBackToLibrary();
+              } else {
+                renderLibrary();
+              }
+            } else {
+              showToast('動画の削除に失敗しました。', 'error');
+            }
+          } catch (err) {
+            showToast(`削除エラー: ${err.message}`, 'error');
+          }
+        }
+      });
+
+      titleContainer.appendChild(delBtn);
+      bodyDiv.appendChild(titleContainer);
 
       // Source/Path Meta details for Directory Videos
       if (v.sourceType === 'directory') {
