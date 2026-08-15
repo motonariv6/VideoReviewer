@@ -1,6 +1,7 @@
 import { AppDatabase } from './db.js';
 import { formatTime, parseTime, generateFileSignature, captureVideoFrame, validateVideoUrl, getFileHandleFromRelativePath } from './video-helper.js';
 import { RadarChart } from './radar.js';
+import { scanDirectory, classifyScanResults, applyScanDifferentials } from './directory-scanner.js';
 
 // Instantiate DB & components
 const db = new AppDatabase();
@@ -82,6 +83,8 @@ const els = {
   reconnectCard: document.getElementById('local-file-required-warning'),
   reconnectFileInput: document.getElementById('player-reconnect-file'),
   warningFileName: document.getElementById('warning-file-name'),
+  playerFolderPermissionButton: document.getElementById('player-folder-permission-button'),
+  playerFileReconnectLabel: document.getElementById('player-file-reconnect-label'),
   
   // Custom Controls
   progressBar: document.getElementById('player-progress-bar'),
@@ -178,6 +181,7 @@ function initEventListeners() {
   // Add Media
   els.addLocalFileInput.addEventListener('change', handleAddLocalFile);
   els.reconnectFileInput.addEventListener('change', handleReconnectFile);
+  els.playerFolderPermissionButton.addEventListener('click', handlePlayerFolderPermissionClick);
   els.btnAddUrlModal.addEventListener('click', () => {
     if (els.urlModalError) {
       els.urlModalError.classList.add('hidden');
@@ -248,6 +252,8 @@ function initEventListeners() {
     els.timeTotal.textContent = formatTime(els.video.duration);
   });
   els.btnFullscreen.addEventListener('click', toggleFullscreen);
+  els.video.addEventListener('error', handleVideoError);
+  els.video.addEventListener('playing', handleVideoPlaying);
   
   // Progress bar seeking
   els.progressBar.addEventListener('click', handleProgressSeek);
@@ -609,6 +615,10 @@ function renderLibrary() {
         card.classList.add('status-missing');
       } else if (v.availabilityStatus === 'permission-required') {
         card.classList.add('status-permission-required');
+      } else if (v.availabilityStatus === 'unsupported') {
+        card.classList.add('status-unsupported');
+      } else if (v.availabilityStatus === 'scan-error') {
+        card.classList.add('status-scan-error');
       }
       
       card.addEventListener('click', () => switchScreenToEditor(v.id));
@@ -631,7 +641,7 @@ function renderLibrary() {
       fallbackSvg.innerHTML = `<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />`;
       thumbDiv.appendChild(fallbackSvg);
 
-      // Status Banners on Thumbnail (Missing / Permission required)
+      // Status Banners on Thumbnail (Missing / Permission required / Unsupported / Scan Error)
       if (v.availabilityStatus === 'missing') {
         const missingBadge = document.createElement('span');
         missingBadge.className = 'video-card-badge';
@@ -644,6 +654,18 @@ function renderLibrary() {
         permBadge.style.backgroundColor = 'var(--color-warning)';
         permBadge.textContent = 'アクセス許可が必要';
         thumbDiv.appendChild(permBadge);
+      } else if (v.availabilityStatus === 'unsupported') {
+        const unsuppBadge = document.createElement('span');
+        unsuppBadge.className = 'video-card-badge';
+        unsuppBadge.style.backgroundColor = 'var(--color-text-dim)';
+        unsuppBadge.textContent = '再生非対応';
+        thumbDiv.appendChild(unsuppBadge);
+      } else if (v.availabilityStatus === 'scan-error') {
+        const scanErrBadge = document.createElement('span');
+        scanErrBadge.className = 'video-card-badge';
+        scanErrBadge.style.backgroundColor = 'var(--color-error)';
+        scanErrBadge.textContent = 'スキャンエラー';
+        thumbDiv.appendChild(scanErrBadge);
       } else if (review && review.overallGrade) {
         const gradeSpan = document.createElement('span');
         gradeSpan.className = 'video-card-badge';
@@ -860,7 +882,7 @@ function switchScreenToEditor(videoId) {
 }
 
 // Show specific errors on the player warning card
-function showFolderErrorOnPlayer(message, disableBtn = true) {
+function showFolderErrorOnPlayer(message, mode = 'none') {
   els.video.pause();
   els.video.removeAttribute('src');
   els.video.load();
@@ -870,54 +892,48 @@ function showFolderErrorOnPlayer(message, disableBtn = true) {
   els.warningFileName.textContent = message;
   els.reconnectCard.classList.remove('hidden');
   
-  // Customize button
-  const fileInputLabel = els.reconnectCard.querySelector('label');
-  if (fileInputLabel) {
-    if (disableBtn) {
-      fileInputLabel.classList.add('hidden');
-    } else {
-      fileInputLabel.classList.remove('hidden');
-    }
+  // Toggle buttons by mode without destroying innerHTML
+  if (mode === 'permission') {
+    els.playerFolderPermissionButton.classList.remove('hidden');
+    els.playerFileReconnectLabel.classList.add('hidden');
+  } else if (mode === 'reconnect') {
+    els.playerFolderPermissionButton.classList.add('hidden');
+    els.playerFileReconnectLabel.classList.remove('hidden');
+  } else {
+    els.playerFolderPermissionButton.classList.add('hidden');
+    els.playerFileReconnectLabel.classList.add('hidden');
   }
 }
 
-// Show request permission card on player warning card
-function showFolderPermissionPromptOnPlayer(directoryHandle, source) {
-  showFolderErrorOnPlayer(`動画フォルダ「${source.name}」へのアクセス権限が必要です。`, false);
+// Request permission context explicitly inside user click on the warning button
+async function handlePlayerFolderPermissionClick() {
+  if (!state.currentVideoId) return;
+  const video = db.getVideo(state.currentVideoId);
+  if (!video || video.sourceType !== 'directory') return;
   
-  // Repurpose label click to request permissions
-  const fileInputLabel = els.reconnectCard.querySelector('label');
-  const fileInput = els.reconnectFileInput;
+  const source = db.getDirectorySource(video.directoryId);
+  if (!source) return;
   
-  // Remove file selection listeners temporarily to trigger folder permission instead
-  fileInput.style.display = 'none'; // hide file input
-  fileInputLabel.style.cursor = 'pointer';
-  fileInputLabel.innerHTML = 'フォルダのアクセスを許可する';
-  
-  const grantPermissionHandler = async (e) => {
-    e.preventDefault();
-    try {
-      const status = await directoryHandle.requestPermission({ mode: 'read' });
-      if (status === 'granted') {
-        showToast('アクセスを許可しました');
-        await db.updateDirectorySource(source.id, { permissionStatus: 'granted' });
-        
-        // Restore label styling
-        fileInputLabel.innerHTML = '<input type="file" id="player-reconnect-file" accept="video/*" style="display:none">ファイルを指定して再生';
-        fileInput.style.display = '';
-        
-        // Reload video
-        const video = db.getVideo(state.currentVideoId);
-        if (video) loadVideoMediaSource(video);
-      } else {
-        showToast('アクセスが拒否されました', 'error');
-      }
-    } catch (err) {
-      showToast(`アクセス許可エラー: ${err.message}`, 'error');
+  try {
+    const handle = await db.getDirectoryHandle(source.handleKey);
+    if (!handle) return;
+    
+    const status = await handle.requestPermission({ mode: 'read' });
+    await db.updateDirectorySource(source.id, { permissionStatus: status });
+    
+    // Persist video availabilityStatus changes using DB layer
+    await db.updateDirectoryVideosAvailability(source.id, status === 'granted' ? 'available' : 'permission-required');
+    
+    if (status === 'granted') {
+      showToast('アクセスを許可しました');
+      loadVideoMediaSource(video);
+    } else {
+      showToast('アクセスが拒否されました', 'error');
+      renderLibrary();
     }
-    fileInputLabel.removeEventListener('click', grantPermissionHandler);
-  };
-  fileInputLabel.addEventListener('click', grantPermissionHandler);
+  } catch (err) {
+    showToast(`アクセス許可エラー: ${err.message}`, 'error');
+  }
 }
 
 // Load Video File / Url into HTML5 Video player (memory cleanup & folder traversal)
@@ -947,7 +963,7 @@ async function loadVideoMediaSource(video) {
       // Query active permissions
       const perm = await handle.queryPermission({ mode: 'read' });
       if (perm !== 'granted') {
-        showFolderPermissionPromptOnPlayer(handle, source);
+        showFolderErrorOnPlayer(`動画フォルダ「${source.name}」へのアクセス権限が必要です。`, 'permission');
         return;
       }
 
@@ -998,21 +1014,53 @@ async function loadVideoMediaSource(video) {
       els.video.load();
     } else {
       state.activeVideoFile = null;
-      els.warningFileName.textContent = video.fileName;
-      
-      // Reset button innerHTML to default reconnect format
-      const fileInputLabel = els.reconnectCard.querySelector('label');
-      if (fileInputLabel) {
-        fileInputLabel.innerHTML = '<input type="file" id="player-reconnect-file" accept="video/*" style="display:none">ファイルを指定して再生';
-        fileInputLabel.classList.remove('hidden');
-      }
-      els.reconnectCard.classList.remove('hidden');
+      showFolderErrorOnPlayer(video.fileName, 'reconnect');
     }
   }
 
   // Reset controls
   els.playIcon.classList.remove('hidden');
   els.pauseIcon.classList.add('hidden');
+}
+
+// Handle video loading or playback errors, updating status to unsupported if applicable
+async function handleVideoError() {
+  const error = els.video.error;
+  if (!error || !state.currentVideoId) return;
+
+  const video = db.getVideo(state.currentVideoId);
+  if (!video) return;
+
+  console.warn(`Video playback error: code ${error.code}, message: ${error.message}`);
+
+  let message = 'この動画形式またはコーデックをブラウザで再生できません。';
+  if (video.sourceType === 'directory') {
+    message += '\nファイルは存在しており、評価データも保持されています。';
+    try {
+      await db.updateVideo(video.id, { availabilityStatus: 'unsupported' });
+      renderLibrary();
+    } catch (err) {
+      console.error('Failed to update availability status to unsupported:', err);
+    }
+  }
+
+  showFolderErrorOnPlayer(message, 'none');
+}
+
+// Restore available status if video starts playing successfully
+async function handleVideoPlaying() {
+  if (!state.currentVideoId) return;
+  const video = db.getVideo(state.currentVideoId);
+  if (!video) return;
+
+  if (video.availabilityStatus === 'unsupported') {
+    try {
+      await db.updateVideo(video.id, { availabilityStatus: 'available' });
+      renderLibrary();
+    } catch (err) {
+      console.error('Failed to restore availability status to available:', err);
+    }
+  }
 }
 
 // Add Local Video File (XSS Safe & revoke Object URL after use)
@@ -1679,53 +1727,97 @@ function renderFolderSettingsPanel() {
   els.btnFolderDisconnect.classList.remove('hidden');
 }
 
-// Select a new folder on the host machine
+// Select a new folder on the host machine using a Two-Phase Commit with Rollback
 async function handleFolderSelect() {
   if (!window.showDirectoryPicker) {
     showToast('このブラウザはフォルダ選択に対応していません。', 'error');
     return;
   }
 
+  // Generate temporary key for the 2-phase verification
+  const tempUUID = Date.now().toString(36) + Math.random().toString(36).substring(2, 9);
+  const tempKey = `pending-directory-handle-${tempUUID}`;
+  let handleSavedToTemp = false;
+
   try {
     const handle = await window.showDirectoryPicker({ mode: 'read' });
     if (!handle) return;
 
-    // Check if confirming change is needed
-    const sources = db.getDirectorySources();
-    if (sources.length > 0) {
-      if (!confirm('すでに接続されているフォルダ設定があります。上書きして新しいフォルダを選択しますか？')) {
-        return;
-      }
-      // Delete old source
-      await db.deleteDirectorySource(sources[0].id);
+    // Phase 1: Try saving the new handle under a temporary key
+    await db.putDirectoryHandle(tempKey, handle);
+    handleSavedToTemp = true;
+
+    // Phase 2: Read it back to verify serialization integrity
+    const verifiedHandle = await db.getDirectoryHandle(tempKey);
+    if (!verifiedHandle) {
+      throw new Error('一時キーからのハンドルの読み戻しに失敗しました。');
     }
 
-    // Save Directory source in localStorage
+    // Phase 3: Test-read the directory to verify permissions/integrity
+    let testReadSuccess = false;
+    try {
+      const iterator = verifiedHandle.values();
+      await iterator.next();
+      testReadSuccess = true;
+    } catch (err) {
+      console.warn('Folder test read failed:', err);
+    }
+    if (!testReadSuccess) {
+      throw new Error('選択したフォルダへのアクセス権限がないか、読み取りに失敗しました。');
+    }
+
+    // Phase 4: Overwrite confirmation
+    const oldSources = db.getDirectorySources();
+    if (oldSources.length > 0) {
+      if (!confirm('すでに接続されているフォルダ設定があります。上書きして新しいフォルダを選択しますか？')) {
+        // Clean temp handle and return
+        await db.deleteDirectoryHandle(tempKey);
+        return;
+      }
+    }
+
+    // Phase 5: Commit changes to Database
     const source = await db.addDirectorySource({
       name: handle.name,
       includeSubdirectories: els.folderRecursiveCheckbox.checked
     });
 
-    // Save Handle itself in IndexedDB
+    // Copy from temporary key to permanent handle key
     await db.putDirectoryHandle(source.handleKey, handle);
     
-    // Update permission status in memory
+    // Set permission status
     const status = await handle.queryPermission({ mode: 'read' });
     await db.updateDirectorySource(source.id, { permissionStatus: status });
 
+    // Clean up temporary handle
+    await db.deleteDirectoryHandle(tempKey);
+    handleSavedToTemp = false;
+
+    // Disconnect old source if exists
+    if (oldSources.length > 0) {
+      await db.deleteDirectorySource(oldSources[0].id);
+    }
+
     showToast(`フォルダ「${handle.name}」を接続しました。`);
-    
     renderFolderSettingsPanel();
     
-    // Start initial scan
+    // Trigger initial scan
     await startFolderScanning(source, handle);
   } catch (err) {
-    // If cancelled, do not throw error UI toast
     if (err.name === 'AbortError') {
       console.log('Folder selection cancelled by user');
+      if (handleSavedToTemp) {
+        try { await db.deleteDirectoryHandle(tempKey); } catch (e) {}
+      }
       return;
     }
-    showToast(`フォルダ接続エラー: ${err.message}`, 'error');
+    
+    // Rollback: Keep old folder connection intact
+    if (handleSavedToTemp) {
+      try { await db.deleteDirectoryHandle(tempKey); } catch (e) {}
+    }
+    
+    showToast(`新しいフォルダへ切り替えられませんでした: ${err.message}`, 'error');
   }
 }
 
@@ -1744,13 +1836,8 @@ async function handleFolderRequestPermission() {
     const status = await handle.requestPermission({ mode: 'read' });
     await db.updateDirectorySource(source.id, { permissionStatus: status });
     
-    // Sync videos availabilityStatus
-    db.videos.forEach(v => {
-      if (v.sourceType === 'directory' && v.directoryId === source.id) {
-        v.availabilityStatus = (status === 'granted') ? 'available' : 'permission-required';
-      }
-    });
-    db._saveTable('videos', db.videos);
+    // Update and persist video availability statuses via public DB method
+    await db.updateDirectoryVideosAvailability(source.id, status === 'granted' ? 'available' : 'permission-required');
 
     showToast(status === 'granted' ? 'アクセス権限が許可されました。' : 'アクセス権限が拒否されました。');
     renderFolderSettingsPanel();
@@ -1777,164 +1864,72 @@ async function handleFolderRescan() {
   }
 }
 
-// Non-blocking Folder scanner recursive traversal
+// Non-blocking Folder scanner using the shared directory-scanner.js module
 async function startFolderScanning(source, handle) {
   state.scanAbort = false;
   els.scanProgressBox.classList.remove('hidden');
   els.scanProgressFiles.textContent = '0';
   els.scanProgressVideos.textContent = '0';
 
-  const videoExtensions = new Set(['mp4', 'm4v', 'mov', 'webm', 'mkv', 'avi', 'wmv']);
   const recursive = els.folderRecursiveCheckbox.checked;
-  // Update setting choice
   await db.updateDirectorySource(source.id, { includeSubdirectories: recursive });
 
-  const scannedFilesList = [];
-  const queue = [{ dirHandle: handle, relPath: '' }];
-  let checkedCount = 0;
+  // Use AbortController for cancellation support
+  const controller = new AbortController();
+  const abortListener = () => {
+    controller.abort();
+  };
+  
+  const originalScanAbort = els.btnFolderScanAbort.onclick;
+  els.btnFolderScanAbort.onclick = () => {
+    state.scanAbort = true;
+    controller.abort();
+  };
 
   try {
-    while (queue.length > 0) {
-      if (state.scanAbort) {
-        throw new Error('Scan Aborted');
+    const scanResult = await scanDirectory({
+      directoryHandle: handle,
+      recursive: recursive,
+      signal: controller.signal,
+      onProgress: ({ checkedFiles, detectedVideos }) => {
+        els.scanProgressFiles.textContent = checkedFiles.toString();
+        els.scanProgressVideos.textContent = detectedVideos.toString();
       }
+    });
 
-      const { dirHandle, relPath } = queue.shift();
-      
-      for await (const entry of dirHandle.values()) {
-        if (state.scanAbort) {
-          throw new Error('Scan Aborted');
-        }
-
-        checkedCount++;
-
-        if (entry.kind === 'file') {
-          const ext = entry.name.split('.').pop().toLowerCase();
-          if (videoExtensions.has(ext)) {
-            try {
-              const file = await entry.getFile();
-              scannedFilesList.push({
-                fileName: entry.name,
-                fileSize: file.size,
-                lastModified: file.lastModified,
-                relativePath: relPath ? `${relPath}/${entry.name}` : entry.name
-              });
-            } catch (err) {
-              console.warn(`Failed to read file metadata for ${entry.name}:`, err.message);
-              // Continue scanning others
-            }
-          }
-        } else if (entry.kind === 'directory' && recursive) {
-          queue.push({
-            dirHandle: entry,
-            relPath: relPath ? `${relPath}/${entry.name}` : entry.name
-          });
-        }
-
-        // Yield to browser UI event loop periodically
-        if (checkedCount % 20 === 0) {
-          els.scanProgressFiles.textContent = checkedCount.toString();
-          els.scanProgressVideos.textContent = scannedFilesList.length.toString();
-          await new Promise(resolve => setTimeout(resolve, 0));
-        }
-      }
-    }
-
-    // Complete scan updates and differentials
     els.scanProgressBox.classList.add('hidden');
-    
-    if (state.scanAbort) {
+
+    if (scanResult.aborted || state.scanAbort) {
       showToast('フォルダスキャンが中止されました。', 'error');
       state.scanAbort = false;
       return;
     }
 
-    // Process differentials
-    const summary = await processScanDifferentials(source.id, scannedFilesList);
-    
-    // Save last scanned timestamp
+    // Apply differentials
+    const summary = await applyScanDifferentials({
+      db,
+      directoryId: source.id,
+      scanResult,
+      recursive
+    });
+
+    // Save scan timestamp
     await db.updateDirectorySource(source.id, { lastScannedAt: new Date().toISOString() });
-    
-    // Alert summary results to user
-    alert(`スキャン完了\n\n新規：${summary.added}本\n更新：${summary.updated}本\n変更なし：${summary.unchanged}本\n見つからない：${summary.missing}本\nエラー：${summary.error}本`);
-    
+
+    alert(`スキャン完了\n\n新規：${summary.added}本\n更新：${summary.updated}本\n変更なし：${summary.unchanged}本\n見つからない：${summary.missing}本\n判定保留：${summary.pending}本\nエラー：${summary.error}件`);
+
     renderFolderSettingsPanel();
     renderLibrary();
   } catch (err) {
     els.scanProgressBox.classList.add('hidden');
-    if (err.message === 'Scan Aborted') {
+    if (err.name === 'AbortError' || state.scanAbort) {
       showToast('フォルダスキャンが中止されました。', 'error');
     } else {
       showToast(`スキャンエラー: ${err.message}`, 'error');
     }
+  } finally {
+    els.btnFolderScanAbort.onclick = originalScanAbort;
   }
-}
-
-// Compare scan results with stored DB metadata to find differentials
-async function processScanDifferentials(directoryId, scannedFiles) {
-  const existingVideos = db.getVideos().filter(v => v.sourceType === 'directory' && v.directoryId === directoryId);
-  
-  let added = 0;
-  let updated = 0;
-  let unchanged = 0;
-  let missing = 0;
-  let errorCount = 0;
-
-  const scannedPaths = new Set(scannedFiles.map(sf => sf.relativePath));
-
-  // 1. Process Scanned Files (adds or updates metadata)
-  for (const sf of scannedFiles) {
-    const matched = existingVideos.find(ev => ev.relativePath === sf.relativePath);
-    if (!matched) {
-      // New video
-      try {
-        await db.addVideo({
-          title: sf.fileName,
-          fileName: sf.fileName,
-          fileSize: sf.fileSize,
-          videoUrl: '',
-          duration: 0,
-          thumbnailBlob: null,
-          sourceType: 'directory',
-          directoryId,
-          relativePath: sf.relativePath,
-          lastModified: sf.lastModified
-        });
-        added++;
-      } catch (e) {
-        errorCount++;
-      }
-    } else {
-      // Match relative path. Check updates
-      const isModified = matched.fileSize !== sf.fileSize || matched.lastModified !== sf.lastModified;
-      if (isModified) {
-        try {
-          await db.updateVideo(matched.id, {
-            fileSize: sf.fileSize,
-            lastModified: sf.lastModified,
-            availabilityStatus: 'available'
-          });
-          updated++;
-        } catch (e) {
-          errorCount++;
-        }
-      } else {
-        // Unchanged
-        await db.updateVideo(matched.id, { availabilityStatus: 'available' });
-        unchanged++;
-      }
-    }
-  }
-
-  // 2. Process missing files (registered in DB but missing on disk)
-  for (const ev of existingVideos) {
-    if (!scannedPaths.has(ev.relativePath)) {
-      await db.updateVideo(ev.id, { availabilityStatus: 'missing' });
-      missing++;
-    }
-  }
-
-  return { added, updated, unchanged, missing, error: errorCount };
 }
 
 // Confirm Disconnect Folder Source

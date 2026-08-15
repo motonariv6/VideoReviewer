@@ -227,9 +227,12 @@
               ファイル名: <strong id="warning-file-name" style="color:var(--color-text-main)">filename.mp4</strong>
             </p>
           </div>
-          <label class="btn btn-primary" style="cursor:pointer">
+          <button id="player-folder-permission-button" class="btn btn-primary hidden">
+            フォルダのアクセスを許可する
+          </button>
+          <label id="player-file-reconnect-label" class="btn btn-primary" style="cursor:pointer">
             <input type="file" id="player-reconnect-file" accept="video/*" style="display:none">
-            ファイルを指定して再生
+            <span>ファイルを指定して再生</span>
           </label>
         </div>
 

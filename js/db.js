@@ -479,6 +479,22 @@ export class AppDatabase {
     return true;
   }
 
+  async updateDirectoryVideosAvailability(directoryId, availabilityStatus) {
+    let changed = false;
+    this.videos.forEach(v => {
+      if (v.sourceType === 'directory' && v.directoryId === directoryId) {
+        if (v.availabilityStatus !== availabilityStatus) {
+          v.availabilityStatus = availabilityStatus;
+          v.updatedAt = new Date().toISOString();
+          changed = true;
+        }
+      }
+    });
+    if (changed) {
+      this._saveTable('videos', this.videos);
+    }
+  }
+
   // --- VIDEO OPERATIONS ---
 
   getVideos() {
