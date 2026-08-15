@@ -858,6 +858,169 @@ export async function runTests() {
     }
   });
 
+  // --- GROUP 7: BACKUP/RESTORE, DISPLAY TITLE, GENRES TESTS ---
+
+  console.group('Group 7: New Features Tests');
+
+  await runTest('Display title fallback and editing constraints', async () => {
+    const memoryStorage = new MemoryStorage();
+    const testDb = new AppDatabase(memoryStorage, 'test_v7_title_');
+    await testDb.initAsync();
+
+    const video = testDb.videos[0];
+    assert(video !== undefined, 'Must have at least one sample video');
+    
+    // 2. Set custom display title
+    await testDb.updateVideo(video.id, { displayTitle: 'カスタムタイトル' });
+    
+    const updatedVideo = testDb.getVideo(video.id);
+    assert(updatedVideo.displayTitle === 'カスタムタイトル', 'Display title should be saved');
+    
+    // 3. Clear/set displayTitle to null
+    await testDb.updateVideo(video.id, { displayTitle: null });
+    const clearedVideo = testDb.getVideo(video.id);
+    assert(clearedVideo.displayTitle === null, 'Display title should be cleared');
+  });
+
+  await runTest('Genres and Genre-specific evaluation templates (CRUD & Constraints)', async () => {
+    const memoryStorage = new MemoryStorage();
+    const testDb = new AppDatabase(memoryStorage, 'test_v7_genres_');
+    await testDb.initAsync();
+
+    // 1. Default genre '一般' should be auto-created
+    const genres = testDb.getActiveGenres();
+    const defaultGenre = genres.find(g => g.id === 'genre-default');
+    assert(defaultGenre !== undefined, 'Default genre 一般 must exist');
+    assert(defaultGenre.name === '一般', 'Default genre name must be 一般');
+
+    // 2. Add a new genre
+    const newGenre = await testDb.addGenre('インタビュー');
+    assert(newGenre !== null && newGenre.name === 'インタビュー', 'Genre インタビュー should be created');
+
+    // 3. Check templates linkage
+    const templates = testDb.templates;
+    const linkedTemplate = templates.find(t => t.genreId === newGenre.id);
+    assert(linkedTemplate !== undefined, 'Genre must have an evaluation template');
+
+    // 4. Add criteria to the new genre
+    const c1 = await testDb.addCriterionToGenre(newGenre.id, '声量');
+    const c2 = await testDb.addCriterionToGenre(newGenre.id, '話すテンポ');
+    
+    const criteria = testDb.getActiveCriteriaForGenre(newGenre.id);
+    assert(criteria.length === 2, 'Should have 2 criteria added');
+    assert(criteria[0].name === '声量', 'First item name matches');
+
+    // 5. Test 6 items limit constraint
+    await testDb.addCriterionToGenre(newGenre.id, '内容');
+    await testDb.addCriterionToGenre(newGenre.id, '表現');
+    await testDb.addCriterionToGenre(newGenre.id, '表情');
+    await testDb.addCriterionToGenre(newGenre.id, '姿勢');
+
+    // Trying to add 7th active criterion should throw an error
+    let threwError = false;
+    try {
+      await testDb.addCriterionToGenre(newGenre.id, '超過項目');
+    } catch (err) {
+      threwError = true;
+    }
+    assert(threwError === true, 'Adding 7th criterion must throw an error');
+
+    // 6. Test copying criteria from another genre
+    const copyTargetGenre = await testDb.addGenre('コピー先ジャンル');
+    await testDb.copyCriteria(newGenre.id, copyTargetGenre.id);
+    const copiedCriteria = testDb.getActiveCriteriaForGenre(copyTargetGenre.id);
+    assert(copiedCriteria.length === 6, 'Copied criteria count must be 6');
+    assert(copiedCriteria[0].name === '声量', 'Copied items names match');
+  });
+
+  await runTest('DB Backup & Restore serialization and content verification', async () => {
+    const memoryStorage = new MemoryStorage();
+    const testDb = new AppDatabase(memoryStorage, 'test_v7_backup_');
+    await testDb.initAsync();
+
+    // Verify we can get all images without failure
+    const images = await testDb.getAllImages();
+    assert(Array.isArray(images), 'getAllImages must return an array');
+
+    // Add custom genre and video
+    const customGenre = await testDb.addGenre('アクション');
+    const newVideo = {
+      id: 'vid-test-back',
+      title: 'バックアップテスト動画',
+      fileName: 'back.mp4',
+      genreId: customGenre.id,
+      sourceType: 'local-file'
+    };
+    testDb.videos.push(newVideo);
+    await testDb.updateVideo(newVideo.id, {});
+
+    // Save a review
+    await testDb.saveReview(newVideo.id, {
+      overallGrade: 'A',
+      comment: '素晴らしい映像',
+      ratings: {
+        'crit-content': 5
+      }
+    });
+
+    const dbData = {
+      videos: testDb.videos,
+      rating_criteria: testDb.criteria,
+      video_reviews: testDb.reviews,
+      criterion_ratings: testDb.criterionRatings,
+      tags: testDb.tags,
+      video_tags: testDb.videoTags,
+      timeline_notes: testDb.timelineNotes,
+      directory_sources: testDb.directorySources,
+      genres: testDb.genres,
+      evaluation_templates: testDb.templates
+    };
+
+    const zip = new JSZip();
+    zip.file('manifest.json', JSON.stringify({
+      application: "VideoReviewer",
+      schemaVersion: 1,
+      createdAt: new Date().toISOString(),
+      counts: {
+        videos: testDb.videos.length,
+        reviews: testDb.reviews.length
+      }
+    }));
+    zip.file('database.json', JSON.stringify(dbData));
+
+    const contentBlob = await zip.generateAsync({ type: 'blob' });
+    assert(contentBlob !== null && contentBlob.size > 0, 'Backup ZIP should be generated');
+
+    const zipLoaded = await JSZip.loadAsync(contentBlob);
+    const dbFile = zipLoaded.file('database.json');
+    assert(dbFile !== null, 'ZIP must contain database.json');
+
+    const restoredDbData = JSON.parse(await dbFile.async('string'));
+    
+    const memoryStorage2 = new MemoryStorage();
+    const testDb2 = new AppDatabase(memoryStorage2, 'test_v7_restored_');
+    await testDb2.initAsync();
+
+    assert(testDb2.videos.length !== testDb.videos.length, 'Fresh DB should not have the new video');
+
+    // Restore tables
+    testDb2.videos = restoredDbData.videos;
+    testDb2.genres = restoredDbData.genres;
+    testDb2.templates = restoredDbData.evaluation_templates || restoredDbData.templates || [];
+    testDb2.reviews = restoredDbData.video_reviews;
+    testDb2.criterionRatings = restoredDbData.criterion_ratings;
+
+    const restoredVideo = testDb2.getVideo(newVideo.id);
+    assert(restoredVideo !== null, 'Restored database must contain our test video');
+    assert(restoredVideo.genreId === customGenre.id, 'Restored video genre link must be preserved');
+    
+    const restoredReview = testDb2.getReviewForVideo(newVideo.id);
+    assert(restoredReview !== undefined, 'Restored database must contain video reviews');
+    assert(restoredReview.overallGrade === 'A', 'Restored review overall grade matches');
+  });
+
+  console.groupEnd();
+
   console.groupEnd();
   return results;
 }

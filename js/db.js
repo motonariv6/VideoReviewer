@@ -207,6 +207,36 @@ export class IndexedDBStore {
     });
   }
 
+  getAll(customStoreName = null) {
+    const store = customStoreName || this.storeName;
+    return new Promise((resolve, reject) => {
+      if (this.initError) {
+        reject(new Error('IndexedDB is not available: ' + this.initError.message));
+        return;
+      }
+      if (!this.db) {
+        reject(new Error('Database not initialized'));
+        return;
+      }
+
+      try {
+        const tx = this.db.transaction(store, 'readonly');
+        const objectStore = tx.objectStore(store);
+        const req = objectStore.getAll();
+
+        req.onsuccess = () => {
+          resolve(req.result || []);
+        };
+
+        req.onerror = (e) => {
+          reject(new Error(`Failed to retrieve all from ${store}: ` + e.target.error?.message));
+        };
+      } catch (err) {
+        reject(err);
+      }
+    });
+  }
+
   clear() {
     return new Promise((resolve, reject) => {
       if (!this.db) {
@@ -257,6 +287,10 @@ export class AppDatabase {
     
     // Directory Sources table setup
     this.directorySources = this._loadTable('directory_sources', []);
+
+    // Genres & templates tables
+    this.genres = this._loadTable('genres', []);
+    this.templates = this._loadTable('evaluation_templates', []);
   }
 
   async initAsync() {
@@ -271,6 +305,9 @@ export class AppDatabase {
       console.warn('IndexedDB initialization failed. Images/Handles will fall back:', e.message);
       this.idbAvailable = false;
     }
+
+    // Perform genre and template migrations
+    this._migrateGenres();
 
     // sourceType property backfilling for legacy items
     let videosChanged = false;
@@ -365,6 +402,85 @@ export class AppDatabase {
       console.log('Migration to IndexedDB completed successfully.');
     } catch (err) {
       console.error('IndexedDB image migration failed. Retaining original data:', err);
+    }
+  }
+
+  _migrateGenres() {
+    if (!this.storage) return;
+
+    // 2. Find or create default genre '一般'
+    let defaultGenre = this.genres.find(g => g.id === 'genre-default' || g.isDefault);
+    if (!defaultGenre) {
+      defaultGenre = {
+        id: 'genre-default',
+        name: '一般',
+        displayOrder: 1,
+        isActive: true,
+        isDefault: true,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      };
+      this.genres.push(defaultGenre);
+      this._saveTable('genres', this.genres);
+    }
+
+    // 3. Find or create default template
+    let defaultTemplate = this.templates.find(t => t.genreId === defaultGenre.id);
+    if (!defaultTemplate) {
+      defaultTemplate = {
+        id: 'template-default',
+        genreId: defaultGenre.id,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      };
+      this.templates.push(defaultTemplate);
+      this._saveTable('evaluation_templates', this.templates);
+    }
+
+    // 4. Update existing criteria to reference default template if they have no templateId
+    let criteriaChanged = false;
+    this.criteria.forEach(c => {
+      if (!c.templateId) {
+        c.templateId = defaultTemplate.id;
+        criteriaChanged = true;
+      }
+    });
+    if (criteriaChanged) {
+      this._saveTable('rating_criteria', this.criteria);
+    }
+
+    // 5. Update existing videos to reference default genre if they have no genreId
+    let videosChanged = false;
+    this.videos.forEach(v => {
+      if (!v.genreId) {
+        v.genreId = defaultGenre.id;
+        videosChanged = true;
+      }
+    });
+    if (videosChanged) {
+      this._saveTable('videos', this.videos);
+    }
+
+    // 6. Backfill existing ratings in criterion_ratings with snapshot fields
+    let ratingsChanged = false;
+    this.criterionRatings.forEach(cr => {
+      if (!cr.genreId || !cr.criterionName) {
+        const review = this.reviews.find(r => r.id === cr.videoReviewId);
+        const videoId = review ? review.videoId : null;
+        const video = videoId ? this.getVideo(videoId) : null;
+        
+        const gId = video ? (video.genreId || defaultGenre.id) : defaultGenre.id;
+        const g = this.genres.find(genre => genre.id === gId) || defaultGenre;
+        const c = this.criteria.find(crit => crit.id === cr.criterionId);
+        
+        cr.genreId = g.id;
+        cr.genreName = g.name;
+        cr.criterionName = c ? c.name : (cr.criterionName || '不明な項目');
+        ratingsChanged = true;
+      }
+    });
+    if (ratingsChanged) {
+      this._saveTable('criterion_ratings', this.criterionRatings);
     }
   }
 
@@ -743,13 +859,24 @@ export class AppDatabase {
 
     this.criterionRatings = this.criterionRatings.filter(cr => cr.videoReviewId !== review.id);
 
+    const video = this.getVideo(videoId);
+    const genreId = video ? (video.genreId || 'genre-default') : 'genre-default';
+    const genre = this.genres.find(g => g.id === genreId);
+    const genreName = genre ? genre.name : '一般';
+
     if (ratings && typeof ratings === 'object') {
       for (const [criterionId, score] of Object.entries(ratings)) {
         if (score !== null && score !== undefined) {
+          const criterion = this.criteria.find(c => c.id === criterionId);
+          const criterionName = criterion ? criterion.name : '';
+
           this.criterionRatings.push({
             id: 'rate-' + generateUUID(),
             videoReviewId: review.id,
             criterionId,
+            criterionName,
+            genreId,
+            genreName,
             score: parseInt(score, 10),
             createdAt: now,
             updatedAt: now
@@ -898,5 +1025,190 @@ export class AppDatabase {
       await this.updateVideo(review.videoId, {});
     }
     return true;
+  }
+
+  // --- IMAGE BULK EXPORT OPERATION ---
+
+  async getAllImages() {
+    if (!this.idbAvailable) return [];
+    return await this.idb.getAll('images');
+  }
+
+  // --- GENRE OPERATIONS ---
+
+  getGenres() {
+    return this.genres.sort((a, b) => a.displayOrder - b.displayOrder);
+  }
+
+  getActiveGenres() {
+    return this.getGenres().filter(g => g.isActive);
+  }
+
+  getGenre(id) {
+    return this.genres.find(g => g.id === id);
+  }
+
+  async addGenre(name) {
+    if (!name || !name.trim()) throw new Error('ジャンル名を入力してください。');
+    const cleanName = name.trim();
+    
+    const dup = this.genres.find(g => g.name === cleanName && g.isActive);
+    if (dup) throw new Error('同名のジャンルが既に存在します。');
+
+    const maxOrder = this.genres.reduce((max, g) => Math.max(max, g.displayOrder), 0);
+    const genreId = 'genre-' + generateUUID();
+    const genre = {
+      id: genreId,
+      name: cleanName,
+      displayOrder: maxOrder + 1,
+      isActive: true,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    };
+    this.genres.push(genre);
+    this._saveTable('genres', this.genres);
+
+    const templateId = 'template-' + generateUUID();
+    const template = {
+      id: templateId,
+      genreId: genreId,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    };
+    this.templates.push(template);
+    this._saveTable('evaluation_templates', this.templates);
+
+    return genre;
+  }
+
+  async updateGenre(id, updates) {
+    const idx = this.genres.findIndex(g => g.id === id);
+    if (idx !== -1) {
+      if (updates.name) {
+        updates.name = updates.name.trim();
+        const dup = this.genres.find(g => g.id !== id && g.name === updates.name && g.isActive);
+        if (dup) throw new Error('同名のジャンルが既に存在します。');
+      }
+      this.genres[idx] = {
+        ...this.genres[idx],
+        ...updates,
+        updatedAt: new Date().toISOString()
+      };
+      this._saveTable('genres', this.genres);
+      return this.genres[idx];
+    }
+    return null;
+  }
+
+  // --- CRITERIA BY GENRE OPERATIONS ---
+
+  getCriteriaForGenre(genreId) {
+    const template = this.templates.find(t => t.genreId === genreId);
+    if (!template) return [];
+    return this.criteria
+      .filter(c => c.templateId === template.id)
+      .sort((a, b) => a.displayOrder - b.displayOrder);
+  }
+
+  getActiveCriteriaForGenre(genreId) {
+    return this.getCriteriaForGenre(genreId).filter(c => c.isActive);
+  }
+
+  async addCriterionToGenre(genreId, name) {
+    if (!name || !name.trim()) throw new Error('項目名を入力してください。');
+    const cleanName = name.trim();
+
+    const template = this.templates.find(t => t.genreId === genreId);
+    if (!template) throw new Error('ジャンルの評価テンプレートが見つかりません。');
+
+    const active = this.getActiveCriteriaForGenre(genreId);
+    if (active.length >= 6) {
+      throw new Error('評価項目は最大6項目まで登録できます。');
+    }
+
+    const dup = active.find(c => c.name === cleanName);
+    if (dup) throw new Error('同名の評価項目が既に存在します。');
+
+    const allOfTemplate = this.criteria.filter(c => c.templateId === template.id);
+    const maxOrder = allOfTemplate.reduce((max, c) => Math.max(max, c.displayOrder), 0);
+
+    const crit = {
+      id: 'crit-' + generateUUID(),
+      templateId: template.id,
+      name: cleanName,
+      displayOrder: maxOrder + 1,
+      isActive: true,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    };
+
+    this.criteria.push(crit);
+    this._saveTable('rating_criteria', this.criteria);
+    return crit;
+  }
+
+  async copyCriteria(fromGenreId, toGenreId) {
+    const fromTemplate = this.templates.find(t => t.genreId === fromGenreId);
+    const toTemplate = this.templates.find(t => t.genreId === toGenreId);
+    if (!fromTemplate || !toTemplate) throw new Error('ジャンルが見つかりません。');
+
+    const sourceCriteria = this.criteria.filter(c => c.templateId === fromTemplate.id && c.isActive);
+    if (sourceCriteria.length === 0) throw new Error('コピー元のジャンルに有効な評価項目がありません。');
+    if (sourceCriteria.length > 6) throw new Error('コピー元の評価項目が6項目を超えています。');
+
+    this.criteria.forEach(c => {
+      if (c.templateId === toTemplate.id) {
+        c.isActive = false;
+        c.updatedAt = new Date().toISOString();
+      }
+    });
+
+    const now = new Date().toISOString();
+    sourceCriteria.forEach((sc, index) => {
+      this.criteria.push({
+        id: 'crit-' + generateUUID(),
+        templateId: toTemplate.id,
+        name: sc.name,
+        displayOrder: index + 1,
+        isActive: true,
+        createdAt: now,
+        updatedAt: now
+      });
+    });
+
+    this._saveTable('rating_criteria', this.criteria);
+  }
+
+  getCriteriaForVideoReview(videoId) {
+    const video = this.getVideo(videoId);
+    if (!video) return [];
+    
+    const genreId = video.genreId || 'genre-default';
+    const template = this.templates.find(t => t.genreId === genreId);
+    const templateId = template ? template.id : null;
+    
+    const active = this.criteria.filter(c => c.templateId === templateId && c.isActive);
+    const review = this.getReviewForVideo(videoId);
+    if (!review) {
+      return active.sort((a, b) => a.displayOrder - b.displayOrder);
+    }
+    
+    const ratings = this.criterionRatings.filter(cr => cr.videoReviewId === review.id);
+    const result = [...active];
+    
+    ratings.forEach(r => {
+      const exists = result.find(c => c.id === r.criterionId);
+      if (!exists) {
+        result.push({
+          id: r.criterionId,
+          name: r.criterionName || '不明な項目',
+          isActive: false,
+          templateId: templateId,
+          displayOrder: 99
+        });
+      }
+    });
+    
+    return result.sort((a, b) => a.displayOrder - b.displayOrder);
   }
 }
