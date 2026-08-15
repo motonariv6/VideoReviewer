@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Video Review Studio - Test Runner</title>
+  <link rel="stylesheet" href="css/styles.css">
+  <style>
+    body {
+      background-color: var(--color-bg-base, #080c14);
+      font-family: var(--font-sans);
+      color: var(--color-text-main, #f8fafc);
+      padding: 40px 20px;
+    }
+    .test-container {
+      max-width: 800px;
+      margin: 0 auto;
+    }
+    .test-header {
+      margin-bottom: 30px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      border-bottom: 1px solid var(--color-border);
+      padding-bottom: 16px;
+    }
+    .test-summary-card {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 16px;
+      margin-bottom: 24px;
+    }
+    .summary-box {
+      padding: 16px;
+      border-radius: var(--radius-md, 10px);
+      text-align: center;
+      font-weight: 600;
+    }
+    .summary-box.total {
+      background-color: rgba(255, 255, 255, 0.05);
+      border: 1px solid var(--color-border);
+    }
+    .summary-box.passed {
+      background-color: rgba(16, 185, 129, 0.1);
+      border: 1px solid rgba(16, 185, 129, 0.2);
+      color: var(--color-success, #10b981);
+    }
+    .summary-box.failed {
+      background-color: rgba(244, 63, 94, 0.1);
+      border: 1px solid rgba(244, 63, 94, 0.2);
+      color: var(--color-error, #f43f5e);
+    }
+    .test-title {
+      font-size: 1.5rem;
+      font-weight: 700;
+    }
+    .test-item-card {
+      padding: 16px 20px;
+      margin-bottom: 12px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .test-item-info {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+    .test-name {
+      font-size: 0.95rem;
+      font-weight: 600;
+    }
+    .test-error-log {
+      font-family: monospace;
+      font-size: 0.8rem;
+      color: var(--color-error, #f43f5e);
+      margin-top: 4px;
+    }
+    .test-badge {
+      font-size: 0.75rem;
+      font-weight: 700;
+      padding: 4px 10px;
+      border-radius: var(--radius-full, 9999px);
+    }
+    .test-badge.passed {
+      background-color: var(--color-success, #10b981);
+      color: white;
+    }
+    .test-badge.failed {
+      background-color: var(--color-error, #f43f5e);
+      color: white;
+    }
+  </style>
+</head>
+<body>
+  <div class="test-container">
+    <div class="test-header">
+      <div>
+        <h1 class="test-title">Automated Test Runner</h1>
+        <p style="color: var(--color-text-muted); font-size: 0.875rem; margin-top: 4px;">
+          本番用localStorageデータには干渉せず、メモリ上のモックストレージ（MemoryStorage）を利用してテストを実行します。
+        </p>
+      </div>
+      <button id="btn-re-run" class="btn btn-primary">テスト再実行</button>
+    </div>
+
+    <!-- Summary box -->
+    <div class="test-summary-card">
+      <div class="summary-box total">
+        <div style="font-size: 0.8125rem; color: var(--color-text-muted); font-weight: 500;">TOTAL</div>
+        <div id="summary-total" style="font-size: 1.75rem; margin-top: 4px;">0</div>
+      </div>
+      <div class="summary-box passed">
+        <div style="font-size: 0.8125rem; font-weight: 500;">PASSED</div>
+        <div id="summary-passed" style="font-size: 1.75rem; margin-top: 4px;">0</div>
+      </div>
+      <div class="summary-box failed">
+        <div style="font-size: 0.8125rem; font-weight: 500;">FAILED</div>
+        <div id="summary-failed" style="font-size: 1.75rem; margin-top: 4px;">0</div>
+      </div>
+    </div>
+
+    <!-- Details List -->
+    <div id="test-results-list">
+      <!-- Injected test cases results cards -->
+    </div>
+  </div>
+
+  <script type="module">
+    import { runTests } from './js/tests.js';
+
+    async function executeTestSuite() {
+      const listEl = document.getElementById('test-results-list');
+      listEl.innerHTML = '<div style="text-align:center; padding: 40px; color: var(--color-text-muted)">テスト実行中...</div>';
+
+      // Reset summaries
+      document.getElementById('summary-total').textContent = '0';
+      document.getElementById('summary-passed').textContent = '0';
+      document.getElementById('summary-failed').textContent = '0';
+
+      const results = await runTests();
+      
+      listEl.innerHTML = '';
+      let passedCount = 0;
+      let failedCount = 0;
+
+      results.forEach(res => {
+        const card = document.createElement('div');
+        card.className = 'glass-card test-item-card';
+
+        const info = document.createElement('div');
+        info.className = 'test-item-info';
+
+        const nameSpan = document.createElement('span');
+        nameSpan.className = 'test-name';
+        nameSpan.textContent = res.name;
+        info.appendChild(nameSpan);
+
+        if (!res.passed) {
+          const errDiv = document.createElement('div');
+          errDiv.className = 'test-error-log';
+          errDiv.textContent = `Error: ${res.error}`;
+          info.appendChild(errDiv);
+          failedCount++;
+        } else {
+          passedCount++;
+        }
+
+        const badge = document.createElement('span');
+        badge.className = `test-badge ${res.passed ? 'passed' : 'failed'}`;
+        badge.textContent = res.passed ? 'PASSED' : 'FAILED';
+
+        card.appendChild(info);
+        card.appendChild(badge);
+        listEl.appendChild(card);
+      });
+
+      document.getElementById('summary-total').textContent = results.length.toString();
+      document.getElementById('summary-passed').textContent = passedCount.toString();
+      document.getElementById('summary-failed').textContent = failedCount.toString();
+    }
+
+    document.getElementById('btn-re-run').addEventListener('click', executeTestSuite);
+    
+    // Initial run
+    document.addEventListener('DOMContentLoaded', executeTestSuite);
+  </script>
+</body>
+</html>

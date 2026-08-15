@@ -1,5 +1,5 @@
 /**
- * Video helper utilities for timing, hashing, and Canvas screen capturing.
+ * Video helper utilities for timing, hashing, URL validation, and Canvas capturing.
  */
 
 /**
@@ -62,15 +62,15 @@ export function generateFileSignature(file) {
 }
 
 /**
- * Captures the current frame of the video and returns a base64 JPG data URL
+ * Captures the current frame of the video and returns a binary Blob of image/jpeg
  * @param {HTMLVideoElement} videoElement 
  * @param {number} targetWidth 
- * @returns {Promise<string>}
+ * @returns {Promise<Blob|null>}
  */
 export function captureVideoFrame(videoElement, targetWidth = 160) {
   return new Promise((resolve) => {
     if (!videoElement || videoElement.readyState < 2) {
-      resolve('');
+      resolve(null);
       return;
     }
     
@@ -83,20 +83,69 @@ export function captureVideoFrame(videoElement, targetWidth = 160) {
       
       const ctx = canvas.getContext('2d');
       if (!ctx) {
-        resolve('');
+        resolve(null);
         return;
       }
       
       // Draw the current video frame onto canvas
       ctx.drawImage(videoElement, 0, 0, canvas.width, canvas.height);
       
-      // Export as JPG to save space in localStorage
-      const dataUrl = canvas.toDataURL('image/jpeg', 0.6);
-      resolve(dataUrl);
+      // Export as JPG Blob
+      canvas.toBlob((blob) => {
+        resolve(blob);
+      }, 'image/jpeg', 0.6);
     } catch (error) {
-      // In case of CORS errors (tainted canvas) or other browser limits, fail gracefully
       console.warn('Could not capture video thumbnail frame:', error.message);
-      resolve('');
+      resolve(null);
     }
   });
+}
+
+/**
+ * Validates a video URL for security (http/https protocols only)
+ * @param {string} urlStr 
+ * @throws {Error} if validation fails
+ */
+export function validateVideoUrl(urlStr) {
+  const trimmed = (urlStr || '').trim();
+  if (!trimmed) {
+    throw new Error('URLを入力してください。');
+  }
+  
+  let url;
+  try {
+    url = new URL(trimmed);
+  } catch (e) {
+    throw new Error('有効なURL形式で入力してください。');
+  }
+  
+  if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+    throw new Error('http: または https: プロトコルのみ許可されています。');
+  }
+}
+
+/**
+ * Helper to convert Base64 Data URL to Blob (used for data migration)
+ * @param {string} base64DataUrl 
+ * @returns {Blob|null}
+ */
+export function base64ToBlob(base64DataUrl) {
+  if (!base64DataUrl || !base64DataUrl.startsWith('data:')) {
+    return null;
+  }
+  
+  try {
+    const parts = base64DataUrl.split(',');
+    const mime = parts[0].match(/:(.*?);/)[1];
+    const bstr = atob(parts[1]);
+    let n = bstr.length;
+    const u8arr = new Uint8Array(n);
+    while (n--) {
+      u8arr[n] = bstr.charCodeAt(n);
+    }
+    return new Blob([u8arr], { type: mime });
+  } catch (e) {
+    console.error('Failed to convert base64 to Blob:', e);
+    return null;
+  }
 }

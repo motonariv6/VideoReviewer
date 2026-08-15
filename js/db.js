@@ -1,7 +1,9 @@
 /**
- * Database abstraction layer using localStorage.
+ * Database abstraction layer using localStorage and IndexedDB.
  * Implements a relational data schema for video reviews, ratings, tags, and timeline notes.
  */
+
+import { base64ToBlob } from './video-helper.js';
 
 // Helper to generate unique IDs
 function generateUUID() {
@@ -21,7 +23,7 @@ const DEFAULT_CRITERIA = [
   { id: 'crit-replayability', name: '再視聴性', displayOrder: 6, isActive: true, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }
 ];
 
-// Sample Videos to make the app ready to run immediately
+// Sample Videos
 const SAMPLE_VIDEOS = [
   {
     id: 'vid-sample-bunny',
@@ -31,6 +33,7 @@ const SAMPLE_VIDEOS = [
     videoUrl: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4',
     duration: 596,
     thumbnailUrl: '',
+    thumbnailId: '',
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString()
   },
@@ -42,6 +45,7 @@ const SAMPLE_VIDEOS = [
     videoUrl: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/Sintel.mp4',
     duration: 52,
     thumbnailUrl: '',
+    thumbnailId: '',
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString()
   },
@@ -53,17 +57,182 @@ const SAMPLE_VIDEOS = [
     videoUrl: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/TearsOfSteel.mp4',
     duration: 734,
     thumbnailUrl: '',
+    thumbnailId: '',
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString()
   }
 ];
 
+// --- INDEXEDDB ADAPTER CLASS ---
+export class IndexedDBStore {
+  constructor(dbName = 'VideoReviewerDB', storeName = 'images', version = 1) {
+    this.dbName = dbName;
+    this.storeName = storeName;
+    this.version = version;
+    this.db = null;
+    this.initError = null;
+  }
+
+  init() {
+    return new Promise((resolve, reject) => {
+      // Check if IndexedDB is supported
+      if (typeof indexedDB === 'undefined') {
+        this.initError = new Error('IndexedDB is not supported in this browser.');
+        reject(this.initError);
+        return;
+      }
+
+      try {
+        const request = indexedDB.open(this.dbName, this.version);
+
+        request.onupgradeneeded = (e) => {
+          const db = e.target.result;
+          if (!db.objectStoreNames.contains(this.storeName)) {
+            db.createObjectStore(this.storeName, { keyPath: 'id' });
+          }
+        };
+
+        request.onsuccess = (e) => {
+          this.db = e.target.result;
+          resolve(this);
+        };
+
+        request.onerror = (e) => {
+          this.initError = new Error('IndexedDB open request failed: ' + e.target.error?.message);
+          reject(this.initError);
+        };
+      } catch (err) {
+        this.initError = err;
+        reject(err);
+      }
+    });
+  }
+
+  get(id) {
+    return new Promise((resolve, reject) => {
+      if (this.initError) {
+        reject(new Error('IndexedDB is not available: ' + this.initError.message));
+        return;
+      }
+      if (!this.db) {
+        reject(new Error('Database not initialized'));
+        return;
+      }
+
+      try {
+        const tx = this.db.transaction(this.storeName, 'readonly');
+        const store = tx.objectStore(this.storeName);
+        const req = store.get(id);
+
+        req.onsuccess = () => {
+          resolve(req.result ? req.result.data : null);
+        };
+
+        req.onerror = (e) => {
+          reject(new Error('Failed to retrieve image: ' + e.target.error?.message));
+        };
+      } catch (err) {
+        reject(err);
+      }
+    });
+  }
+
+  put(id, data) {
+    return new Promise((resolve, reject) => {
+      if (this.initError) {
+        reject(new Error('IndexedDB is not available: ' + this.initError.message));
+        return;
+      }
+      if (!this.db) {
+        reject(new Error('Database not initialized'));
+        return;
+      }
+
+      try {
+        const tx = this.db.transaction(this.storeName, 'readwrite');
+        const store = tx.objectStore(this.storeName);
+        const req = store.put({ id, data, updatedAt: new Date().toISOString() });
+
+        req.onsuccess = () => {
+          resolve();
+        };
+
+        req.onerror = (e) => {
+          reject(new Error('Failed to save image. Storage limit may have been reached: ' + e.target.error?.message));
+        };
+      } catch (err) {
+        reject(err);
+      }
+    });
+  }
+
+  delete(id) {
+    return new Promise((resolve, reject) => {
+      if (this.initError) {
+        reject(new Error('IndexedDB is not available: ' + this.initError.message));
+        return;
+      }
+      if (!this.db) {
+        reject(new Error('Database not initialized'));
+        return;
+      }
+
+      try {
+        const tx = this.db.transaction(this.storeName, 'readwrite');
+        const store = tx.objectStore(this.storeName);
+        const req = store.delete(id);
+
+        req.onsuccess = () => {
+          resolve();
+        };
+
+        req.onerror = (e) => {
+          reject(new Error('Failed to delete image: ' + e.target.error?.message));
+        };
+      } catch (err) {
+        reject(err);
+      }
+    });
+  }
+
+  clear() {
+    return new Promise((resolve, reject) => {
+      if (!this.db) {
+        reject(new Error('Database not initialized'));
+        return;
+      }
+      try {
+        const tx = this.db.transaction(this.storeName, 'readwrite');
+        const store = tx.objectStore(this.storeName);
+        const req = store.clear();
+        req.onsuccess = () => resolve();
+        req.onerror = (e) => reject(e.target.error);
+      } catch (err) {
+        reject(err);
+      }
+    });
+  }
+}
+
+// --- DATABASE LAYER ---
 export class AppDatabase {
-  constructor() {
+  /**
+   * @param {Object} storageEngine - The storage engine (defaults to localStorage)
+   * @param {string} prefix - The prefix key (defaults to 'vreview_')
+   * @param {string} idbName - The IndexedDB name (defaults to 'VideoReviewerDB')
+   */
+  constructor(storageEngine = null, prefix = 'vreview_', idbName = 'VideoReviewerDB') {
+    // Dependency injection support for tests
+    this.storage = storageEngine || (typeof localStorage !== 'undefined' ? localStorage : null);
+    this.prefix = prefix;
+    this.idbName = idbName;
+    this.idb = null;
+    this.idbAvailable = false;
+    
     this.initDatabase();
   }
 
-  // Load from localStorage or initialize with default structure
+  // Load from storage or initialize with defaults
   initDatabase() {
     this.videos = this._loadTable('videos', SAMPLE_VIDEOS);
     this.criteria = this._loadTable('rating_criteria', DEFAULT_CRITERIA);
@@ -74,11 +243,27 @@ export class AppDatabase {
     this.timelineNotes = this._loadTable('timeline_notes', []);
   }
 
-  _loadTable(key, defaults) {
+  // Initialize IndexedDB connection and run data migrations
+  async initAsync() {
+    this.idb = new IndexedDBStore(this.idbName);
     try {
-      const data = localStorage.getItem(`vreview_${key}`);
+      await this.idb.init();
+      this.idbAvailable = true;
+      
+      // Perform one-time migration from Base64 to IndexedDB Blobs
+      await this._migrateSchema();
+    } catch (e) {
+      console.warn('IndexedDB initialization failed. Images will fall back to legacy storage:', e.message);
+      this.idbAvailable = false;
+    }
+  }
+
+  _loadTable(key, defaults) {
+    if (!this.storage) return defaults;
+    try {
+      const data = this.storage.getItem(`${this.prefix}${key}`);
       if (!data) {
-        localStorage.setItem(`vreview_${key}`, JSON.stringify(defaults));
+        this.storage.setItem(`${this.prefix}${key}`, JSON.stringify(defaults));
         return defaults;
       }
       return JSON.parse(data);
@@ -89,11 +274,89 @@ export class AppDatabase {
   }
 
   _saveTable(key, data) {
+    if (!this.storage) return;
     try {
-      localStorage.setItem(`vreview_${key}`, JSON.stringify(data));
+      this.storage.setItem(`${this.prefix}${key}`, JSON.stringify(data));
     } catch (e) {
-      console.error(`Failed to save localStorage table for ${key}:`, e);
+      // Propagate localStorage QuotaExceededError
+      throw new Error(`ブラウザの保存容量上限に達したため保存できませんでした (${e.name})`);
     }
+  }
+
+  // Schema migration version 2: localStorage base64 -> IndexedDB Blobs
+  async _migrateSchema() {
+    if (!this.storage) return;
+    const versionKey = `${this.prefix}schema_version`;
+    const currentVersion = this.storage.getItem(versionKey);
+
+    if (currentVersion === '2') {
+      return; // Already migrated
+    }
+
+    console.log('Running IndexedDB image storage schema migration (v2)...');
+    
+    try {
+      // 1. Migrate Videos thumbnails
+      let videosChanged = false;
+      for (const video of this.videos) {
+        if (video.thumbnailUrl && video.thumbnailUrl.startsWith('data:image/') && !video.thumbnailId) {
+          const blob = base64ToBlob(video.thumbnailUrl);
+          if (blob) {
+            const imgId = `img-vid-${video.id}`;
+            await this.idb.put(imgId, blob);
+            video.thumbnailId = imgId;
+            videosChanged = true;
+          }
+        }
+      }
+
+      // 2. Migrate Timeline Notes screenshots
+      let notesChanged = false;
+      for (const note of this.timelineNotes) {
+        if (note.thumbnailUrl && note.thumbnailUrl.startsWith('data:image/') && !note.thumbnailId) {
+          const blob = base64ToBlob(note.thumbnailUrl);
+          if (blob) {
+            const imgId = `img-note-${note.id}`;
+            await this.idb.put(imgId, blob);
+            note.thumbnailId = imgId;
+            notesChanged = true;
+          }
+        }
+      }
+
+      // Save changes if any
+      if (videosChanged) {
+        this._saveTable('videos', this.videos);
+      }
+      if (notesChanged) {
+        this._saveTable('timeline_notes', this.timelineNotes);
+      }
+
+      // Set version
+      this.storage.setItem(versionKey, '2');
+      console.log('Migration to IndexedDB completed successfully.');
+    } catch (err) {
+      // If migration fails, keep existing base64 data intact and log error
+      console.error('IndexedDB image migration failed. Retaining original data:', err);
+    }
+  }
+
+  // --- IMAGE STORES ---
+
+  async getImage(imageId) {
+    if (!imageId) return null;
+    if (!this.idbAvailable) {
+      throw new Error('IndexedDB is not initialized or unavailable');
+    }
+    return await this.idb.get(imageId);
+  }
+
+  async putImage(imageId, imageBlob) {
+    if (!imageBlob) return;
+    if (!this.idbAvailable) {
+      throw new Error('IndexedDB is not initialized or unavailable');
+    }
+    await this.idb.put(imageId, imageBlob);
   }
 
   // --- VIDEO OPERATIONS ---
@@ -106,30 +369,44 @@ export class AppDatabase {
     return this.videos.find(v => v.id === id);
   }
 
-  addVideo({ title, fileName, fileSize, videoUrl, duration, thumbnailUrl }) {
+  async addVideo({ title, fileName, fileSize, videoUrl, duration, thumbnailBlob }) {
     // Prevent duplicates by checking fileName and fileSize
     let existing = this.videos.find(v => v.fileName === fileName && v.fileSize === fileSize);
     if (existing) {
       return existing;
     }
 
+    const id = 'vid-' + generateUUID();
     const video = {
-      id: 'vid-' + generateUUID(),
+      id,
       title: title || fileName || 'Untitled Video',
       fileName: fileName || '',
       fileSize: fileSize || 0,
       videoUrl: videoUrl || '',
       duration: duration || 0,
-      thumbnailUrl: thumbnailUrl || '',
+      thumbnailUrl: '', // base64 field stays empty for new videos
+      thumbnailId: '',
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString()
     };
+
+    if (thumbnailBlob && this.idbAvailable) {
+      try {
+        const imgId = `img-vid-${id}`;
+        await this.putImage(imgId, thumbnailBlob);
+        video.thumbnailId = imgId;
+      } catch (err) {
+        console.error('Failed to save new video thumbnail to IndexedDB:', err);
+        // We continue since the video metadata can still be added
+      }
+    }
+
     this.videos.push(video);
     this._saveTable('videos', this.videos);
     return video;
   }
 
-  updateVideo(id, updates) {
+  async updateVideo(id, updates) {
     const idx = this.videos.findIndex(v => v.id === id);
     if (idx !== -1) {
       this.videos[idx] = {
@@ -143,6 +420,17 @@ export class AppDatabase {
     return null;
   }
 
+  async updateVideoThumbnail(videoId, thumbnailBlob) {
+    const video = this.getVideo(videoId);
+    if (!video) throw new Error('Video not found');
+
+    if (thumbnailBlob && this.idbAvailable) {
+      const imgId = `img-vid-${videoId}`;
+      await this.putImage(imgId, thumbnailBlob);
+      await this.updateVideo(videoId, { thumbnailId: imgId });
+    }
+  }
+
   // --- CRITERIA OPERATIONS ---
 
   getCriteria() {
@@ -153,15 +441,13 @@ export class AppDatabase {
     return this.getCriteria().filter(c => c.isActive);
   }
 
-  addCriterion(name) {
+  async addCriterion(name) {
     const active = this.getActiveCriteria();
     if (active.length >= 6) {
       throw new Error('Maximum of 6 active criteria allowed.');
     }
 
-    // Determine displayOrder
     const maxOrder = this.criteria.reduce((max, c) => Math.max(max, c.displayOrder), 0);
-
     const crit = {
       id: 'crit-' + generateUUID(),
       name,
@@ -176,7 +462,7 @@ export class AppDatabase {
     return crit;
   }
 
-  updateCriterion(id, updates) {
+  async updateCriterion(id, updates) {
     const idx = this.criteria.findIndex(c => c.id === id);
     if (idx !== -1) {
       this.criteria[idx] = {
@@ -190,7 +476,7 @@ export class AppDatabase {
     return null;
   }
 
-  reorderCriteria(orderedIds) {
+  async reorderCriteria(orderedIds) {
     this.criteria.forEach(c => {
       const idx = orderedIds.indexOf(c.id);
       if (idx !== -1) {
@@ -201,8 +487,7 @@ export class AppDatabase {
     this._saveTable('rating_criteria', this.criteria);
   }
 
-  deleteCriterion(id) {
-    // Soft delete: set isActive to false to preserve historical scores
+  async deleteCriterion(id) {
     const crit = this.criteria.find(c => c.id === id);
     if (crit) {
       crit.isActive = false;
@@ -223,7 +508,7 @@ export class AppDatabase {
     return this.criterionRatings.filter(cr => cr.videoReviewId === reviewId);
   }
 
-  saveReview(videoId, { overallGrade, comment, ratings }) {
+  async saveReview(videoId, { overallGrade, comment, ratings }) {
     let review = this.getReviewForVideo(videoId);
     const now = new Date().toISOString();
 
@@ -246,7 +531,6 @@ export class AppDatabase {
     this._saveTable('video_reviews', this.reviews);
 
     // Save individual criteria ratings
-    // First clear old ratings for this review to prevent accumulation
     this.criterionRatings = this.criterionRatings.filter(cr => cr.videoReviewId !== review.id);
 
     if (ratings && typeof ratings === 'object') {
@@ -265,9 +549,7 @@ export class AppDatabase {
     }
 
     this._saveTable('criterion_ratings', this.criterionRatings);
-
-    // Also update the video updatedAt field
-    this.updateVideo(videoId, {});
+    await this.updateVideo(videoId, {});
 
     return review;
   }
@@ -285,13 +567,12 @@ export class AppDatabase {
     return this.tags.filter(t => associationIds.includes(t.id));
   }
 
-  addTagToVideo(videoId, tagName) {
+  async addTagToVideo(videoId, tagName) {
     const cleanedName = tagName.trim();
     if (!cleanedName) return null;
 
     const normalized = cleanedName.toLowerCase();
     
-    // Check if tag already exists in master list
     let tag = this.tags.find(t => t.normalizedName === normalized);
     if (!tag) {
       tag = {
@@ -303,25 +584,22 @@ export class AppDatabase {
       this._saveTable('tags', this.tags);
     }
 
-    // Check if video already has this tag
     const alreadyAssociated = this.videoTags.some(vt => vt.videoId === videoId && vt.tagId === tag.id);
     if (!alreadyAssociated) {
       this.videoTags.push({ videoId, tagId: tag.id });
       this._saveTable('video_tags', this.videoTags);
-      
-      // Update video timestamp
-      this.updateVideo(videoId, {});
+      await this.updateVideo(videoId, {});
     }
 
     return tag;
   }
 
-  removeTagFromVideo(videoId, tagId) {
+  async removeTagFromVideo(videoId, tagId) {
     const initialLength = this.videoTags.length;
     this.videoTags = this.videoTags.filter(vt => !(vt.videoId === videoId && vt.tagId === tagId));
     if (this.videoTags.length !== initialLength) {
       this._saveTable('video_tags', this.videoTags);
-      this.updateVideo(videoId, {});
+      await this.updateVideo(videoId, {});
       return true;
     }
     return false;
@@ -338,33 +616,40 @@ export class AppDatabase {
       .sort((a, b) => a.timestampSeconds - b.timestampSeconds);
   }
 
-  addTimelineNote(videoId, { timestampSeconds, timestampLabel, comment, thumbnailUrl }) {
+  async addTimelineNote(videoId, { timestampSeconds, timestampLabel, comment, thumbnailBlob }) {
     let review = this.getReviewForVideo(videoId);
     const now = new Date().toISOString();
     
     if (!review) {
-      // Create a review container if one doesn't exist
-      review = this.saveReview(videoId, { overallGrade: null, comment: '', ratings: {} });
+      review = await this.saveReview(videoId, { overallGrade: null, comment: '', ratings: {} });
     }
 
+    const noteId = 'note-' + generateUUID();
     const note = {
-      id: 'note-' + generateUUID(),
+      id: noteId,
       videoReviewId: review.id,
       timestampSeconds: parseFloat(timestampSeconds),
       timestampLabel: timestampLabel || '00:00',
       comment: comment || '',
-      thumbnailUrl: thumbnailUrl || '',
+      thumbnailUrl: '', // base64 stays empty
+      thumbnailId: '',
       createdAt: now,
       updatedAt: now
     };
 
+    if (thumbnailBlob && this.idbAvailable) {
+      const imgId = `img-note-${noteId}`;
+      await this.putImage(imgId, thumbnailBlob);
+      note.thumbnailId = imgId;
+    }
+
     this.timelineNotes.push(note);
     this._saveTable('timeline_notes', this.timelineNotes);
-    this.updateVideo(videoId, {});
+    await this.updateVideo(videoId, {});
     return note;
   }
 
-  updateTimelineNote(noteId, updates) {
+  async updateTimelineNote(noteId, updates) {
     const idx = this.timelineNotes.findIndex(n => n.id === noteId);
     if (idx !== -1) {
       this.timelineNotes[idx] = {
@@ -374,26 +659,34 @@ export class AppDatabase {
       };
       this._saveTable('timeline_notes', this.timelineNotes);
       
-      // Update the parent video timestamp
       const review = this.reviews.find(r => r.id === this.timelineNotes[idx].videoReviewId);
       if (review) {
-        this.updateVideo(review.videoId, {});
+        await this.updateVideo(review.videoId, {});
       }
       return this.timelineNotes[idx];
     }
     return null;
   }
 
-  deleteTimelineNote(noteId) {
+  async deleteTimelineNote(noteId) {
     const note = this.timelineNotes.find(n => n.id === noteId);
     if (!note) return false;
 
     this.timelineNotes = this.timelineNotes.filter(n => n.id !== noteId);
     this._saveTable('timeline_notes', this.timelineNotes);
 
+    // Also delete binary image if available in IndexedDB
+    if (note.thumbnailId && this.idbAvailable) {
+      try {
+        await this.idb.delete(note.thumbnailId);
+      } catch (err) {
+        console.error('Failed to delete timeline note screenshot from IndexedDB:', err);
+      }
+    }
+
     const review = this.reviews.find(r => r.id === note.videoReviewId);
     if (review) {
-      this.updateVideo(review.videoId, {});
+      await this.updateVideo(review.videoId, {});
     }
     return true;
   }
