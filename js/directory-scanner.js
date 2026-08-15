@@ -24,7 +24,7 @@ export function isPathCoveredByFailedDirectory(path, failedDirectories) {
   if (!failedDirectories || failedDirectories.length === 0) return false;
   return failedDirectories.some(fd => {
     const fdPath = fd.relativePath;
-    if (!fdPath) return false;
+    if (fdPath === '') return true; // Root failure covers all paths!
     return path === fdPath || path.startsWith(fdPath + '/');
   });
 }
@@ -57,6 +57,7 @@ export async function scanDirectory({ directoryHandle, recursive = true, signal 
   const failedFiles = [];
   const failedDirectories = [];
   let aborted = false;
+  let scanCompleted = true;
   let checkedFilesCount = 0;
 
   const queue = [{ dirHandle: directoryHandle, relPath: '' }];
@@ -75,10 +76,13 @@ export async function scanDirectory({ directoryHandle, recursive = true, signal 
         iterator = dirHandle.values();
       } catch (err) {
         failedDirectories.push({
-          relativePath: relPath || dirHandle.name,
+          relativePath: relPath, // relativePath is '' for root folder failures
           errorName: err.name,
           errorMessage: err.message
         });
+        if (relPath === '') {
+          scanCompleted = false; // Root traversal failed
+        }
         continue;
       }
 
@@ -128,17 +132,26 @@ export async function scanDirectory({ directoryHandle, recursive = true, signal 
           errorName: err.name,
           errorMessage: err.message
         });
+        if (relPath === '') {
+          scanCompleted = false; // Root traversal failed
+        }
       }
     }
   } catch (err) {
     console.error('Directory scanner encountered unexpected error:', err);
+    scanCompleted = false;
+  }
+
+  // If root walk failed, scan is considered incomplete
+  if (failedDirectories.some(fd => fd.relativePath === '')) {
+    scanCompleted = false;
   }
 
   return {
     scannedFiles,
     failedFiles,
     failedDirectories,
-    completed: !aborted,
+    completed: scanCompleted && !aborted,
     aborted
   };
 }
@@ -159,6 +172,11 @@ export function classifyScanResults({ existingVideos, scannedFiles, failedFiles,
   let unchanged = 0;
   let missing = 0;
   let pending = 0;
+
+  const isRootFailed = failedDirectories.some(fd => fd.relativePath === '');
+  if (isRootFailed) {
+    return { added: 0, updated: 0, unchanged: 0, missing: 0, pending: existingVideos.length };
+  }
 
   const scannedPaths = new Set(scannedFiles.map(sf => sf.relativePath));
 
@@ -183,7 +201,7 @@ export function classifyScanResults({ existingVideos, scannedFiles, failedFiles,
 
     const isFailedFile = failedFiles.some(ff => ff.relativePath === ev.relativePath);
     const isFailedDir = isPathCoveredByFailedDirectory(ev.relativePath, failedDirectories);
-    const inScope = isPathInScope(ev.relativePath, recursive);
+    const inScope = !ev.relativePath.includes('/') || recursive;
 
     if (inScope && !isFailedFile && !isFailedDir) {
       missing++;
@@ -206,12 +224,25 @@ export function classifyScanResults({ existingVideos, scannedFiles, failedFiles,
  */
 export async function applyScanDifferentials({ db, directoryId, scanResult, recursive = true }) {
   const { scannedFiles, failedFiles, failedDirectories, completed, aborted } = scanResult;
+  const existingVideos = db.getVideos().filter(v => v.sourceType === 'directory' && v.directoryId === directoryId);
+  
+  const isRootFailed = failedDirectories.some(fd => fd.relativePath === '');
 
-  if (aborted || !completed) {
-    return { added: 0, updated: 0, unchanged: 0, missing: 0, pending: 0, error: failedFiles.length + failedDirectories.length };
+  // If root walk failed, abort diff additions and set all to scan-error status
+  if (aborted || !completed || isRootFailed) {
+    for (const ev of existingVideos) {
+      await db.updateVideo(ev.id, { availabilityStatus: 'scan-error' });
+    }
+    return { 
+      added: 0, 
+      updated: 0, 
+      unchanged: 0, 
+      missing: 0, 
+      pending: existingVideos.length, 
+      error: failedFiles.length + failedDirectories.length 
+    };
   }
 
-  const existingVideos = db.getVideos().filter(v => v.sourceType === 'directory' && v.directoryId === directoryId);
   const scannedPaths = new Set(scannedFiles.map(sf => sf.relativePath));
 
   let added = 0;

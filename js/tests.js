@@ -300,6 +300,76 @@ export async function runTests() {
     assert(abortSummary.added === 0 && abortSummary.missing === 0, 'No modifications should trigger on aborted scans');
   });
 
+  // --- GROUP 2.5: ROOT SCAN FAILURE TESTS ---
+
+  await runTest('Root directory scan failure safety rules', async () => {
+    // 1. Root handle throws values() error
+    const brokenRootDir = new MockFileSystemDirectoryHandle('root');
+    brokenRootDir._shouldFail = true; // values() fails immediately at root level
+
+    const scanResult = await scanDirectory({
+      directoryHandle: brokenRootDir,
+      recursive: true
+    });
+
+    // 4. Verify scan is treated as incomplete/failed
+    assert(scanResult.completed === false, 'Completed status must be false when root directory walk fails');
+    assert(scanResult.failedDirectories.length === 1, 'Should record 1 failed directory');
+    assert(scanResult.failedDirectories[0].relativePath === '', 'Root directory relativePath failure is saved as empty string');
+
+    // Setup mock Database and existing video items
+    const memory = new MemoryStorage();
+    const testDb = new AppDatabase(memory, 'test_vreview_err_', 'TestVideoDB_RootScanError');
+    await testDb.initAsync();
+    const dirId = 'dir-root-error-id';
+
+    const vid1 = await testDb.addVideo({
+      title: 'movie1.mp4',
+      fileName: 'movie1.mp4',
+      sourceType: 'directory',
+      directoryId: dirId,
+      relativePath: 'movie1.mp4',
+      availabilityStatus: 'available'
+    });
+
+    const vid2 = await testDb.addVideo({
+      title: 'movie2.mp4',
+      fileName: 'movie2.mp4',
+      sourceType: 'directory',
+      directoryId: dirId,
+      relativePath: 'movie2.mp4',
+      availabilityStatus: 'available'
+    });
+
+    // Test pure classification
+    const existingVideos = testDb.getVideos().filter(v => v.sourceType === 'directory' && v.directoryId === dirId);
+    const classified = classifyScanResults({
+      existingVideos,
+      scannedFiles: scanResult.scannedFiles,
+      failedFiles: scanResult.failedFiles,
+      failedDirectories: scanResult.failedDirectories,
+      recursive: true
+    });
+
+    assert(classified.missing === 0, 'No videos should be classified as missing when root fails');
+    assert(classified.pending === 2, 'All videos should remain pending');
+
+    // 2 & 3. Run applyScanDifferentials and verify availabilityStatus
+    const summary = await applyScanDifferentials({
+      db: testDb,
+      directoryId: dirId,
+      scanResult,
+      recursive: true
+    });
+
+    assert(summary.missing === 0, 'No videos must be marked as missing on root failures');
+    assert(summary.pending === 2, 'All videos should be counted as pending');
+    
+    // Verify status updated to scan-error in DB
+    assert(testDb.getVideo(vid1.id).availabilityStatus === 'scan-error', 'Video 1 must become scan-error');
+    assert(testDb.getVideo(vid2.id).availabilityStatus === 'scan-error', 'Video 2 must become scan-error');
+  });
+
   // --- GROUP 3: FOLDER SWITCHING TWO-PHASE COMMIT (13-17) ---
 
   await runTest('13-17. Folder switching transaction commit and rollback', async () => {
