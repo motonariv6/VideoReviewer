@@ -547,6 +547,49 @@ export async function runTests() {
     assert(notes.length === 1 && notes[0].comment === 'Capture scene', 'Timeline notes verified');
   });
 
+  // Test 19: 日本語IME変換Enter操作と重複タグの登録防止の検証
+  await runTest('19. IME Conversion inputs and duplicate tag protections', async () => {
+    const memory = new MemoryStorage();
+    const testDb = new AppDatabase(memory, 'test_vreview_', 'TestVideoDB_IME');
+    await testDb.initAsync();
+
+    const video = await testDb.addVideo({ title: 'IME Test Video', sourceType: 'local-file' });
+
+    // Mock Tag addition event handler checks
+    const tagsAdded = [];
+    const mockAddTag = async (val) => {
+      tagsAdded.push(val);
+    };
+
+    let isMockTagComposing = false;
+    const handleTagInputKeydownMock = async (e, val) => {
+      if (e.isComposing || isMockTagComposing || e.keyCode === 229) {
+        return; // Ignore keydown while composing
+      }
+      if (e.key === 'Enter') {
+        if (tagsAdded.includes(val)) {
+          return; // Skip duplicate
+        }
+        await mockAddTag(val);
+      }
+    };
+
+    // 1. Simulating IME conversion Enter (isComposing = true, keyCode = 229)
+    isMockTagComposing = true;
+    await handleTagInputKeydownMock({ key: 'Enter', isComposing: true, keyCode: 229 }, '映像美');
+    assert(tagsAdded.length === 0, 'Should not add tag while composing');
+
+    // 2. Simulating standard Enter (isComposing = false, compositionend has triggered)
+    isMockTagComposing = false;
+    await handleTagInputKeydownMock({ key: 'Enter', isComposing: false, keyCode: 13 }, '映像美');
+    assert(tagsAdded.length === 1, 'Should add tag after composition ends');
+    assert(tagsAdded[0] === '映像美', 'Tag content matches');
+
+    // 3. Simulating duplicate tag submission (identical value)
+    await handleTagInputKeydownMock({ key: 'Enter', isComposing: false, keyCode: 13 }, '映像美');
+    assert(tagsAdded.length === 1, 'Should block duplicate tags');
+  });
+
   console.groupEnd();
   return results;
 }

@@ -6,6 +6,12 @@ import { RadarChart } from './radar.js';
 const db = new AppDatabase();
 let radar;
 
+// IME Composition State Tracking
+let isTagInputComposing = false;
+let isTimelineCommentComposing = false;
+let isSettingsNewNameComposing = false;
+let isFilterSearchComposing = false;
+
 // Application State
 const state = {
   currentView: 'library', // 'library' | 'editor'
@@ -266,7 +272,13 @@ function initEventListeners() {
     updateRadar();
   });
   
-  // Tags Input
+  // Tags Input composition tracking
+  els.tagInputField.addEventListener('compositionstart', () => {
+    isTagInputComposing = true;
+  });
+  els.tagInputField.addEventListener('compositionend', () => {
+    isTagInputComposing = false;
+  });
   els.tagInputField.addEventListener('keydown', handleTagInputKeydown);
   els.tagInputField.addEventListener('input', handleTagInputAutocomplete);
   document.addEventListener('click', (e) => {
@@ -278,12 +290,55 @@ function initEventListeners() {
   // Comments and ratings changes mark dirty
   els.commentEditor.addEventListener('input', markDirty);
   
-  // Timeline capturing & adding
+  // Timeline capturing & adding composition tracking
+  els.timelineCommentField.addEventListener('compositionstart', () => {
+    isTimelineCommentComposing = true;
+  });
+  els.timelineCommentField.addEventListener('compositionend', () => {
+    isTimelineCommentComposing = false;
+  });
   els.btnTimelineCapture.addEventListener('click', captureTimelineTimestamp);
   els.btnTimelineAddNote.addEventListener('click', addTimelineNote);
   els.timelineCommentField.addEventListener('keydown', (e) => {
+    if (e.isComposing || isTimelineCommentComposing || e.keyCode === 229) {
+      return;
+    }
     if (e.key === 'Enter') {
+      e.preventDefault();
       addTimelineNote();
+    }
+  });
+
+  // Criteria input composition tracking (Settings modal)
+  els.settingsNewNameInput.addEventListener('compositionstart', () => {
+    isSettingsNewNameComposing = true;
+  });
+  els.settingsNewNameInput.addEventListener('compositionend', () => {
+    isSettingsNewNameComposing = false;
+  });
+  els.settingsNewNameInput.addEventListener('keydown', (e) => {
+    if (e.isComposing || isSettingsNewNameComposing || e.keyCode === 229) {
+      return;
+    }
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      handleSettingsAddCriterion();
+    }
+  });
+
+  // Filter search composition tracking
+  els.filterSearch.addEventListener('compositionstart', () => {
+    isFilterSearchComposing = true;
+  });
+  els.filterSearch.addEventListener('compositionend', () => {
+    isFilterSearchComposing = false;
+  });
+  els.filterSearch.addEventListener('keydown', (e) => {
+    if (e.isComposing || isFilterSearchComposing || e.keyCode === 229) {
+      return;
+    }
+    if (e.key === 'Enter') {
+      e.preventDefault();
     }
   });
   
@@ -1325,11 +1380,23 @@ function handleTagInputAutocomplete() {
 
 // Handle enter button inside tag input field
 async function handleTagInputKeydown(e) {
+  if (e.isComposing || isTagInputComposing || e.keyCode === 229) {
+    return;
+  }
   if (e.key === 'Enter') {
     e.preventDefault();
     const val = els.tagInputField.value.trim();
     if (val && state.currentVideoId) {
       try {
+        // Prevent duplicate tag assignment
+        const existingTags = db.getVideoTags(state.currentVideoId);
+        if (existingTags.some(t => t.name.toLowerCase() === val.toLowerCase())) {
+          showToast('このタグは既に追加されています', 'error');
+          els.tagInputField.value = '';
+          els.tagAutocomplete.classList.add('hidden');
+          return;
+        }
+
         await db.addTagToVideo(state.currentVideoId, val);
         els.tagInputField.value = '';
         els.tagAutocomplete.classList.add('hidden');
@@ -2116,6 +2183,10 @@ function toggleFullscreen() {
 }
 
 function handleKeyboardShortcuts(e) {
+  if (e.isComposing || e.keyCode === 229) {
+    return;
+  }
+
   const tag = document.activeElement.tagName.toLowerCase();
   const isInput = tag === 'input' || tag === 'textarea' || document.activeElement.hasAttribute('contenteditable');
   if (isInput) return;
