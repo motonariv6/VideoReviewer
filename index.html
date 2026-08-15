@@ -1,0 +1,449 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Video Review Studio - 動画評価＆タイムライン注釈ツール</title>
+  <link rel="stylesheet" href="css/styles.css">
+</head>
+<body>
+
+  <!-- Header Section -->
+  <header class="glass-panel">
+    <div class="logo-container">
+      <!-- Film Roll SVG Logo -->
+      <svg class="logo-icon" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 4v16M17 4v16M3 8h4m10 0h4M3 12h18M3 16h4m10 0h4M4 20h16a1 1 0 001-1V5a1 1 0 00-1-1H4a1 1 0 00-1 1v14a1 1 0 001 1z" />
+      </svg>
+      <span class="logo-text">Video Review Studio</span>
+    </div>
+    <div class="header-actions">
+      <button id="header-btn-library" class="btn btn-secondary hidden">
+        <svg xmlns="http://www.w3.org/2000/svg" style="width:16px;height:16px" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16" />
+        </svg>
+        動画一覧に戻る
+      </button>
+      <button id="header-btn-settings" class="btn btn-secondary">
+        <svg xmlns="http://www.w3.org/2000/svg" style="width:16px;height:16px" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+        </svg>
+        評価項目設定
+      </button>
+    </div>
+  </header>
+
+  <div class="app-content">
+
+    <!-- ==============================================
+         SCREEN 1: Video Library Grid (Default Screen)
+         ============================================== -->
+    <main id="view-library" class="screen-library">
+      <div class="library-header-bar">
+        <div>
+          <h2>動画ライブラリ</h2>
+          <p style="color:var(--color-text-muted);font-size:0.875rem;margin-top:4px">登録動画の再生と評価データ管理を行います</p>
+        </div>
+        <div style="display:flex;gap:12px">
+          <!-- Local Video File Input Form Trigger -->
+          <label class="btn btn-primary" style="cursor:pointer">
+            <input type="file" id="library-add-file" accept="video/*" style="display:none">
+            <svg xmlns="http://www.w3.org/2000/svg" style="width:16px;height:16px" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" />
+            </svg>
+            ローカル動画を追加
+          </label>
+          <button id="btn-add-url-modal" class="btn btn-secondary">
+            <svg xmlns="http://www.w3.org/2000/svg" style="width:16px;height:16px" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" />
+            </svg>
+            URL動画を追加
+          </button>
+        </div>
+      </div>
+
+      <!-- Search & Filters Container -->
+      <section class="glass-panel filter-bar">
+        <div class="input-group">
+          <label class="input-label" for="filter-search">タイトル検索</label>
+          <input type="text" id="filter-search" class="form-input" placeholder="動画タイトル...">
+        </div>
+        <div class="input-group">
+          <label class="input-label" for="filter-tag">タグ絞り込み</label>
+          <select id="filter-tag" class="form-input">
+            <option value="">すべて</option>
+          </select>
+        </div>
+        <div class="input-group">
+          <label class="input-label" for="filter-grade">総合評価</label>
+          <select id="filter-grade" class="form-input">
+            <option value="">すべて</option>
+            <option value="A">A (最高)</option>
+            <option value="B">B</option>
+            <option value="C">C</option>
+            <option value="D">D</option>
+            <option value="E">E (最低)</option>
+            <option value="unrated">未評価</option>
+          </select>
+        </div>
+        <div class="input-group">
+          <label class="input-label" for="filter-review-status">評価ステータス</label>
+          <select id="filter-review-status" class="form-input">
+            <option value="">すべて</option>
+            <option value="rated">評価済み</option>
+            <option value="unrated">未評価 (項目・総合とも無し)</option>
+          </select>
+        </div>
+        <div class="input-group">
+          <label class="input-label" for="filter-sort">並べ替え</label>
+          <select id="filter-sort" class="form-input">
+            <option value="updatedAt-desc">更新日時が新しい順</option>
+            <option value="updatedAt-asc">更新日時が古い順</option>
+            <option value="title-asc">タイトル (A-Z/五十音順)</option>
+            <option value="grade-desc">総合評価の高い順</option>
+            <option value="avgRating-desc">個別評価平均の高い順</option>
+          </select>
+        </div>
+      </section>
+
+      <!-- Video Grid List -->
+      <section id="video-grid" class="video-grid">
+        <!-- Dynamic card elements generated by app.js will render here -->
+      </section>
+      
+      <!-- Empty Library State -->
+      <div id="library-empty" class="hidden" style="text-align:center;padding:60px 20px;color:var(--color-text-muted)">
+        <svg xmlns="http://www.w3.org/2000/svg" style="width:64px;height:64px;color:var(--color-text-dim);margin:0 auto 16px" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M7 4v16M17 4v16M3 8h4m10 0h4M3 12h18M3 16h4m10 0h4M4 20h16a1 1 0 001-1V5a1 1 0 00-1-1H4a1 1 0 00-1 1v14a1 1 0 001 1z" />
+        </svg>
+        <h3>登録されている動画がありません</h3>
+        <p style="font-size:0.875rem;margin-top:8px">上のボタンからローカル動画ファイル、またはサンプルURL動画を追加してください。</p>
+      </div>
+    </main>
+
+    <!-- ==============================================
+         SCREEN 2: Dual Column Review Workspace (Editor)
+         ============================================== -->
+    <main id="view-editor" class="screen-editor hidden">
+      <!-- Left Column: Video and Basic Controls -->
+      <div class="editor-left-pane">
+        <div class="pane-nav-bar">
+          <div class="video-title-area">
+            <button id="editor-btn-back" class="btn btn-icon" title="動画一覧へ戻る">
+              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 19l-7-7m0 0l7-7m-7 7h18" />
+              </svg>
+            </button>
+            <h3 id="editor-video-title" class="video-title-heading">動画タイトル...</h3>
+          </div>
+          <div class="player-nav-buttons">
+            <button id="player-btn-prev" class="btn btn-secondary" title="前の動画">前の動画</button>
+            <button id="player-btn-next" class="btn btn-secondary" title="次の動画">次の動画</button>
+          </div>
+        </div>
+
+        <!-- Video Frame Sandbox -->
+        <div class="player-container">
+          <video id="video-element" class="player-video" preload="metadata"></video>
+          
+          <!-- Custom Control Bar Overlay -->
+          <div class="player-controls">
+            <div id="player-progress-bar" class="controls-progress-bar-container">
+              <div class="controls-progress-bg">
+                <div id="player-progress-load" class="controls-progress-load" style="width: 0%"></div>
+                <div id="player-progress-fill" class="controls-progress-fill" style="width: 0%"></div>
+                <div id="player-progress-handle" class="controls-progress-handle" style="left: 0%"></div>
+              </div>
+            </div>
+            <div class="controls-row">
+              <div class="controls-left">
+                <button id="player-btn-play" class="control-btn" title="再生 (Space)">
+                  <!-- Play Icon -->
+                  <svg id="play-icon" xmlns="http://www.w3.org/2000/svg" fill="currentColor" viewBox="0 0 24 24">
+                    <path d="M8 5v14l11-7z" />
+                  </svg>
+                  <!-- Pause Icon -->
+                  <svg id="pause-icon" class="hidden" xmlns="http://www.w3.org/2000/svg" fill="currentColor" viewBox="0 0 24 24">
+                    <path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z" />
+                  </svg>
+                </button>
+                <div class="volume-container">
+                  <button id="player-btn-mute" class="control-btn" title="ミュート (M)">
+                    <!-- Speaker Low Icon -->
+                    <svg id="mute-icon-off" xmlns="http://www.w3.org/2000/svg" fill="currentColor" viewBox="0 0 24 24">
+                      <path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02z" />
+                    </svg>
+                    <!-- Speaker Mute Icon -->
+                    <svg id="mute-icon-on" class="hidden" xmlns="http://www.w3.org/2000/svg" fill="currentColor" viewBox="0 0 24 24">
+                      <path d="M16.5 12c0-1.77-1.02-3.29-2.5-4.03v2.21l2.45 2.45c.03-.21.05-.42.05-.63zm2.5 0c0 .94-.2 1.82-.54 2.64l1.51 1.51C20.63 14.91 21 13.5 21 12c0-4.28-2.99-7.86-7-8.77v2.06c2.89.86 5 3.54 5 6.71zM4.27 3L3 4.27 7.73 9H3v6h4l5 5v-6.73l4.25 4.25c-.67.52-1.42.93-2.25 1.18v2.06c1.38-.31 2.63-.95 3.69-1.81L19.73 21 21 19.73l-9-9L4.27 3zM12 4L9.91 6.09 12 8.18V4z" />
+                    </svg>
+                  </button>
+                  <input type="range" id="player-volume-slider" class="volume-slider" min="0" max="1" step="0.05" value="0.8">
+                </div>
+                <div class="time-display">
+                  <span id="player-time-current">00:00</span> / <span id="player-time-total">00:00</span>
+                </div>
+              </div>
+              <div class="controls-right">
+                <button id="player-btn-fullscreen" class="control-btn" title="全画面表示">
+                  <svg xmlns="http://www.w3.org/2000/svg" fill="currentColor" viewBox="0 0 24 24">
+                    <path d="M7 14H5v5h5v-2H7v-3zm-2-4h2V7h3V5H5v5zm12 7h-3v2h5v-5h-2v3zM14 5v2h3v3h2V5h-5z" />
+                  </svg>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Reload Local File Prompt (Rendered if file reference object is lost) -->
+        <div id="local-file-required-warning" class="glass-card local-file-prompt-card hidden">
+          <svg class="local-file-icon" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+          </svg>
+          <div>
+            <h4 style="color:var(--color-warning)">ローカル動画ファイルを再接続してください</h4>
+            <p style="color:var(--color-text-muted);font-size:0.875rem;margin-top:6px">
+              セキュリティ制限のため、ページ読み込み後はファイルを再度指定する必要があります。<br>
+              ファイル名: <strong id="warning-file-name" style="color:var(--color-text-main)">filename.mp4</strong>
+            </p>
+          </div>
+          <label class="btn btn-primary" style="cursor:pointer">
+            <input type="file" id="player-reconnect-file" accept="video/*" style="display:none">
+            ファイルを指定して再生
+          </label>
+        </div>
+
+        <!-- Details & Stats block -->
+        <div class="glass-card" style="padding:16px 20px;font-size:0.8125rem;color:var(--color-text-muted)">
+          <div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:8px">
+            <div>ファイル名: <span id="info-file-name" style="color:var(--color-text-main)">-</span></div>
+            <div>サイズ: <span id="info-file-size" style="color:var(--color-text-main)">-</span></div>
+            <div>再生時間: <span id="info-duration" style="color:var(--color-text-main)">-</span></div>
+          </div>
+        </div>
+
+        <!-- Shortcuts Help Info Card -->
+        <div class="glass-card shortcuts-helper-card">
+          <h4 style="font-size:0.875rem;display:flex;align-items:center;gap:6px">
+            <svg xmlns="http://www.w3.org/2000/svg" style="width:16px;height:16px;color:var(--color-primary)" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+            キーボードショートカット
+          </h4>
+          <div class="shortcuts-grid">
+            <div class="shortcut-item">
+              <span>再生 / 一時停止</span>
+              <kbd class="shortcut-key">Space</kbd>
+            </div>
+            <div class="shortcut-item">
+              <span>5秒戻る / 進む</span>
+              <kbd class="shortcut-key">← / →</kbd>
+            </div>
+            <div class="shortcut-item">
+              <span>10秒戻る / 進む</span>
+              <kbd class="shortcut-key">Shift + ← / →</kbd>
+            </div>
+            <div class="shortcut-item">
+              <span>ミュートの切替</span>
+              <kbd class="shortcut-key">M</kbd>
+            </div>
+            <div class="shortcut-item">
+              <span>現在時刻の引用</span>
+              <kbd class="shortcut-key">T</kbd>
+            </div>
+            <div class="shortcut-item">
+              <span>評価の保存</span>
+              <kbd class="shortcut-key">Ctrl / Cmd + S</kbd>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Right Column: Evaluation Editor Panel -->
+      <div class="editor-right-pane">
+        <div class="right-pane-scroll-container">
+          
+          <!-- 1. Overall Evaluation Grade -->
+          <div class="editor-section">
+            <label class="editor-section-title">1. 総合評価</label>
+            <div class="grade-selector-group">
+              <button class="grade-btn" data-grade="A">A</button>
+              <button class="grade-btn" data-grade="B">B</button>
+              <button class="grade-btn" data-grade="C">C</button>
+              <button class="grade-btn" data-grade="D">D</button>
+              <button class="grade-btn" data-grade="E">E</button>
+              <button id="btn-grade-clear" class="btn btn-secondary grade-btn-clear" title="クリア">クリア</button>
+            </div>
+          </div>
+
+          <!-- 2. Individual Star Criteria Ratings -->
+          <div class="editor-section">
+            <label class="editor-section-title">2. 個別評価</label>
+            <div id="criteria-ratings-panel" class="criteria-ratings-panel">
+              <!-- Star rating elements will be injected here by app.js -->
+            </div>
+          </div>
+
+          <!-- 3. Radar Chart Representation -->
+          <div class="editor-section">
+            <label class="editor-section-title">3. レーダーチャート</label>
+            <div id="radar-chart-container" class="radar-chart-container">
+              <!-- SVG Radar is injected here -->
+            </div>
+          </div>
+
+          <!-- 4. Tags Manager -->
+          <div class="editor-section">
+            <label class="editor-section-title">4. タグ</label>
+            <div class="tags-widget-container">
+              <div id="tags-chips-list" class="tags-chips-list">
+                <!-- Tag chips render here -->
+              </div>
+              <div class="tag-input-box-wrapper">
+                <input type="text" id="tag-input-field" class="form-input" style="width:100%" placeholder="タグ名を入力してEnterで追加...">
+                <!-- Suggestions Dropdown -->
+                <div id="tag-autocomplete-dropdown" class="tag-autocomplete-dropdown glass-panel hidden">
+                  <!-- autocomplete suggestions injected here -->
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- 5. Timeline Comments & Annotations -->
+          <div class="editor-section">
+            <label class="editor-section-title">5. コメント ＆ タイムライン引用</label>
+            
+            <div style="display:flex;flex-direction:column;gap:8px">
+              <label class="input-label">全体コメント</label>
+              <textarea id="comment-editor" class="form-input comment-editor-textarea" placeholder="動画全体の評価コメントやメモを記載..."></textarea>
+            </div>
+
+            <div style="display:flex;flex-direction:column;gap:12px;margin-top:12px">
+              <div style="display:flex;justify-content:between;align-items:center">
+                <label class="input-label">タイムライン引用メモ</label>
+              </div>
+
+              <!-- Captured Note Composer -->
+              <div class="timeline-notes-editor-box">
+                <div style="display:flex;justify-content:space-between;align-items:center;gap:10px">
+                  <span id="captured-timestamp-label" style="font-size:0.875rem;font-weight:700;color:var(--color-primary)">
+                    [00:00]
+                  </span>
+                  <button id="btn-timeline-capture" class="btn btn-secondary" style="padding:4px 10px;font-size:0.75rem">
+                    <svg xmlns="http://www.w3.org/2000/svg" style="width:14px;height:14px;margin-right:2px" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    </svg>
+                    現在時刻を引用 (T)
+                  </button>
+                </div>
+                <input type="text" id="timeline-comment-field" class="form-input timeline-editor-comment-input" placeholder="この場面についてのメモを入力...">
+                <div style="display:flex;justify-content:flex-end">
+                  <button id="btn-timeline-add-note" class="btn btn-primary" style="padding:4px 12px;font-size:0.75rem">追加</button>
+                </div>
+              </div>
+
+              <!-- Notes Timeline Ordered List -->
+              <div id="timeline-notes-list" class="timeline-notes-list">
+                <!-- Timeline elements render here -->
+              </div>
+            </div>
+          </div>
+
+        </div>
+
+        <!-- Sticky Save Review Action Bar -->
+        <div class="pane-save-bar">
+          <span id="autosave-indicator" style="color:var(--color-text-dim);font-size:0.75rem;align-self:center;margin-right:auto">
+            自動保存: 有効
+          </span>
+          <button id="editor-btn-save" class="btn btn-primary">
+            <svg xmlns="http://www.w3.org/2000/svg" style="width:16px;height:16px" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-3m-1 4l-3 3m0 0l-3-3m3 3V4" />
+            </svg>
+            評価を保存 (Ctrl+S)
+          </button>
+        </div>
+      </div>
+    </main>
+
+  </div>
+
+  <!-- ==============================================
+       SETTINGS MODAL OVERLAY (Criteria Setup)
+       ============================================== -->
+  <div id="modal-settings" class="modal-overlay">
+    <div class="modal-container glass-panel">
+      <div class="modal-header">
+        <h3>個別評価項目設定</h3>
+        <button id="settings-close-x" class="btn btn-icon" style="width:32px;height:32px">
+          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+          </svg>
+        </button>
+      </div>
+      <div class="modal-body">
+        <p style="color:var(--color-text-muted);font-size:0.875rem">
+          評価項目は最大6項目まで登録できます。項目名を編集、並べ替え、または削除（非表示）が行えます。過去のレビュー済みの項目スコアは消えずに保持されます。
+        </p>
+
+        <!-- Evaluation List Grid -->
+        <div id="settings-criteria-list" class="settings-criteria-list">
+          <!-- Dynamically populated from settings -->
+        </div>
+
+        <!-- Add New Field Form -->
+        <div class="settings-add-box">
+          <input type="text" id="settings-new-name-input" class="form-input" style="flex:1" placeholder="新しい評価項目名を入力 (例: 独自性)...">
+          <button id="settings-btn-add" class="btn btn-primary">
+            追加
+          </button>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button id="settings-btn-save" class="btn btn-primary" style="padding:10px 24px">設定を保存して閉じる</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ==============================================
+       ADD VIDEO BY URL MODAL OVERLAY
+       ============================================== -->
+  <div id="modal-add-url" class="modal-overlay">
+    <div class="modal-container glass-panel" style="max-width: 450px">
+      <div class="modal-header">
+        <h3>URL動画を追加</h3>
+        <button id="add-url-close-x" class="btn btn-icon" style="width:32px;height:32px">
+          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+          </svg>
+        </button>
+      </div>
+      <div class="modal-body" style="gap: 16px">
+        <div class="input-group">
+          <label class="input-label" for="url-title-input">動画タイトル</label>
+          <input type="text" id="url-title-input" class="form-input" placeholder="動画タイトル...">
+        </div>
+        <div class="input-group">
+          <label class="input-label" for="url-path-input">動画URL (MP4など直接再生可能なリンク)</label>
+          <input type="url" id="url-path-input" class="form-input" placeholder="https://example.com/movie.mp4">
+        </div>
+        <div class="input-group">
+          <label class="input-label" for="url-duration-input">動画長（秒、省略可）</label>
+          <input type="number" id="url-duration-input" class="form-input" placeholder="例: 120" min="0">
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button id="btn-add-url-submit" class="btn btn-primary" style="width: 100%">動画を追加する</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast Notification Container -->
+  <div id="toast-container" class="toast-container"></div>
+
+  <!-- Core Javascript Loader (ES Modules) -->
+  <script type="module" src="js/app.js"></script>
+
+</body>
+</html>

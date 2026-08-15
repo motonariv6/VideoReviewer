@@ -1,0 +1,241 @@
+/**
+ * Custom SVG Radar Chart component.
+ * Standard mathematical formula:
+ * Angle (theta) = -Math.PI / 2 + (2 * Math.PI * i) / N
+ * Coordinates = (cx + r * cos(theta), cy + r * sin(theta))
+ */
+
+export class RadarChart {
+  /**
+   * @param {HTMLElement} containerElement 
+   */
+  constructor(containerElement) {
+    this.container = containerElement;
+    this.width = 360;
+    this.height = 360;
+    this.cx = this.width / 2;
+    this.cy = this.height / 2;
+    this.maxRadius = 110; // Leaves space for labels in the 360x360 box
+  }
+
+  /**
+   * Render the radar chart
+   * @param {Array} criteria - Array of active criteria {id, name}
+   * @param {Object} ratings - Current ratings map { criterionId: score (1-5) }
+   */
+  render(criteria, ratings = {}) {
+    this.container.innerHTML = '';
+
+    if (!criteria || criteria.length < 3) {
+      this.renderPlaceholder('チャート表示には項目が3つ以上必要です');
+      return;
+    }
+
+    const N = criteria.length;
+    const angles = [];
+    for (let i = 0; i < N; i++) {
+      angles.push(-Math.PI / 2 + (2 * Math.PI * i) / N);
+    }
+
+    // Create SVG element
+    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svg.setAttribute('viewBox', `0 0 ${this.width} ${this.height}`);
+    svg.setAttribute('width', '100%');
+    svg.setAttribute('height', '100%');
+    svg.classList.add('radar-svg');
+
+    // Add definitions for gradients and filters (premium glow effect)
+    const defs = document.createElementNS('http://www.w3.org/2000/svg', 'defs');
+    defs.innerHTML = `
+      <radialGradient id="radarGlow" cx="50%" cy="50%" r="50%">
+        <stop offset="0%" stop-color="var(--color-primary-glow, rgba(99, 102, 241, 0.4))" />
+        <stop offset="100%" stop-color="rgba(99, 102, 241, 0)" />
+      </radialGradient>
+      <linearGradient id="polyGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+        <stop offset="0%" stop-color="var(--color-primary, #6366f1)" stop-opacity="0.75" />
+        <stop offset="100%" stop-color="var(--color-secondary, #a855f7)" stop-opacity="0.75" />
+      </linearGradient>
+      <filter id="shadow" x="-10%" y="-10%" width="120%" height="120%">
+        <feDropShadow dx="0" dy="4" stdDeviation="6" flood-color="var(--color-primary, #6366f1)" flood-opacity="0.4" />
+      </filter>
+    `;
+    svg.appendChild(defs);
+
+    // 1. Concentric Background Polygons (Grid Rings for Level 1 to 5)
+    const gridGroup = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+    gridGroup.setAttribute('class', 'radar-grid');
+    
+    // Draw 5 levels of grid rings
+    for (let level = 1; level <= 5; level++) {
+      const r = this.maxRadius * (level / 5);
+      const points = [];
+      
+      for (let i = 0; i < N; i++) {
+        const x = this.cx + r * Math.cos(angles[i]);
+        const y = this.cy + r * Math.sin(angles[i]);
+        points.push(`${x},${y}`);
+      }
+
+      const polygon = document.createElementNS('http://www.w3.org/2000/svg', 'polygon');
+      polygon.setAttribute('points', points.join(' '));
+      polygon.setAttribute('fill', 'none');
+      polygon.setAttribute('stroke', 'var(--color-grid-line, rgba(255, 255, 255, 0.08))');
+      polygon.setAttribute('stroke-width', '1');
+      if (level === 5) {
+        polygon.setAttribute('stroke', 'var(--color-grid-outer, rgba(255, 255, 255, 0.2))');
+      }
+      gridGroup.appendChild(polygon);
+
+      // Level numbers label (on the vertical top axis)
+      const numLabel = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+      numLabel.setAttribute('x', this.cx + 4);
+      numLabel.setAttribute('y', this.cy - r + 3);
+      numLabel.setAttribute('fill', 'rgba(255, 255, 255, 0.3)');
+      numLabel.setAttribute('font-size', '9px');
+      numLabel.textContent = level;
+      gridGroup.appendChild(numLabel);
+    }
+    svg.appendChild(gridGroup);
+
+    // 2. Axis lines radiating from center
+    const axesGroup = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+    axesGroup.setAttribute('class', 'radar-axes');
+    
+    for (let i = 0; i < N; i++) {
+      const x = this.cx + this.maxRadius * Math.cos(angles[i]);
+      const y = this.cy + this.maxRadius * Math.sin(angles[i]);
+
+      const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+      line.setAttribute('x1', this.cx);
+      line.setAttribute('y1', this.cy);
+      line.setAttribute('x2', x);
+      line.setAttribute('y2', y);
+      line.setAttribute('stroke', 'var(--color-grid-line, rgba(255, 255, 255, 0.12))');
+      line.setAttribute('stroke-width', '1');
+      axesGroup.appendChild(line);
+    }
+    svg.appendChild(axesGroup);
+
+    // 3. Data Polygon (Star ratings score layout)
+    const dataPoints = [];
+    const ratingPointsArray = [];
+    
+    for (let i = 0; i < N; i++) {
+      const crit = criteria[i];
+      const val = ratings[crit.id] || 0; // Default to 0 if not rated
+      const r = this.maxRadius * (val / 5);
+      const x = this.cx + r * Math.cos(angles[i]);
+      const y = this.cy + r * Math.sin(angles[i]);
+      dataPoints.push(`${x},${y}`);
+      ratingPointsArray.push({ x, y, val, name: crit.name });
+    }
+
+    const dataGroup = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+    dataGroup.setAttribute('class', 'radar-data');
+
+    // Polygon background glow
+    const glowPoly = document.createElementNS('http://www.w3.org/2000/svg', 'polygon');
+    glowPoly.setAttribute('points', dataPoints.join(' '));
+    glowPoly.setAttribute('fill', 'url(#radarGlow)');
+    dataGroup.appendChild(glowPoly);
+
+    // Score Polygon
+    const poly = document.createElementNS('http://www.w3.org/2000/svg', 'polygon');
+    poly.setAttribute('points', dataPoints.join(' '));
+    poly.setAttribute('fill', 'url(#polyGrad)');
+    poly.setAttribute('stroke', 'var(--color-primary, #6366f1)');
+    poly.setAttribute('stroke-width', '2.5');
+    poly.setAttribute('filter', 'url(#shadow)');
+    poly.style.transition = 'all 0.3s ease';
+    dataGroup.appendChild(poly);
+
+    // Score vertices dots
+    ratingPointsArray.forEach(pt => {
+      if (pt.val > 0) {
+        const circle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+        circle.setAttribute('cx', pt.x);
+        circle.setAttribute('cy', pt.y);
+        circle.setAttribute('r', '4');
+        circle.setAttribute('fill', '#ffffff');
+        circle.setAttribute('stroke', 'var(--color-secondary, #a855f7)');
+        circle.setAttribute('stroke-width', '2');
+        dataGroup.appendChild(circle);
+      }
+    });
+    svg.appendChild(dataGroup);
+
+    // 4. Outer text labels for criteria
+    const labelsGroup = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+    labelsGroup.setAttribute('class', 'radar-labels');
+    
+    for (let i = 0; i < N; i++) {
+      const crit = criteria[i];
+      const val = ratings[crit.id] || 0;
+      const angle = angles[i];
+      
+      // Push text slightly further out than maxRadius
+      const textRadius = this.maxRadius + 22;
+      const x = this.cx + textRadius * Math.cos(angle);
+      const y = this.cy + textRadius * Math.sin(angle);
+
+      const text = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+      text.setAttribute('x', x);
+      // Adjust vertical alignment depending on location
+      let dy = '0.35em';
+      if (Math.abs(angle - (-Math.PI / 2)) < 0.1) {
+        // Top label
+        dy = '-0.4em';
+      } else if (Math.abs(angle - (Math.PI / 2)) < 0.1) {
+        // Bottom label
+        dy = '1em';
+      }
+      text.setAttribute('dy', dy);
+      
+      // Text anchor alignment
+      let anchor = 'middle';
+      if (Math.cos(angle) > 0.1) {
+        anchor = 'start';
+      } else if (Math.cos(angle) < -0.1) {
+        anchor = 'end';
+      }
+      text.setAttribute('text-anchor', anchor);
+      text.setAttribute('fill', 'var(--color-text-main, #e2e8f0)');
+      text.setAttribute('font-size', '12px');
+      text.setAttribute('font-weight', '500');
+      
+      // Text content (e.g., "映像: 4" or "映像: -")
+      text.textContent = `${crit.name}: ${val > 0 ? val : '-'}`;
+      labelsGroup.appendChild(text);
+    }
+    svg.appendChild(labelsGroup);
+
+    // Center pivot point
+    const centerPoint = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+    centerPoint.setAttribute('cx', this.cx);
+    centerPoint.setAttribute('cy', this.cy);
+    centerPoint.setAttribute('r', '3');
+    centerPoint.setAttribute('fill', 'rgba(255, 255, 255, 0.4)');
+    svg.appendChild(centerPoint);
+
+    this.container.appendChild(svg);
+  }
+
+  /**
+   * Render placeholder when chart cannot be drawn
+   * @param {string} message 
+   */
+  renderPlaceholder(message) {
+    const wrapper = document.createElement('div');
+    wrapper.className = 'radar-placeholder-container';
+    wrapper.innerHTML = `
+      <div class="radar-placeholder-inner">
+        <svg class="radar-placeholder-icon" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M11 3.055A9.003 9.003 0 1020.945 13H11V3.055z" />
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M20.488 9H15V3.512A9.025 9.025 0 0120.488 9z" />
+        </svg>
+        <p>${message}</p>
+      </div>
+    `;
+    this.container.appendChild(wrapper);
+  }
+}
