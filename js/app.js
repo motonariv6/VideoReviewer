@@ -1767,8 +1767,8 @@ async function handleFolderSelect() {
     }
 
     // Phase 4: Overwrite confirmation
-    const oldSources = db.getDirectorySources();
-    if (oldSources.length > 0) {
+    const oldSourceIds = db.getDirectorySources().map(s => s.id);
+    if (oldSourceIds.length > 0) {
       if (!confirm('すでに接続されているフォルダ設定があります。上書きして新しいフォルダを選択しますか？')) {
         // Clean temp handle and return
         await db.deleteDirectoryHandle(tempKey);
@@ -1794,8 +1794,10 @@ async function handleFolderSelect() {
     handleSavedToTemp = false;
 
     // Disconnect old source if exists
-    if (oldSources.length > 0) {
-      await db.deleteDirectorySource(oldSources[0].id);
+    for (const oldId of oldSourceIds) {
+      if (oldId !== source.id) {
+        await db.deleteDirectorySource(oldId);
+      }
     }
 
     showToast(`フォルダ「${handle.name}」を接続しました。`);

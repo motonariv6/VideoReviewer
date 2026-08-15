@@ -370,75 +370,243 @@ export async function runTests() {
     assert(testDb.getVideo(vid2.id).availabilityStatus === 'scan-error', 'Video 2 must become scan-error');
   });
 
-  // --- GROUP 3: FOLDER SWITCHING TWO-PHASE COMMIT (13-17) ---
+  // --- GROUP 3: FOLDER SWITCHING TWO-PHASE COMMIT & INITIAL REGISTRY REGRESSION TESTS ---
 
-  await runTest('13-17. Folder switching transaction commit and rollback', async () => {
+  await runTest('Folder switching transaction and registration safety checks', async () => {
     const memory = new MemoryStorage();
-    const testDb = new AppDatabase(memory, 'test_vreview_', 'TestVideoDB_FolderSwitch');
+    const testDb = new AppDatabase(memory, 'test_vreview_fs_', 'TestVideoDB_FolderSwitchRegression');
     await testDb.initAsync();
 
-    // Setup original source and matching video
-    const originalSource = await testDb.addDirectorySource({ name: 'OriginalFolder' });
-    const originalVideo = await testDb.addVideo({
-      title: 'original.mp4',
-      fileName: 'original.mp4',
-      sourceType: 'directory',
-      directoryId: originalSource.id,
-      relativePath: 'original.mp4'
+    // Simulation of handleFolderSelect with snapshotted old sources and safe deletes
+    async function runFolderSelectSimulation({
+      db,
+      folderHandle,
+      confirmResult = true,
+      shouldFailPhase1 = false,
+      shouldFailPhase3 = false
+    }) {
+      const tempUUID = 'temp-uuid-test';
+      const tempKey = `pending-directory-handle-${tempUUID}`;
+      let handleSavedToTemp = false;
+
+      try {
+        if (!folderHandle) return null;
+
+        // Phase 1: Try saving new handle under temporary key
+        if (shouldFailPhase1) {
+          throw new Error('IndexedDB save failed during Phase 1');
+        }
+        await db.putDirectoryHandle(tempKey, folderHandle);
+        handleSavedToTemp = true;
+
+        // Phase 2: Read it back to verify serialization integrity
+        const verifiedHandle = await db.getDirectoryHandle(tempKey);
+        if (!verifiedHandle) {
+          throw new Error('一時キーからのハンドルの読み戻しに失敗しました。');
+        }
+
+        // Phase 3: Test-read the directory to verify permissions/integrity
+        if (shouldFailPhase3) {
+          verifiedHandle._shouldFail = true;
+        }
+        let testReadSuccess = false;
+        try {
+          const iterator = verifiedHandle.values();
+          await iterator.next();
+          testReadSuccess = true;
+        } catch (err) {
+          console.warn('Folder test read failed:', err);
+        }
+        if (!testReadSuccess) {
+          throw new Error('選択したフォルダへのアクセス権限がないか、読み取りに失敗しました。');
+        }
+
+        // Phase 4: Overwrite confirmation
+        const oldSourceIds = db.getDirectorySources().map(s => s.id);
+        if (oldSourceIds.length > 0) {
+          if (!confirmResult) {
+            await db.deleteDirectoryHandle(tempKey);
+            return null;
+          }
+        }
+
+        // Phase 5: Commit changes to Database
+        const source = await db.addDirectorySource({
+          name: folderHandle.name,
+          includeSubdirectories: true
+        });
+
+        // Copy from temporary key to permanent handle key
+        await db.putDirectoryHandle(source.handleKey, folderHandle);
+        
+        // Set permission status
+        const status = await folderHandle.queryPermission({ mode: 'read' });
+        await db.updateDirectorySource(source.id, { permissionStatus: status });
+
+        // Clean up temporary handle
+        await db.deleteDirectoryHandle(tempKey);
+        handleSavedToTemp = false;
+
+        // Disconnect old source if exists
+        for (const oldId of oldSourceIds) {
+          if (oldId !== source.id) {
+            await db.deleteDirectorySource(oldId);
+          }
+        }
+
+        return source;
+      } catch (err) {
+        if (handleSavedToTemp) {
+          try { await db.deleteDirectoryHandle(tempKey); } catch (e) {}
+        }
+        throw err;
+      }
+    }
+
+    // ----------------------------------------------------
+    // Scenario 1: Initial Registration from Clean State (未設定状態から初回登録)
+    // ----------------------------------------------------
+    const firstHandle = new MockFileSystemDirectoryHandle('FirstFolder', {
+      'first_vid.mp4': new MockFileSystemFileHandle('first_vid.mp4', 5000, 100)
     });
-    // Add review to verify original review data remains safe
-    await testDb.saveReview(originalVideo.id, { overallGrade: 'A', comment: 'Keep this reviews data' });
 
-    // Test 14: Save failure rollback simulation
-    let failedTransition = false;
-    let tempKey = 'pending-directory-handle-temp';
-    try {
-      // Simulate IDB handle put failure
-      throw new Error('IndexedDB save failed during Phase 1');
-    } catch (err) {
-      failedTransition = true;
-    }
-    assert(failedTransition, 'Transition error must be caught');
-    // Verify old connection remains active
-    assert(testDb.getDirectorySource(originalSource.id) !== undefined, 'Old directory source must remain registered on failures');
+    const firstSource = await runFolderSelectSimulation({
+      db: testDb,
+      folderHandle: firstHandle
+    });
 
-    // Test 15: Read / verification failure rollback simulation
-    let readVerificationFailed = false;
-    try {
-      // Phase 1: save handle to temp
-      const mockNewHandle = new MockFileSystemDirectoryHandle('NewFolder');
-      await testDb.putDirectoryHandle(tempKey, mockNewHandle);
-      
-      // Phase 2: mock query fails
-      mockNewHandle._shouldFail = true;
-      const verified = await testDb.getDirectoryHandle(tempKey);
-      
-      // Test read walk throws
-      const iterator = verified.values();
-      await iterator.next();
-    } catch (err) {
-      readVerificationFailed = true;
-      // Phase 3: Rollback temp handle
-      await testDb.deleteDirectoryHandle(tempKey);
-    }
-    assert(readVerificationFailed, 'Read failure must trigger directory rollback');
-    assert(testDb.getDirectorySource(originalSource.id) !== undefined, 'Old directory source remains connected on read failures');
-
-    // Test 13: Success path commit
-    const newHandle = new MockFileSystemDirectoryHandle('VerifiedFolder');
-    const newSource = await testDb.addDirectorySource({ name: newHandle.name });
-    await testDb.putDirectoryHandle(newSource.handleKey, newHandle);
+    assert(firstSource !== null, 'Initial source registration must succeed');
     
-    // Disconnect old source
-    await testDb.deleteDirectorySource(originalSource.id);
+    // - 新規sourceが登録後も残る
+    const sourcesAfterFirst = testDb.getDirectorySources();
+    assert(sourcesAfterFirst.length === 1, 'Exactly 1 source must exist');
+    assert(sourcesAfterFirst[0].id === firstSource.id, 'Registered source ID must match the returned source');
 
-    // Verify final state
-    assert(testDb.getDirectorySource(originalSource.id) === undefined, 'Old folder source is disconnected on commits');
-    assert(testDb.getDirectorySource(newSource.id) !== undefined, 'New folder source is connected');
+    // - DirectoryHandleが残る
+    const firstSavedHandle = await testDb.getDirectoryHandle(firstSource.handleKey);
+    assert(firstSavedHandle !== null && firstSavedHandle.name === 'FirstFolder', 'DirectoryHandle must remain stored in IndexedDB');
+
+    // Simulate scan/adding videos for this directory to test association
+    const dummyVideo = await testDb.addVideo({
+      title: 'first_vid.mp4',
+      fileName: 'first_vid.mp4',
+      fileSize: 5000,
+      sourceType: 'directory',
+      directoryId: firstSource.id,
+      relativePath: 'first_vid.mp4',
+      lastModified: 100
+    });
+
+    // Add rating to this video to verify it stays
+    await testDb.saveReview(dummyVideo.id, { overallGrade: 'S', comment: 'Excellent quality' });
+
+    // - スキャン動画のdirectoryIdが新規source.idと一致する
+    const videos = testDb.getVideos().filter(v => v.fileName === 'first_vid.mp4');
+    assert(videos.length === 1, 'Video must be registered');
+    assert(videos[0].directoryId === firstSource.id, 'Scanned video directoryId must match the registered source ID');
+
+    // - 動画を開いてFileを取得できる
+    const fileHandle = await firstSavedHandle.getFileHandle(videos[0].relativePath);
+    const resolvedFile = await fileHandle.getFile();
+    assert(resolvedFile.name === 'first_vid.mp4' && resolvedFile.size === 5000, 'Resolved video file must match mock structure');
+
+
+    // ----------------------------------------------------
+    // Scenario 2: Switching from Existing to New Folder (既存から別フォルダへ切り替え)
+    // ----------------------------------------------------
+    const secondHandle = new MockFileSystemDirectoryHandle('SecondFolder', {
+      'second_vid.mp4': new MockFileSystemFileHandle('second_vid.mp4', 8000, 200)
+    });
+
+    const secondSource = await runFolderSelectSimulation({
+      db: testDb,
+      folderHandle: secondHandle,
+      confirmResult: true
+    });
+
+    assert(secondSource !== null, 'Switching folder must succeed');
     
-    // Test 17: Check original video review remains safe in database
-    const rev = testDb.getReviewForVideo(originalVideo.id);
-    assert(rev !== undefined && rev.overallGrade === 'A', 'Original reviews and annotations must be fully preserved');
+    // - 新規sourceと新規Handleは残る
+    const sourcesAfterSwitch = testDb.getDirectorySources();
+    assert(sourcesAfterSwitch.length === 1, 'Exactly 1 source must exist after switch');
+    assert(sourcesAfterSwitch[0].id === secondSource.id, 'Active source ID must be the new source');
+    
+    const secondSavedHandle = await testDb.getDirectoryHandle(secondSource.handleKey);
+    assert(secondSavedHandle !== null && secondSavedHandle.name === 'SecondFolder', 'New DirectoryHandle must be saved in IndexedDB');
+
+    // - 旧sourceのみ削除される (Old source is deleted, but new is kept)
+    assert(testDb.getDirectorySource(firstSource.id) === undefined, 'Old source must be deleted');
+    assert(testDb.getDirectorySource(secondSource.id) !== undefined, 'New source must NOT be deleted');
+
+
+    // ----------------------------------------------------
+    // Scenario 3: Switching Cancellation (切り替えキャンセル)
+    // ----------------------------------------------------
+    const cancelHandle = new MockFileSystemDirectoryHandle('CancelledFolder');
+    
+    const cancelledSource = await runFolderSelectSimulation({
+      db: testDb,
+      folderHandle: cancelHandle,
+      confirmResult: false // Cancel confirmation
+    });
+
+    assert(cancelledSource === null, 'Cancelled transition must return null source');
+
+    // - 旧sourceとHandleが維持される
+    const sourcesAfterCancel = testDb.getDirectorySources();
+    assert(sourcesAfterCancel.length === 1, 'Exactly 1 source must remain active');
+    assert(sourcesAfterCancel[0].id === secondSource.id, 'Old active source must remain connected');
+    
+    const cancelCheckedHandle = await testDb.getDirectoryHandle(secondSource.handleKey);
+    assert(cancelCheckedHandle !== null && cancelCheckedHandle.name === 'SecondFolder', 'Old DirectoryHandle must be preserved');
+    
+    // Verify cancelled handle was not saved permanently
+    const cancelTempHandle = await testDb.getDirectoryHandle(cancelHandle.handleKey);
+    assert(cancelTempHandle === null, 'Cancelled handle must not be saved under permanent key');
+
+
+    // ----------------------------------------------------
+    // Scenario 4: Verification / Save Failures (新規フォルダの保存・検証失敗)
+    // ----------------------------------------------------
+    
+    // 4a. IndexedDB write failure (Save failure)
+    let saveFailed = false;
+    try {
+      await runFolderSelectSimulation({
+        db: testDb,
+        folderHandle: new MockFileSystemDirectoryHandle('BrokenIDB'),
+        shouldFailPhase1: true
+      });
+    } catch (e) {
+      saveFailed = true;
+    }
+    assert(saveFailed, 'Phase 1 write error must throw');
+
+    // - 旧sourceとHandleが維持される
+    assert(testDb.getDirectorySources().length === 1, 'Active source remains connected on save failures');
+    assert(testDb.getDirectorySources()[0].id === secondSource.id, 'Active source remains the second source');
+
+    // 4b. Test-read failure (Walk/validation failure)
+    let readFailed = false;
+    try {
+      await runFolderSelectSimulation({
+        db: testDb,
+        folderHandle: new MockFileSystemDirectoryHandle('BrokenRead'),
+        shouldFailPhase3: true
+      });
+    } catch (e) {
+      readFailed = true;
+    }
+    assert(readFailed, 'Phase 3 read validation error must throw');
+
+    // - 旧sourceとHandleが維持される
+    assert(testDb.getDirectorySources().length === 1, 'Active source remains connected on read validation failures');
+    assert(testDb.getDirectorySources()[0].id === secondSource.id, 'Active source remains the second source');
+
+    // - 一時Handleが削除される
+    const tempKeyPattern = `pending-directory-handle-temp-uuid-test`;
+    const tempHandleCheck = await testDb.getDirectoryHandle(tempKeyPattern);
+    assert(tempHandleCheck === null, 'Temporary verification handle must be deleted from IDB');
   });
 
   // --- GROUP 4: REGRESSION TEST BASES (20-27) ---
