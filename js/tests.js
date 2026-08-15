@@ -716,13 +716,15 @@ export async function runTests() {
     // Verify initial count
     assert(testDb.getVideos().length === 2, 'Initial videos count must be 2');
 
-    // Add Ratings, Reviews, Tags, Notes for Video A
-    const revA = await testDb.saveReview(vidA.id, { overallGrade: 'A', comment: 'Excellent' });
-    
-    // Add criteria ratings
-    testDb.criterionRatings.push({ reviewId: revA.id, criteriaId: 'crit-1', score: 4 });
-    testDb.criterionRatings.push({ reviewId: revA.id, criteriaId: 'crit-2', score: 5 });
-    testDb._saveTable('criterion_ratings', testDb.criterionRatings);
+    // Add Ratings, Reviews, Tags, Notes for Video A using saveReview API (proper schema)
+    const revA = await testDb.saveReview(vidA.id, {
+      overallGrade: 'A',
+      comment: 'Excellent',
+      ratings: {
+        'crit-1': 4,
+        'crit-2': 5
+      }
+    });
 
     // Add tags association
     testDb.videoTags.push({ videoId: vidA.id, tagId: 'tag-1' });
@@ -737,11 +739,15 @@ export async function runTests() {
     const videoWithThumb = testDb.getVideo(vidA.id);
     assert(videoWithThumb.thumbnailId !== '', 'Video A should have a thumbnail ID');
 
-    // Setup associated reviews and notes for Video B to verify they stay
-    const revB = await testDb.saveReview(vidB.id, { overallGrade: 'B', comment: 'Good' });
-    testDb.criterionRatings.push({ reviewId: revB.id, criteriaId: 'crit-1', score: 3 });
-    testDb.criterionRatings.push({ reviewId: revB.id, criteriaId: 'crit-2', score: 2 });
-    testDb._saveTable('criterion_ratings', testDb.criterionRatings);
+    // Setup associated reviews and notes for Video B using saveReview API (proper schema)
+    const revB = await testDb.saveReview(vidB.id, {
+      overallGrade: 'B',
+      comment: 'Good',
+      ratings: {
+        'crit-1': 3,
+        'crit-2': 2
+      }
+    });
     testDb.videoTags.push({ videoId: vidB.id, tagId: 'tag-2' });
     testDb._saveTable('video_tags', testDb.videoTags);
     testDb.timelineNotes.push({ id: 'note-b1', videoId: vidB.id, time: 20, text: 'Second note', thumbnailId: 'img-note-b1' });
@@ -763,8 +769,16 @@ export async function runTests() {
     // Assert reviews and ratings are cascaded
     assert(testDb.getReviewForVideo(vidA.id) === undefined, 'Review for Video A must be removed');
     assert(testDb.getReviewForVideo(vidB.id) !== undefined, 'Review for Video B must remain');
-    assert(testDb.criterionRatings.some(cr => cr.reviewId === revA.id) === false, 'Criterion ratings for Review A must be removed');
-    assert(testDb.criterionRatings.some(cr => cr.reviewId === revB.id) === true, 'Criterion ratings for Review B must remain');
+    
+    // Video A criterion ratings must be 0
+    assert(testDb.criterionRatings.some(cr => cr.videoReviewId === revA.id) === false, 'Criterion ratings for Review A must be removed');
+    // Video B criterion ratings must remain
+    assert(testDb.criterionRatings.some(cr => cr.videoReviewId === revB.id) === true, 'Criterion ratings for Review B must remain');
+
+    // Assert that the changes are written to the persistence layer (MemoryStorage)
+    const storedRatings = JSON.parse(memory.getItem('test_vreview_del_criterion_ratings') || '[]');
+    assert(storedRatings.some(cr => cr.videoReviewId === revA.id) === false, 'Stored criterion ratings in localStorage for Review A must be deleted');
+    assert(storedRatings.some(cr => cr.videoReviewId === revB.id) === true, 'Stored criterion ratings in localStorage for Review B must remain');
 
     // Assert tags and notes are cascaded
     assert(testDb.videoTags.some(vt => vt.videoId === vidA.id) === false, 'Tag relations for Video A must be removed');
@@ -798,9 +812,9 @@ export async function runTests() {
       
       // Test cases for N = 3, 4, 5, 6 criteria items
       const criteriaList = [
-        { id: 'c1', name: '映像美' },
-        { id: 'c2', name: 'ストーリー構成' },
-        { id: 'c3', name: 'ユーザーインターフェースデザイン' },
+        { id: 'c1', name: '映像美' }, // Short label (<=8 characters)
+        { id: 'c2', name: 'ストーリー構成' }, // Short label
+        { id: 'c3', name: 'ユーザーインターフェースデザイン' }, // Long label (>8 characters)
         { id: 'c4', name: '音楽音響効果' },
         { id: 'c5', name: '演出力' },
         { id: 'c6', name: '革新性' }
@@ -833,6 +847,10 @@ export async function runTests() {
           // Verify title node exists for full-name hover tooltip support
           const title = text.querySelector('title');
           assert(title !== null, 'Text label must include a title tooltip element');
+
+          // Verify tspan node exists to ensure title element was not wiped out
+          const tspans = text.querySelectorAll('tspan');
+          assert(tspans.length > 0, 'Text label must use tspan children to prevent wiping out title node');
         });
       }
     } finally {

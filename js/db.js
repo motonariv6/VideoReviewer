@@ -630,7 +630,7 @@ export class AppDatabase {
     this.reviews = this.reviews.filter(r => r.videoId !== videoId);
     this._saveTable('video_reviews', this.reviews);
 
-    this.criterionRatings = this.criterionRatings.filter(cr => !reviewIds.includes(cr.reviewId));
+    this.criterionRatings = this.criterionRatings.filter(cr => !reviewIds.includes(cr.videoReviewId));
     this._saveTable('criterion_ratings', this.criterionRatings);
 
     this.videoTags = this.videoTags.filter(vt => vt.videoId !== videoId);

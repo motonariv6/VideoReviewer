@@ -228,8 +228,11 @@ export class RadarChart {
       const scoreStr = `: ${val > 0 ? val : '-'}`;
 
       if (crit.name.length <= splitLimit) {
-        textNode.setAttribute('dy', dy);
-        textNode.textContent = `${crit.name}${scoreStr}`;
+        const labelTspan = document.createElementNS('http://www.w3.org/2000/svg', 'tspan');
+        labelTspan.setAttribute('x', labelX);
+        labelTspan.setAttribute('dy', dy);
+        labelTspan.textContent = `${crit.name}${scoreStr}`;
+        textNode.appendChild(labelTspan);
       } else {
         const line1 = crit.name.substring(0, splitLimit);
         let line2 = crit.name.substring(splitLimit);
