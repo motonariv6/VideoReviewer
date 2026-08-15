@@ -694,6 +694,170 @@ export async function runTests() {
     assert(tagsList.length === 1, 'Duplicate tag values must be rejected');
   });
 
+  // --- GROUP 5: CASCADE VIDEO DELETION TESTS ---
+
+  await runTest('Cascade video deletion integrity and asset checks', async () => {
+    const memory = new MemoryStorage();
+    const testDb = new AppDatabase(memory, 'test_vreview_del_', 'TestVideoDB_CascadeDelete');
+    await testDb.initAsync();
+
+    // 1. Setup Video A (to be deleted cascade) and Video B (to be kept)
+    const vidA = await testDb.addVideo({
+      title: 'Video A',
+      fileName: 'video_a.mp4',
+      sourceType: 'local-file'
+    });
+    const vidB = await testDb.addVideo({
+      title: 'Video B',
+      fileName: 'video_b.mp4',
+      sourceType: 'local-file'
+    });
+
+    // Verify initial count
+    assert(testDb.getVideos().length === 2, 'Initial videos count must be 2');
+
+    // Add Ratings, Reviews, Tags, Notes for Video A using saveReview API (proper schema)
+    const revA = await testDb.saveReview(vidA.id, {
+      overallGrade: 'A',
+      comment: 'Excellent',
+      ratings: {
+        'crit-1': 4,
+        'crit-2': 5
+      }
+    });
+
+    // Add tags association
+    testDb.videoTags.push({ videoId: vidA.id, tagId: 'tag-1' });
+    testDb._saveTable('video_tags', testDb.videoTags);
+
+    // Add timeline notes
+    testDb.timelineNotes.push({ id: 'note-a1', videoId: vidA.id, time: 10, text: 'First note', thumbnailId: 'img-note-a1' });
+    testDb._saveTable('timeline_notes', testDb.timelineNotes);
+
+    // Seed thumbnails and note screenshots in IndexedDB mock if available
+    await testDb.updateVideoThumbnail(vidA.id, new Blob(['thumb-a'], { type: 'image/jpeg' }));
+    const videoWithThumb = testDb.getVideo(vidA.id);
+    assert(videoWithThumb.thumbnailId !== '', 'Video A should have a thumbnail ID');
+
+    // Setup associated reviews and notes for Video B using saveReview API (proper schema)
+    const revB = await testDb.saveReview(vidB.id, {
+      overallGrade: 'B',
+      comment: 'Good',
+      ratings: {
+        'crit-1': 3,
+        'crit-2': 2
+      }
+    });
+    testDb.videoTags.push({ videoId: vidB.id, tagId: 'tag-2' });
+    testDb._saveTable('video_tags', testDb.videoTags);
+    testDb.timelineNotes.push({ id: 'note-b1', videoId: vidB.id, time: 20, text: 'Second note', thumbnailId: 'img-note-b1' });
+    testDb._saveTable('timeline_notes', testDb.timelineNotes);
+
+    if (testDb.idbAvailable) {
+      await testDb.putImage('img-note-a1', new Blob(['note-img-a'], { type: 'image/jpeg' }));
+      await testDb.putImage('img-note-b1', new Blob(['note-img-b'], { type: 'image/jpeg' }));
+    }
+
+    // Run cascade delete for Video A
+    const deleteSuccess = await testDb.deleteVideoCascade(vidA.id);
+    assert(deleteSuccess === true, 'Cascade delete operation must return true');
+
+    // Assert Video A is deleted but Video B remains
+    assert(testDb.getVideo(vidA.id) === undefined, 'Video A must be removed from videos');
+    assert(testDb.getVideo(vidB.id) !== undefined, 'Video B must NOT be removed from videos');
+
+    // Assert reviews and ratings are cascaded
+    assert(testDb.getReviewForVideo(vidA.id) === undefined, 'Review for Video A must be removed');
+    assert(testDb.getReviewForVideo(vidB.id) !== undefined, 'Review for Video B must remain');
+    
+    // Video A criterion ratings must be 0
+    assert(testDb.criterionRatings.some(cr => cr.videoReviewId === revA.id) === false, 'Criterion ratings for Review A must be removed');
+    // Video B criterion ratings must remain
+    assert(testDb.criterionRatings.some(cr => cr.videoReviewId === revB.id) === true, 'Criterion ratings for Review B must remain');
+
+    // Assert that the changes are written to the persistence layer (MemoryStorage)
+    const storedRatings = JSON.parse(memory.getItem('test_vreview_del_criterion_ratings') || '[]');
+    assert(storedRatings.some(cr => cr.videoReviewId === revA.id) === false, 'Stored criterion ratings in localStorage for Review A must be deleted');
+    assert(storedRatings.some(cr => cr.videoReviewId === revB.id) === true, 'Stored criterion ratings in localStorage for Review B must remain');
+
+    // Assert tags and notes are cascaded
+    assert(testDb.videoTags.some(vt => vt.videoId === vidA.id) === false, 'Tag relations for Video A must be removed');
+    assert(testDb.videoTags.some(vt => vt.videoId === vidB.id) === true, 'Tag relations for Video B must remain');
+    assert(testDb.getTimelineNotes(vidA.id).length === 0, 'Timeline notes for Video A must be removed');
+    assert(testDb.getTimelineNotes(vidB.id).length === 1, 'Timeline notes for Video B must remain');
+
+    // Assert IndexedDB images are deleted
+    if (testDb.idbAvailable) {
+      const deletedVidThumb = await testDb.getImage(videoWithThumb.thumbnailId);
+      const deletedNoteThumb = await testDb.getImage('img-note-a1');
+      const keptNoteThumb = await testDb.getImage('img-note-b1');
+
+      assert(deletedVidThumb === null, 'Deleted video thumbnail must be removed from IndexedDB');
+      assert(deletedNoteThumb === null, 'Deleted timeline note thumbnail must be removed from IndexedDB');
+      assert(keptNoteThumb !== null, 'Kept video timeline note thumbnail must remain in IndexedDB');
+    }
+  });
+
+  // --- GROUP 6: RADAR CHART RENDER AND LABEL TESTS ---
+
+  await runTest('Radar chart coordinates, label clamping, and responsiveness checks', async () => {
+    // Mock container
+    const container = document.createElement('div');
+    container.style.width = '320px';
+    container.style.height = '320px';
+    document.body.appendChild(container);
+
+    try {
+      const chart = new RadarChart(container);
+      
+      // Test cases for N = 3, 4, 5, 6 criteria items
+      const criteriaList = [
+        { id: 'c1', name: '映像美' }, // Short label (<=8 characters)
+        { id: 'c2', name: 'ストーリー構成' }, // Short label
+        { id: 'c3', name: 'ユーザーインターフェースデザイン' }, // Long label (>8 characters)
+        { id: 'c4', name: '音楽音響効果' },
+        { id: 'c5', name: '演出力' },
+        { id: 'c6', name: '革新性' }
+      ];
+
+      const ratings = { c1: 4, c2: 5, c3: 3, c4: 2, c5: 5, c6: 4 };
+
+      for (let n = 3; n <= 6; n++) {
+        const activeCriteria = criteriaList.slice(0, n);
+        
+        // Render chart
+        chart.render(activeCriteria, ratings);
+        
+        // Verify SVG elements generated inside container
+        const svg = container.querySelector('svg');
+        assert(svg !== null, `SVG chart must render for N = ${n}`);
+        assert(svg.getAttribute('viewBox') === '0 0 440 440', 'SVG viewBox must be set to 440x440');
+
+        // Check text labels count and content
+        const textElements = svg.querySelectorAll('.radar-labels text');
+        assert(textElements.length === n, `Should render exactly ${n} text labels`);
+
+        // Check clamping and coordinates fall inside safe box [15, 425]
+        textElements.forEach(text => {
+          const x = parseFloat(text.getAttribute('x'));
+          const y = parseFloat(text.getAttribute('y'));
+          assert(x >= 15 && x <= 425, `Label x (${x}) must fall in safe bounds [15, 425]`);
+          assert(y >= 15 && y <= 425, `Label y (${y}) must fall in safe bounds [15, 425]`);
+          
+          // Verify title node exists for full-name hover tooltip support
+          const title = text.querySelector('title');
+          assert(title !== null, 'Text label must include a title tooltip element');
+
+          // Verify tspan node exists to ensure title element was not wiped out
+          const tspans = text.querySelectorAll('tspan');
+          assert(tspans.length > 0, 'Text label must use tspan children to prevent wiping out title node');
+        });
+      }
+    } finally {
+      document.body.removeChild(container);
+    }
+  });
+
   console.groupEnd();
   return results;
 }

@@ -868,7 +868,7 @@ header {
   border-radius: var(--radius-lg);
   padding: 12px;
   position: relative;
-  overflow: hidden;
+  overflow: visible;
 }
 
 .radar-svg {
@@ -1319,6 +1319,11 @@ header {
 .video-card.status-scan-error {
   opacity: 0.65;
   border-color: rgba(239, 68, 68, 0.25) !important;
+}
+
+.video-card.status-no-directory {
+  opacity: 0.65;
+  border-color: rgba(239, 68, 68, 0.4) !important;
 }
 
 .video-card-meta-detail {

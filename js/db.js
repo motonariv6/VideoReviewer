@@ -580,6 +580,67 @@ export class AppDatabase {
       await this.updateVideo(videoId, { thumbnailId: imgId });
     }
   }
+  async deleteVideoThumbnail(videoId) {
+    const video = this.getVideo(videoId);
+    if (!video) return;
+    if (video.thumbnailId && this.idbAvailable) {
+      try {
+        await this.idb.delete(video.thumbnailId, 'images');
+      } catch (err) {
+        console.error('Failed to delete video thumbnail Blob:', err);
+      }
+    }
+  }
+
+  async deleteVideoCascade(videoId) {
+    const video = this.getVideo(videoId);
+    if (!video) return false;
+
+    // 1. Delete image Blobs from IndexedDB
+    if (this.idbAvailable) {
+      // Delete Video Thumbnail
+      if (video.thumbnailId) {
+        try {
+          await this.idb.delete(video.thumbnailId, 'images');
+        } catch (err) {
+          console.warn('Failed to delete video thumbnail image:', err);
+        }
+      }
+
+      // Delete Timeline Note Screenshots
+      const matchedNotes = this.timelineNotes.filter(n => n.videoId === videoId);
+      for (const note of matchedNotes) {
+        if (note.thumbnailId) {
+          try {
+            await this.idb.delete(note.thumbnailId, 'images');
+          } catch (err) {
+            console.warn('Failed to delete note screenshot image:', err);
+          }
+        }
+      }
+    }
+
+    // 2. Cascade delete records from tables
+    this.videos = this.videos.filter(v => v.id !== videoId);
+    this._saveTable('videos', this.videos);
+
+    const reviewsToDelete = this.reviews.filter(r => r.videoId === videoId);
+    const reviewIds = reviewsToDelete.map(r => r.id);
+
+    this.reviews = this.reviews.filter(r => r.videoId !== videoId);
+    this._saveTable('video_reviews', this.reviews);
+
+    this.criterionRatings = this.criterionRatings.filter(cr => !reviewIds.includes(cr.videoReviewId));
+    this._saveTable('criterion_ratings', this.criterionRatings);
+
+    this.videoTags = this.videoTags.filter(vt => vt.videoId !== videoId);
+    this._saveTable('video_tags', this.videoTags);
+
+    this.timelineNotes = this.timelineNotes.filter(n => n.videoId !== videoId);
+    this._saveTable('timeline_notes', this.timelineNotes);
+
+    return true;
+  }
 
   // --- CRITERIA OPERATIONS ---
 

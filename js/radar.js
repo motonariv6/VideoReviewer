@@ -11,11 +11,11 @@ export class RadarChart {
    */
   constructor(containerElement) {
     this.container = containerElement;
-    this.width = 360;
-    this.height = 360;
+    this.width = 440; // Increased width for safe label margins inside viewBox
+    this.height = 440; // Increased height
     this.cx = this.width / 2;
     this.cy = this.height / 2;
-    this.maxRadius = 110; // Leaves space for labels in the 360x360 box
+    this.maxRadius = 100; // Radius of outer ring
   }
 
   /**
@@ -44,7 +44,7 @@ export class RadarChart {
     svg.setAttribute('height', '100%');
     svg.classList.add('radar-svg');
 
-    // Add definitions for gradients and filters (premium glow effect)
+    // Add definitions for gradients and filters (glow effect)
     const defs = document.createElementNS('http://www.w3.org/2000/svg', 'defs');
     defs.innerHTML = `
       <radialGradient id="radarGlow" cx="50%" cy="50%" r="50%">
@@ -65,7 +65,6 @@ export class RadarChart {
     const gridGroup = document.createElementNS('http://www.w3.org/2000/svg', 'g');
     gridGroup.setAttribute('class', 'radar-grid');
     
-    // Draw 5 levels of grid rings
     for (let level = 1; level <= 5; level++) {
       const r = this.maxRadius * (level / 5);
       const points = [];
@@ -122,12 +121,12 @@ export class RadarChart {
     
     for (let i = 0; i < N; i++) {
       const crit = criteria[i];
-      const val = ratings[crit.id] || 0; // Default to 0 if not rated
+      const val = ratings[crit.id] || 0;
       const r = this.maxRadius * (val / 5);
       const x = this.cx + r * Math.cos(angles[i]);
       const y = this.cy + r * Math.sin(angles[i]);
       dataPoints.push(`${x},${y}`);
-      ratingPointsArray.push({ x, y, val, name: crit.name });
+      ratingPointsArray.push({ x, y, val });
     }
 
     const dataGroup = document.createElementNS('http://www.w3.org/2000/svg', 'g');
@@ -164,48 +163,99 @@ export class RadarChart {
     });
     svg.appendChild(dataGroup);
 
-    // 4. Outer text labels for criteria
+    // 4. Outer text labels for criteria (safely aligned and clamped)
     const labelsGroup = document.createElementNS('http://www.w3.org/2000/svg', 'g');
     labelsGroup.setAttribute('class', 'radar-labels');
-    
+
+    const textRadius = this.maxRadius + 22;
+    const safePadding = 15;
+
     for (let i = 0; i < N; i++) {
       const crit = criteria[i];
       const val = ratings[crit.id] || 0;
       const angle = angles[i];
-      
-      // Push text slightly further out than maxRadius
-      const textRadius = this.maxRadius + 22;
+
       const x = this.cx + textRadius * Math.cos(angle);
       const y = this.cy + textRadius * Math.sin(angle);
 
-      const text = document.createElementNS('http://www.w3.org/2000/svg', 'text');
-      text.setAttribute('x', x);
-      // Adjust vertical alignment depending on location
+      // Clamp label coordinates inside SVG boundary to avoid cut-off
+      let labelX = x;
+      let labelY = y;
+
+      if (labelX < safePadding) {
+        labelX = safePadding;
+      } else if (labelX > this.width - safePadding) {
+        labelX = this.width - safePadding;
+      }
+
+      if (labelY < safePadding) {
+        labelY = safePadding;
+      } else if (labelY > this.height - safePadding) {
+        labelY = this.height - safePadding;
+      }
+
+      // Vertical alignment offset adjustment
       let dy = '0.35em';
       if (Math.abs(angle - (-Math.PI / 2)) < 0.1) {
-        // Top label
-        dy = '-0.4em';
+        dy = '-0.4em'; // Top label
       } else if (Math.abs(angle - (Math.PI / 2)) < 0.1) {
-        // Bottom label
-        dy = '1em';
+        dy = '1em'; // Bottom label
       }
-      text.setAttribute('dy', dy);
-      
-      // Text anchor alignment
+
+      // Horizontal anchor alignment
       let anchor = 'middle';
       if (Math.cos(angle) > 0.1) {
         anchor = 'start';
       } else if (Math.cos(angle) < -0.1) {
         anchor = 'end';
       }
-      text.setAttribute('text-anchor', anchor);
-      text.setAttribute('fill', 'var(--color-text-main, #e2e8f0)');
-      text.setAttribute('font-size', '12px');
-      text.setAttribute('font-weight', '500');
-      
-      // Text content (e.g., "映像: 4" or "映像: -")
-      text.textContent = `${crit.name}: ${val > 0 ? val : '-'}`;
-      labelsGroup.appendChild(text);
+
+      const textNode = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+      textNode.setAttribute('x', labelX);
+      textNode.setAttribute('y', labelY);
+      textNode.setAttribute('text-anchor', anchor);
+      textNode.setAttribute('fill', 'var(--color-text-main, #e2e8f0)');
+      textNode.setAttribute('font-size', '11px');
+      textNode.setAttribute('font-weight', '500');
+
+      // Native browser tooltip
+      const titleNode = document.createElementNS('http://www.w3.org/2000/svg', 'title');
+      titleNode.textContent = `${crit.name}: ${val > 0 ? val : '-'}`;
+      textNode.appendChild(titleNode);
+
+      // Split labels mapping: 8 characters per line limit for Japanese
+      const splitLimit = 8;
+      const scoreStr = `: ${val > 0 ? val : '-'}`;
+
+      if (crit.name.length <= splitLimit) {
+        const labelTspan = document.createElementNS('http://www.w3.org/2000/svg', 'tspan');
+        labelTspan.setAttribute('x', labelX);
+        labelTspan.setAttribute('dy', dy);
+        labelTspan.textContent = `${crit.name}${scoreStr}`;
+        textNode.appendChild(labelTspan);
+      } else {
+        const line1 = crit.name.substring(0, splitLimit);
+        let line2 = crit.name.substring(splitLimit);
+
+        if (line2.length > splitLimit) {
+          line2 = line2.substring(0, splitLimit - 1) + '...';
+        }
+
+        const tspan1 = document.createElementNS('http://www.w3.org/2000/svg', 'tspan');
+        tspan1.setAttribute('x', labelX);
+        tspan1.setAttribute('dy', '-0.3em');
+        tspan1.textContent = line1;
+
+        const tspan2 = document.createElementNS('http://www.w3.org/2000/svg', 'tspan');
+        tspan2.setAttribute('x', labelX);
+        tspan2.setAttribute('dy', '1.2em');
+        tspan2.textContent = `${line2}${scoreStr}`;
+
+        textNode.appendChild(tspan1);
+        textNode.appendChild(tspan2);
+      }
+
+      labelsGroup.appendChild(textNode);
     }
     svg.appendChild(labelsGroup);
 

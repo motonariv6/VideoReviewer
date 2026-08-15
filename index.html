@@ -112,6 +112,9 @@
             <option value="missing">見つからない</option>
             <option value="permission-required">権限が必要</option>
             <option value="unsupported">再生非対応</option>
+            <option value="scan-error">スキャンエラー</option>
+            <option value="no-directory">参照フォルダなし</option>
+            <option value="isolated">リンク切れ・エラー・参照元なし</option>
           </select>
         </div>
         <div class="input-group">
@@ -123,6 +126,11 @@
             <option value="grade-desc">総合評価の高い順</option>
             <option value="avgRating-desc">個別評価平均の高い順</option>
           </select>
+        </div>
+        <div class="input-group" id="bulk-delete-container" style="display:flex;align-items:flex-end">
+          <button id="btn-bulk-delete" class="btn btn-error hidden" style="width:100%;height:38px;white-space:nowrap;background-color:rgba(239,68,68,0.15);border:1px solid var(--color-error);color:var(--color-error)">
+            表示中の動画を一括削除
+          </button>
         </div>
       </section>
 
