@@ -23,7 +23,7 @@ const DEFAULT_CRITERIA = [
   { id: 'crit-replayability', name: '再視聴性', displayOrder: 6, isActive: true, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }
 ];
 
-// Sample Videos
+// Sample Videos with sourceType: 'url'
 const SAMPLE_VIDEOS = [
   {
     id: 'vid-sample-bunny',
@@ -34,6 +34,8 @@ const SAMPLE_VIDEOS = [
     duration: 596,
     thumbnailUrl: '',
     thumbnailId: '',
+    sourceType: 'url',
+    availabilityStatus: 'available',
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString()
   },
@@ -46,6 +48,8 @@ const SAMPLE_VIDEOS = [
     duration: 52,
     thumbnailUrl: '',
     thumbnailId: '',
+    sourceType: 'url',
+    availabilityStatus: 'available',
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString()
   },
@@ -58,14 +62,16 @@ const SAMPLE_VIDEOS = [
     duration: 734,
     thumbnailUrl: '',
     thumbnailId: '',
+    sourceType: 'url',
+    availabilityStatus: 'available',
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString()
   }
 ];
 
-// --- INDEXEDDB ADAPTER CLASS ---
+// --- INDEXEDDB ADAPTER CLASS (Version 2 with handles store) ---
 export class IndexedDBStore {
-  constructor(dbName = 'VideoReviewerDB', storeName = 'images', version = 1) {
+  constructor(dbName = 'VideoReviewerDB', storeName = 'images', version = 2) {
     this.dbName = dbName;
     this.storeName = storeName;
     this.version = version;
@@ -75,7 +81,6 @@ export class IndexedDBStore {
 
   init() {
     return new Promise((resolve, reject) => {
-      // Check if IndexedDB is supported
       if (typeof indexedDB === 'undefined') {
         this.initError = new Error('IndexedDB is not supported in this browser.');
         reject(this.initError);
@@ -87,8 +92,12 @@ export class IndexedDBStore {
 
         request.onupgradeneeded = (e) => {
           const db = e.target.result;
-          if (!db.objectStoreNames.contains(this.storeName)) {
-            db.createObjectStore(this.storeName, { keyPath: 'id' });
+          if (!db.objectStoreNames.contains('images')) {
+            db.createObjectStore('images', { keyPath: 'id' });
+          }
+          // Store 2: For Directory Handles
+          if (!db.objectStoreNames.contains('handles')) {
+            db.createObjectStore('handles', { keyPath: 'id' });
           }
         };
 
@@ -108,7 +117,8 @@ export class IndexedDBStore {
     });
   }
 
-  get(id) {
+  get(id, customStoreName = null) {
+    const store = customStoreName || this.storeName;
     return new Promise((resolve, reject) => {
       if (this.initError) {
         reject(new Error('IndexedDB is not available: ' + this.initError.message));
@@ -120,16 +130,16 @@ export class IndexedDBStore {
       }
 
       try {
-        const tx = this.db.transaction(this.storeName, 'readonly');
-        const store = tx.objectStore(this.storeName);
-        const req = store.get(id);
+        const tx = this.db.transaction(store, 'readonly');
+        const objectStore = tx.objectStore(store);
+        const req = objectStore.get(id);
 
         req.onsuccess = () => {
           resolve(req.result ? req.result.data : null);
         };
 
         req.onerror = (e) => {
-          reject(new Error('Failed to retrieve image: ' + e.target.error?.message));
+          reject(new Error(`Failed to retrieve from ${store}: ` + e.target.error?.message));
         };
       } catch (err) {
         reject(err);
@@ -137,7 +147,8 @@ export class IndexedDBStore {
     });
   }
 
-  put(id, data) {
+  put(id, data, customStoreName = null) {
+    const store = customStoreName || this.storeName;
     return new Promise((resolve, reject) => {
       if (this.initError) {
         reject(new Error('IndexedDB is not available: ' + this.initError.message));
@@ -149,16 +160,16 @@ export class IndexedDBStore {
       }
 
       try {
-        const tx = this.db.transaction(this.storeName, 'readwrite');
-        const store = tx.objectStore(this.storeName);
-        const req = store.put({ id, data, updatedAt: new Date().toISOString() });
+        const tx = this.db.transaction(store, 'readwrite');
+        const objectStore = tx.objectStore(store);
+        const req = objectStore.put({ id, data, updatedAt: new Date().toISOString() });
 
         req.onsuccess = () => {
           resolve();
         };
 
         req.onerror = (e) => {
-          reject(new Error('Failed to save image. Storage limit may have been reached: ' + e.target.error?.message));
+          reject(new Error(`Failed to save to ${store}: ` + e.target.error?.message));
         };
       } catch (err) {
         reject(err);
@@ -166,7 +177,8 @@ export class IndexedDBStore {
     });
   }
 
-  delete(id) {
+  delete(id, customStoreName = null) {
+    const store = customStoreName || this.storeName;
     return new Promise((resolve, reject) => {
       if (this.initError) {
         reject(new Error('IndexedDB is not available: ' + this.initError.message));
@@ -178,16 +190,16 @@ export class IndexedDBStore {
       }
 
       try {
-        const tx = this.db.transaction(this.storeName, 'readwrite');
-        const store = tx.objectStore(this.storeName);
-        const req = store.delete(id);
+        const tx = this.db.transaction(store, 'readwrite');
+        const objectStore = tx.objectStore(store);
+        const req = objectStore.delete(id);
 
         req.onsuccess = () => {
           resolve();
         };
 
         req.onerror = (e) => {
-          reject(new Error('Failed to delete image: ' + e.target.error?.message));
+          reject(new Error(`Failed to delete from ${store}: ` + e.target.error?.message));
         };
       } catch (err) {
         reject(err);
@@ -202,10 +214,17 @@ export class IndexedDBStore {
         return;
       }
       try {
-        const tx = this.db.transaction(this.storeName, 'readwrite');
-        const store = tx.objectStore(this.storeName);
+        const tx = this.db.transaction('images', 'readwrite');
+        const store = tx.objectStore('images');
         const req = store.clear();
-        req.onsuccess = () => resolve();
+        req.onsuccess = () => {
+          // Clear handles too
+          const tx2 = this.db.transaction('handles', 'readwrite');
+          const store2 = tx2.objectStore('handles');
+          const req2 = store2.clear();
+          req2.onsuccess = () => resolve();
+          req2.onerror = (e) => reject(e.target.error);
+        };
         req.onerror = (e) => reject(e.target.error);
       } catch (err) {
         reject(err);
@@ -216,13 +235,7 @@ export class IndexedDBStore {
 
 // --- DATABASE LAYER ---
 export class AppDatabase {
-  /**
-   * @param {Object} storageEngine - The storage engine (defaults to localStorage)
-   * @param {string} prefix - The prefix key (defaults to 'vreview_')
-   * @param {string} idbName - The IndexedDB name (defaults to 'VideoReviewerDB')
-   */
   constructor(storageEngine = null, prefix = 'vreview_', idbName = 'VideoReviewerDB') {
-    // Dependency injection support for tests
     this.storage = storageEngine || (typeof localStorage !== 'undefined' ? localStorage : null);
     this.prefix = prefix;
     this.idbName = idbName;
@@ -241,20 +254,38 @@ export class AppDatabase {
     this.tags = this._loadTable('tags', []);
     this.videoTags = this._loadTable('video_tags', []);
     this.timelineNotes = this._loadTable('timeline_notes', []);
+    
+    // Directory Sources table setup
+    this.directorySources = this._loadTable('directory_sources', []);
   }
 
-  // Initialize IndexedDB connection and run data migrations
   async initAsync() {
     this.idb = new IndexedDBStore(this.idbName);
     try {
       await this.idb.init();
       this.idbAvailable = true;
       
-      // Perform one-time migration from Base64 to IndexedDB Blobs
+      // Perform base64 conversion migrations
       await this._migrateSchema();
     } catch (e) {
-      console.warn('IndexedDB initialization failed. Images will fall back to legacy storage:', e.message);
+      console.warn('IndexedDB initialization failed. Images/Handles will fall back:', e.message);
       this.idbAvailable = false;
+    }
+
+    // sourceType property backfilling for legacy items
+    let videosChanged = false;
+    this.videos.forEach(v => {
+      if (!v.sourceType) {
+        v.sourceType = v.videoUrl ? 'url' : 'local-file';
+        videosChanged = true;
+      }
+      if (!v.availabilityStatus) {
+        v.availabilityStatus = 'available';
+        videosChanged = true;
+      }
+    });
+    if (videosChanged) {
+      this._saveTable('videos', this.videos);
     }
   }
 
@@ -278,7 +309,6 @@ export class AppDatabase {
     try {
       this.storage.setItem(`${this.prefix}${key}`, JSON.stringify(data));
     } catch (e) {
-      // Propagate localStorage QuotaExceededError
       throw new Error(`ブラウザの保存容量上限に達したため保存できませんでした (${e.name})`);
     }
   }
@@ -290,7 +320,7 @@ export class AppDatabase {
     const currentVersion = this.storage.getItem(versionKey);
 
     if (currentVersion === '2') {
-      return; // Already migrated
+      return;
     }
 
     console.log('Running IndexedDB image storage schema migration (v2)...');
@@ -303,7 +333,7 @@ export class AppDatabase {
           const blob = base64ToBlob(video.thumbnailUrl);
           if (blob) {
             const imgId = `img-vid-${video.id}`;
-            await this.idb.put(imgId, blob);
+            await this.idb.put(imgId, blob, 'images');
             video.thumbnailId = imgId;
             videosChanged = true;
           }
@@ -317,14 +347,13 @@ export class AppDatabase {
           const blob = base64ToBlob(note.thumbnailUrl);
           if (blob) {
             const imgId = `img-note-${note.id}`;
-            await this.idb.put(imgId, blob);
+            await this.idb.put(imgId, blob, 'images');
             note.thumbnailId = imgId;
             notesChanged = true;
           }
         }
       }
 
-      // Save changes if any
       if (videosChanged) {
         this._saveTable('videos', this.videos);
       }
@@ -332,11 +361,9 @@ export class AppDatabase {
         this._saveTable('timeline_notes', this.timelineNotes);
       }
 
-      // Set version
       this.storage.setItem(versionKey, '2');
       console.log('Migration to IndexedDB completed successfully.');
     } catch (err) {
-      // If migration fails, keep existing base64 data intact and log error
       console.error('IndexedDB image migration failed. Retaining original data:', err);
     }
   }
@@ -348,7 +375,7 @@ export class AppDatabase {
     if (!this.idbAvailable) {
       throw new Error('IndexedDB is not initialized or unavailable');
     }
-    return await this.idb.get(imageId);
+    return await this.idb.get(imageId, 'images');
   }
 
   async putImage(imageId, imageBlob) {
@@ -356,7 +383,100 @@ export class AppDatabase {
     if (!this.idbAvailable) {
       throw new Error('IndexedDB is not initialized or unavailable');
     }
-    await this.idb.put(imageId, imageBlob);
+    await this.idb.put(imageId, imageBlob, 'images');
+  }
+
+  // --- FILE SYSTEM ACCESS DIRECTORY HANDLES STORES ---
+
+  async getDirectoryHandle(handleKey) {
+    if (!this.idbAvailable) {
+      throw new Error('IndexedDB is not initialized or unavailable');
+    }
+    return await this.idb.get(handleKey, 'handles');
+  }
+
+  async putDirectoryHandle(handleKey, handle) {
+    if (!this.idbAvailable) {
+      throw new Error('IndexedDB is not initialized or unavailable');
+    }
+    await this.idb.put(handleKey, handle, 'handles');
+  }
+
+  async deleteDirectoryHandle(handleKey) {
+    if (!this.idbAvailable) {
+      throw new Error('IndexedDB is not initialized or unavailable');
+    }
+    await this.idb.delete(handleKey, 'handles');
+  }
+
+  // --- DIRECTORY SOURCES OPERATIONS ---
+
+  getDirectorySources() {
+    return this.directorySources;
+  }
+
+  getDirectorySource(id) {
+    return this.directorySources.find(ds => ds.id === id);
+  }
+
+  async addDirectorySource({ name, includeSubdirectories }) {
+    const id = 'dir-' + generateUUID();
+    const source = {
+      id,
+      name: name || '動画フォルダ',
+      handleKey: `directory-handle-${id}`,
+      includeSubdirectories: includeSubdirectories !== false,
+      permissionStatus: 'prompt', // Initial query needed on boot
+      lastScannedAt: '',
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    };
+
+    this.directorySources.push(source);
+    this._saveTable('directory_sources', this.directorySources);
+    return source;
+  }
+
+  async updateDirectorySource(id, updates) {
+    const idx = this.directorySources.findIndex(ds => ds.id === id);
+    if (idx !== -1) {
+      this.directorySources[idx] = {
+        ...this.directorySources[idx],
+        ...updates,
+        updatedAt: new Date().toISOString()
+      };
+      this._saveTable('directory_sources', this.directorySources);
+      return this.directorySources[idx];
+    }
+    return null;
+  }
+
+  async deleteDirectorySource(id) {
+    const source = this.getDirectorySource(id);
+    if (!source) return false;
+
+    // 1. Delete Handle from IndexedDB
+    if (this.idbAvailable) {
+      try {
+        await this.deleteDirectoryHandle(source.handleKey);
+      } catch (err) {
+        console.error('Failed to delete directory handle:', err);
+      }
+    }
+
+    // 2. Remove Source from list
+    this.directorySources = this.directorySources.filter(ds => ds.id !== id);
+    this._saveTable('directory_sources', this.directorySources);
+
+    // 3. Mark matching videos as 'permission-required' or 'missing' (do NOT delete ratings)
+    this.videos.forEach(v => {
+      if (v.sourceType === 'directory' && v.directoryId === id) {
+        v.availabilityStatus = 'permission-required';
+        v.updatedAt = new Date().toISOString();
+      }
+    });
+    this._saveTable('videos', this.videos);
+    return true;
   }
 
   // --- VIDEO OPERATIONS ---
@@ -369,9 +489,19 @@ export class AppDatabase {
     return this.videos.find(v => v.id === id);
   }
 
-  async addVideo({ title, fileName, fileSize, videoUrl, duration, thumbnailBlob }) {
-    // Prevent duplicates by checking fileName and fileSize
-    let existing = this.videos.find(v => v.fileName === fileName && v.fileSize === fileSize);
+  async addVideo({ title, fileName, fileSize, videoUrl, duration, thumbnailBlob, sourceType, directoryId, relativePath, lastModified }) {
+    const sType = sourceType || (videoUrl ? 'url' : 'local-file');
+    
+    // Prevent duplicates based on SourceType
+    let existing;
+    if (sType === 'directory') {
+      existing = this.videos.find(v => v.sourceType === 'directory' && v.directoryId === directoryId && v.relativePath === relativePath);
+    } else if (sType === 'url') {
+      existing = this.videos.find(v => v.sourceType === 'url' && v.videoUrl === videoUrl);
+    } else {
+      existing = this.videos.find(v => v.sourceType === 'local-file' && v.fileName === fileName && v.fileSize === fileSize);
+    }
+
     if (existing) {
       return existing;
     }
@@ -384,8 +514,13 @@ export class AppDatabase {
       fileSize: fileSize || 0,
       videoUrl: videoUrl || '',
       duration: duration || 0,
-      thumbnailUrl: '', // base64 field stays empty for new videos
+      thumbnailUrl: '',
       thumbnailId: '',
+      sourceType: sType,
+      directoryId: directoryId || null,
+      relativePath: relativePath || null,
+      lastModified: lastModified || 0,
+      availabilityStatus: 'available',
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString()
     };
@@ -397,7 +532,6 @@ export class AppDatabase {
         video.thumbnailId = imgId;
       } catch (err) {
         console.error('Failed to save new video thumbnail to IndexedDB:', err);
-        // We continue since the video metadata can still be added
       }
     }
 
@@ -530,7 +664,6 @@ export class AppDatabase {
 
     this._saveTable('video_reviews', this.reviews);
 
-    // Save individual criteria ratings
     this.criterionRatings = this.criterionRatings.filter(cr => cr.videoReviewId !== review.id);
 
     if (ratings && typeof ratings === 'object') {
@@ -631,7 +764,7 @@ export class AppDatabase {
       timestampSeconds: parseFloat(timestampSeconds),
       timestampLabel: timestampLabel || '00:00',
       comment: comment || '',
-      thumbnailUrl: '', // base64 stays empty
+      thumbnailUrl: '',
       thumbnailId: '',
       createdAt: now,
       updatedAt: now
@@ -675,7 +808,6 @@ export class AppDatabase {
     this.timelineNotes = this.timelineNotes.filter(n => n.id !== noteId);
     this._saveTable('timeline_notes', this.timelineNotes);
 
-    // Also delete binary image if available in IndexedDB
     if (note.thumbnailId && this.idbAvailable) {
       try {
         await this.idb.delete(note.thumbnailId);

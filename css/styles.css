@@ -1299,3 +1299,29 @@ header {
     opacity: 1;
   }
 }
+
+/* Card state styling */
+.video-card.status-missing {
+  opacity: 0.55;
+  border-color: rgba(244, 63, 94, 0.3) !important;
+}
+
+.video-card.status-permission-required {
+  opacity: 0.65;
+  border-color: rgba(245, 158, 11, 0.3) !important;
+}
+
+.video-card-meta-detail {
+  font-size: 0.6875rem;
+  color: var(--color-text-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin-top: -4px;
+}
+
+.btn:disabled {
+  opacity: 0.35;
+  pointer-events: none;
+  cursor: not-allowed;
+}

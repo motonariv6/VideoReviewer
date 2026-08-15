@@ -149,3 +149,24 @@ export function base64ToBlob(base64DataUrl) {
     return null;
   }
 }
+
+/**
+ * Traverses a FileSystemDirectoryHandle recursively using a relative path string
+ * to retrieve the target FileSystemFileHandle.
+ * @param {FileSystemDirectoryHandle} dirHandle 
+ * @param {string} relativePath 
+ * @returns {Promise<FileSystemFileHandle>}
+ */
+export async function getFileHandleFromRelativePath(dirHandle, relativePath) {
+  const parts = relativePath.split('/');
+  let currentHandle = dirHandle;
+  
+  for (let i = 0; i < parts.length - 1; i++) {
+    const part = parts[i];
+    if (!part) continue;
+    currentHandle = await currentHandle.getDirectoryHandle(part);
+  }
+  
+  const fileName = parts[parts.length - 1];
+  return await currentHandle.getFileHandle(fileName);
+}

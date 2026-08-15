@@ -1,5 +1,5 @@
 import { AppDatabase } from './db.js';
-import { formatTime, parseTime, generateFileSignature, captureVideoFrame, validateVideoUrl } from './video-helper.js';
+import { formatTime, parseTime, generateFileSignature, captureVideoFrame, validateVideoUrl, getFileHandleFromRelativePath } from './video-helper.js';
 import { RadarChart } from './radar.js';
 
 // Instantiate DB & components
@@ -10,7 +10,7 @@ let radar;
 const state = {
   currentView: 'library', // 'library' | 'editor'
   currentVideoId: null,
-  activeVideoFile: null,      // For currently playing local video
+  activeVideoFile: null,      // For currently playing local file or directory file
   activeBlobUrl: null,        // Tracks active video Blob URL for revoking
   videoFilesMap: new Map(),   // videoId -> File object cache for session
   imageBlobUrls: [],          // Tracks dynamic image Blob URLs to revoke on redraws
@@ -19,6 +19,7 @@ const state = {
   isDirty: false,
   capturedNoteTime: 0,
   capturedNoteThumb: null,    // Blob of screenshot frame
+  scanAbort: false,           // Scan abort flag
   
   // Filter & Sort state for library
   filters: {
@@ -26,6 +27,8 @@ const state = {
     tagId: '',
     overallGrade: '',
     status: '', // 'rated' | 'unrated'
+    sourceType: '', // 'directory' | 'local-file' | 'url' | ''
+    availability: '', // 'available' | 'missing' | 'permission-required' | 'unsupported' | ''
     sort: 'updatedAt-desc'
   }
 };
@@ -47,6 +50,8 @@ const els = {
   filterTag: document.getElementById('filter-tag'),
   filterGrade: document.getElementById('filter-grade'),
   filterStatus: document.getElementById('filter-review-status'),
+  filterSourceType: document.getElementById('filter-source-type'),
+  filterAvailability: document.getElementById('filter-availability'),
   filterSort: document.getElementById('filter-sort'),
   addLocalFileInput: document.getElementById('library-add-file'),
   btnAddUrlModal: document.getElementById('btn-add-url-modal'),
@@ -113,13 +118,31 @@ const els = {
   btnSaveReview: document.getElementById('editor-btn-save'),
   autosaveIndicator: document.getElementById('autosave-indicator'),
   
-  // Settings Modal
+  // Settings Modal (Evaluation)
   modalSettings: document.getElementById('modal-settings'),
   settingsCloseX: document.getElementById('settings-close-x'),
   settingsCriteriaList: document.getElementById('settings-criteria-list'),
   settingsNewNameInput: document.getElementById('settings-new-name-input'),
   settingsBtnAdd: document.getElementById('settings-btn-add'),
   settingsBtnSave: document.getElementById('settings-btn-save'),
+  
+  // Settings Modal (Video Folder additions)
+  folderApiFallbackMsg: document.getElementById('folder-api-fallback-msg'),
+  folderSettingsPanel: document.getElementById('folder-settings-panel'),
+  folderNameVal: document.getElementById('folder-name-val'),
+  folderStatusVal: document.getElementById('folder-status-val'),
+  folderPermissionVal: document.getElementById('folder-permission-val'),
+  folderVideoCountVal: document.getElementById('folder-video-count-val'),
+  folderLastScanVal: document.getElementById('folder-last-scan-val'),
+  folderRecursiveCheckbox: document.getElementById('folder-recursive-checkbox'),
+  scanProgressBox: document.getElementById('scan-progress-box'),
+  scanProgressFiles: document.getElementById('scan-progress-files'),
+  scanProgressVideos: document.getElementById('scan-progress-videos'),
+  btnFolderScanAbort: document.getElementById('btn-folder-scan-abort'),
+  btnFolderSelect: document.getElementById('btn-folder-select'),
+  btnFolderRescan: document.getElementById('btn-folder-rescan'),
+  btnFolderRequestPerm: document.getElementById('btn-folder-request-perm'),
+  btnFolderDisconnect: document.getElementById('btn-folder-disconnect'),
   
   // Toast notifications
   toastContainer: document.getElementById('toast-container')
@@ -131,6 +154,9 @@ document.addEventListener('DOMContentLoaded', async () => {
   
   // Connect to IndexedDB and run legacy image migration
   await db.initAsync();
+  
+  // Query permission for active directory sources on boot
+  await syncActiveDirectoryPermissions();
   
   initEventListeners();
   initAutosaveTimer();
@@ -173,6 +199,14 @@ function initEventListeners() {
     state.filters.status = els.filterStatus.value;
     renderLibrary();
   });
+  els.filterSourceType.addEventListener('change', () => {
+    state.filters.sourceType = els.filterSourceType.value;
+    renderLibrary();
+  });
+  els.filterAvailability.addEventListener('change', () => {
+    state.filters.availability = els.filterAvailability.value;
+    renderLibrary();
+  });
   els.filterSort.addEventListener('change', () => {
     state.filters.sort = els.filterSort.value;
     renderLibrary();
@@ -183,6 +217,16 @@ function initEventListeners() {
   els.settingsCloseX.addEventListener('click', closeSettingsModal);
   els.settingsBtnAdd.addEventListener('click', handleSettingsAddCriterion);
   els.settingsBtnSave.addEventListener('click', closeSettingsModal);
+  
+  // Directory Settings Buttons
+  els.btnFolderSelect.addEventListener('click', handleFolderSelect);
+  els.btnFolderRescan.addEventListener('click', handleFolderRescan);
+  els.btnFolderRequestPerm.addEventListener('click', handleFolderRequestPermission);
+  els.btnFolderDisconnect.addEventListener('click', handleFolderDisconnect);
+  els.btnFolderScanAbort.addEventListener('click', () => {
+    state.scanAbort = true;
+    showToast('スキャンを中止しています...', 'error');
+  });
 
   // Next / Prev Video buttons
   els.btnPrevVideo.addEventListener('click', () => navigateAdjacentVideo(-1));
@@ -267,7 +311,6 @@ function showToast(message, type = 'success') {
   
   els.toastContainer.appendChild(toast);
   
-  // Remove toast after 3 seconds
   setTimeout(() => {
     toast.remove();
   }, 3000);
@@ -313,11 +356,9 @@ async function loadImageToElement(imgElement, imageId, fallbackUrl) {
     }
   }
   
-  // Fallback to legacy base64 if present, else hide/placeholder
   if (fallbackUrl && fallbackUrl.startsWith('data:')) {
     imgElement.src = fallbackUrl;
   } else {
-    // Return empty string to show custom CSS placeholders
     imgElement.removeAttribute('src');
   }
 }
@@ -339,14 +380,43 @@ function clearDirty() {
 function initAutosaveTimer() {
   setInterval(() => {
     if (state.currentVideoId && state.isDirty && state.currentView === 'editor') {
-      saveReviewForm(true); // silent autosave
+      saveReviewForm(true);
     }
   }, 5000);
 }
 
+// Bootup Directory Permission Sync
+async function syncActiveDirectoryPermissions() {
+  const sources = db.getDirectorySources();
+  for (const source of sources) {
+    try {
+      const handle = await db.getDirectoryHandle(source.handleKey);
+      if (handle) {
+        const status = await handle.queryPermission({ mode: 'read' });
+        await db.updateDirectorySource(source.id, { permissionStatus: status });
+        
+        // Sync videos availabilityStatus based on permission
+        db.videos.forEach(v => {
+          if (v.sourceType === 'directory' && v.directoryId === source.id) {
+            v.availabilityStatus = (status === 'granted') ? 'available' : 'permission-required';
+          }
+        });
+      } else {
+        await db.updateDirectorySource(source.id, { permissionStatus: 'prompt' });
+        db.videos.forEach(v => {
+          if (v.sourceType === 'directory' && v.directoryId === source.id) {
+            v.availabilityStatus = 'permission-required';
+          }
+        });
+      }
+    } catch (err) {
+      console.error(`Failed to sync permission for directory source ${source.name}:`, err);
+    }
+  }
+}
+
 // Navigate Screen: Library (XSS Safe DOM creation)
 function renderLibrary() {
-  // Clear any cached thumbnail object URLs to prevent memory leaks
   clearImageBlobUrls();
 
   // Populate Tags list in filter select (XSS Safe)
@@ -402,7 +472,17 @@ function renderLibrary() {
     });
   }
 
-  // 5. Sort Videos
+  // 5. Source Type Filter
+  if (state.filters.sourceType) {
+    videos = videos.filter(v => v.sourceType === state.filters.sourceType);
+  }
+
+  // 6. Availability Status Filter
+  if (state.filters.availability) {
+    videos = videos.filter(v => v.availabilityStatus === state.filters.availability);
+  }
+
+  // 7. Sort Videos
   videos.sort((a, b) => {
     const rA = db.getReviewForVideo(a.id);
     const rB = db.getReviewForVideo(b.id);
@@ -468,6 +548,14 @@ function renderLibrary() {
       // Construct card securely
       const card = document.createElement('article');
       card.className = 'glass-card video-card';
+      
+      // Bind status styles
+      if (v.availabilityStatus === 'missing') {
+        card.classList.add('status-missing');
+      } else if (v.availabilityStatus === 'permission-required') {
+        card.classList.add('status-permission-required');
+      }
+      
       card.addEventListener('click', () => switchScreenToEditor(v.id));
 
       // Thumbnail wrapper
@@ -475,8 +563,7 @@ function renderLibrary() {
       thumbDiv.className = 'video-card-thumb';
 
       const img = document.createElement('img');
-      img.alt = v.title; // Secure property set
-      // Load thumbnail from IndexedDB async
+      img.alt = v.title;
       loadImageToElement(img, v.thumbnailId, v.thumbnailUrl);
       thumbDiv.appendChild(img);
 
@@ -489,8 +576,20 @@ function renderLibrary() {
       fallbackSvg.innerHTML = `<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />`;
       thumbDiv.appendChild(fallbackSvg);
 
-      // Grade badge
-      if (review && review.overallGrade) {
+      // Status Banners on Thumbnail (Missing / Permission required)
+      if (v.availabilityStatus === 'missing') {
+        const missingBadge = document.createElement('span');
+        missingBadge.className = 'video-card-badge';
+        missingBadge.style.backgroundColor = 'var(--color-error)';
+        missingBadge.textContent = 'ファイル消失';
+        thumbDiv.appendChild(missingBadge);
+      } else if (v.availabilityStatus === 'permission-required') {
+        const permBadge = document.createElement('span');
+        permBadge.className = 'video-card-badge';
+        permBadge.style.backgroundColor = 'var(--color-warning)';
+        permBadge.textContent = 'アクセス許可が必要';
+        thumbDiv.appendChild(permBadge);
+      } else if (review && review.overallGrade) {
         const gradeSpan = document.createElement('span');
         gradeSpan.className = 'video-card-badge';
         gradeSpan.style.backgroundColor = `var(--color-grade-${review.overallGrade.toLowerCase()})`;
@@ -512,8 +611,18 @@ function renderLibrary() {
       const titleH4 = document.createElement('h4');
       titleH4.className = 'video-card-title';
       titleH4.title = v.title;
-      titleH4.textContent = v.title; // Safe text
+      titleH4.textContent = v.title;
       bodyDiv.appendChild(titleH4);
+
+      // Source/Path Meta details for Directory Videos
+      if (v.sourceType === 'directory') {
+        const pathDiv = document.createElement('div');
+        pathDiv.className = 'video-card-meta-detail';
+        const source = db.getDirectorySource(v.directoryId);
+        const folderName = source ? source.name : 'フォルダ不明';
+        pathDiv.textContent = `📁 ${folderName} / ${v.relativePath}`;
+        bodyDiv.appendChild(pathDiv);
+      }
 
       // Rating Row
       const ratingRow = document.createElement('div');
@@ -547,7 +656,7 @@ function renderLibrary() {
         tags.slice(0, 3).forEach(t => {
           const tSpan = document.createElement('span');
           tSpan.className = 'tag-badge';
-          tSpan.textContent = t.name; // Safe text
+          tSpan.textContent = t.name;
           tagsDiv.appendChild(tSpan);
         });
         if (tags.length > 3) {
@@ -616,7 +725,6 @@ function handleBackToLibrary() {
     }
   }
   
-  // Pause video and clean playback references
   els.video.pause();
   els.video.removeAttribute('src');
   els.video.load();
@@ -647,7 +755,7 @@ function switchScreenToEditor(videoId) {
 
   // Set header details safely
   els.editorTitle.textContent = video.title;
-  els.infoFileName.textContent = video.fileName || 'URL動画';
+  els.infoFileName.textContent = video.fileName || (video.sourceType === 'url' ? 'URL動画' : 'フォルダ内動画');
   els.infoFileSize.textContent = video.fileSize ? (video.fileSize / 1024 / 1024).toFixed(1) + ' MB' : '-';
   els.infoDuration.textContent = formatTime(video.duration);
 
@@ -696,8 +804,69 @@ function switchScreenToEditor(videoId) {
   clearDirty();
 }
 
-// Load Video File / Url into HTML5 Video player (memory cleanup)
-function loadVideoMediaSource(video) {
+// Show specific errors on the player warning card
+function showFolderErrorOnPlayer(message, disableBtn = true) {
+  els.video.pause();
+  els.video.removeAttribute('src');
+  els.video.load();
+  els.activeVideoFile = null;
+  revokeActiveBlobUrl();
+
+  els.warningFileName.textContent = message;
+  els.reconnectCard.classList.remove('hidden');
+  
+  // Customize button
+  const fileInputLabel = els.reconnectCard.querySelector('label');
+  if (fileInputLabel) {
+    if (disableBtn) {
+      fileInputLabel.classList.add('hidden');
+    } else {
+      fileInputLabel.classList.remove('hidden');
+    }
+  }
+}
+
+// Show request permission card on player warning card
+function showFolderPermissionPromptOnPlayer(directoryHandle, source) {
+  showFolderErrorOnPlayer(`動画フォルダ「${source.name}」へのアクセス権限が必要です。`, false);
+  
+  // Repurpose label click to request permissions
+  const fileInputLabel = els.reconnectCard.querySelector('label');
+  const fileInput = els.reconnectFileInput;
+  
+  // Remove file selection listeners temporarily to trigger folder permission instead
+  fileInput.style.display = 'none'; // hide file input
+  fileInputLabel.style.cursor = 'pointer';
+  fileInputLabel.innerHTML = 'フォルダのアクセスを許可する';
+  
+  const grantPermissionHandler = async (e) => {
+    e.preventDefault();
+    try {
+      const status = await directoryHandle.requestPermission({ mode: 'read' });
+      if (status === 'granted') {
+        showToast('アクセスを許可しました');
+        await db.updateDirectorySource(source.id, { permissionStatus: 'granted' });
+        
+        // Restore label styling
+        fileInputLabel.innerHTML = '<input type="file" id="player-reconnect-file" accept="video/*" style="display:none">ファイルを指定して再生';
+        fileInput.style.display = '';
+        
+        // Reload video
+        const video = db.getVideo(state.currentVideoId);
+        if (video) loadVideoMediaSource(video);
+      } else {
+        showToast('アクセスが拒否されました', 'error');
+      }
+    } catch (err) {
+      showToast(`アクセス許可エラー: ${err.message}`, 'error');
+    }
+    fileInputLabel.removeEventListener('click', grantPermissionHandler);
+  };
+  fileInputLabel.addEventListener('click', grantPermissionHandler);
+}
+
+// Load Video File / Url into HTML5 Video player (memory cleanup & folder traversal)
+async function loadVideoMediaSource(video) {
   els.video.pause();
   els.video.removeAttribute('src');
   els.video.load();
@@ -706,25 +875,84 @@ function loadVideoMediaSource(video) {
   // Release old video file reference from RAM
   revokeActiveBlobUrl();
 
-  const isLocal = video.id.startsWith('local-') || video.fileName !== '';
-  
-  if (isLocal) {
+  if (video.sourceType === 'directory') {
+    const source = db.getDirectorySource(video.directoryId);
+    if (!source) {
+      showFolderErrorOnPlayer('接続フォルダ設定が削除されています。');
+      return;
+    }
+    
+    try {
+      const handle = await db.getDirectoryHandle(source.handleKey);
+      if (!handle) {
+        showFolderErrorOnPlayer('フォルダの継続参照ハンドルが見つかりません。再接続してください。');
+        return;
+      }
+
+      // Query active permissions
+      const perm = await handle.queryPermission({ mode: 'read' });
+      if (perm !== 'granted') {
+        showFolderPermissionPromptOnPlayer(handle, source);
+        return;
+      }
+
+      // Traverse path to resolve File
+      const fileHandle = await getFileHandleFromRelativePath(handle, video.relativePath);
+      const file = await fileHandle.getFile();
+      state.activeVideoFile = file;
+
+      const objectUrl = URL.createObjectURL(file);
+      state.activeBlobUrl = objectUrl;
+      els.video.src = objectUrl;
+      els.video.load();
+      
+      // Auto capture thumbnail if missing
+      if (!video.thumbnailId && !video.thumbnailUrl) {
+        els.video.addEventListener('loadeddata', async function grabFirstFrame() {
+          const blob = await captureVideoFrame(els.video);
+          if (blob) {
+            try {
+              await db.updateVideoThumbnail(video.id, blob);
+            } catch (err) {
+              console.error('Failed to auto save folder video thumbnail:', err);
+            }
+          }
+          els.video.removeEventListener('loadeddata', grabFirstFrame);
+        }, { once: true });
+      }
+    } catch (err) {
+      if (err.name === 'NotFoundError') {
+        showFolderErrorOnPlayer(`ファイルが見つかりません: ${video.relativePath}`);
+        await db.updateVideo(video.id, { availabilityStatus: 'missing' });
+        renderLibrary();
+      } else {
+        showFolderErrorOnPlayer(`ファイル読み込み失敗: ${err.message}`);
+      }
+    }
+  } else if (video.sourceType === 'url') {
+    els.video.src = video.videoUrl;
+    els.video.load();
+  } else {
+    // sourceType === 'local-file'
     const file = state.videoFilesMap.get(video.id);
     if (file) {
       state.activeVideoFile = file;
       const objectUrl = URL.createObjectURL(file);
-      state.activeBlobUrl = objectUrl; // Keep reference to revoke later
+      state.activeBlobUrl = objectUrl;
       els.video.src = objectUrl;
       els.video.load();
     } else {
       state.activeVideoFile = null;
       els.warningFileName.textContent = video.fileName;
+      
+      // Reset button innerHTML to default reconnect format
+      const fileInputLabel = els.reconnectCard.querySelector('label');
+      if (fileInputLabel) {
+        fileInputLabel.innerHTML = '<input type="file" id="player-reconnect-file" accept="video/*" style="display:none">ファイルを指定して再生';
+        fileInputLabel.classList.remove('hidden');
+      }
       els.reconnectCard.classList.remove('hidden');
     }
-  } else {
-    // Online MP4 Link
-    els.video.src = video.videoUrl;
-    els.video.load();
   }
 
   // Reset controls
@@ -768,16 +996,13 @@ function handleAddLocalFile(e) {
         fileSize: file.size,
         videoUrl: '',
         duration: duration,
-        thumbnailBlob: frameBlob
+        thumbnailBlob: frameBlob,
+        sourceType: 'local-file'
       });
 
-      // Save File context mapping in session
       state.videoFilesMap.set(added.id, file);
-
-      // Reset input
       els.addLocalFileInput.value = '';
 
-      // Route straight to editor workspace
       switchScreenToEditor(added.id);
       showToast('動画を追加しました');
     } catch (err) {
@@ -786,7 +1011,7 @@ function handleAddLocalFile(e) {
   };
   
   tempVideo.onerror = () => {
-    cleanup(); // Cleanup on error too
+    cleanup();
     
     db.addVideo({
       title: file.name,
@@ -794,7 +1019,8 @@ function handleAddLocalFile(e) {
       fileSize: file.size,
       videoUrl: '',
       duration: 0,
-      thumbnailBlob: null
+      thumbnailBlob: null,
+      sourceType: 'local-file'
     }).then(added => {
       state.videoFilesMap.set(added.id, file);
       els.addLocalFileInput.value = '';
@@ -814,7 +1040,6 @@ function handleReconnectFile(e) {
   const video = db.getVideo(state.currentVideoId);
   if (!video) return;
 
-  // Release old URL
   revokeActiveBlobUrl();
 
   // Save mapping
@@ -829,7 +1054,6 @@ function handleReconnectFile(e) {
 
   els.reconnectFileInput.value = '';
 
-  // Capture thumbnail if video is missing it
   if (!video.thumbnailId && !video.thumbnailUrl) {
     els.video.addEventListener('loadeddata', async function grabFirstFrame() {
       const blob = await captureVideoFrame(els.video);
@@ -859,7 +1083,6 @@ async function handleAddUrlSubmit() {
   }
 
   try {
-    // Protocol / pattern validation
     validateVideoUrl(url);
 
     const added = await db.addVideo({
@@ -868,10 +1091,10 @@ async function handleAddUrlSubmit() {
       fileSize: 0,
       videoUrl: url,
       duration: duration,
-      thumbnailBlob: null
+      thumbnailBlob: null,
+      sourceType: 'url'
     });
 
-    // Clear inputs
     els.urlTitleInput.value = '';
     els.urlPathInput.value = '';
     els.urlDurationInput.value = '';
@@ -905,6 +1128,12 @@ function navigateAdjacentVideo(direction) {
       const review = db.getReviewForVideo(v.id);
       return review && review.overallGrade === state.filters.overallGrade;
     });
+  }
+  if (state.filters.sourceType) {
+    videos = videos.filter(v => v.sourceType === state.filters.sourceType);
+  }
+  if (state.filters.availability) {
+    videos = videos.filter(v => v.availabilityStatus === state.filters.availability);
   }
 
   const currentIdx = videos.findIndex(v => v.id === state.currentVideoId);
@@ -950,7 +1179,7 @@ function renderStarCriteriaPanel() {
 
     const labelSpan = document.createElement('span');
     labelSpan.className = 'star-rating-label';
-    labelSpan.textContent = crit.name; // Safe
+    labelSpan.textContent = crit.name;
     row.appendChild(labelSpan);
 
     const interactiveDiv = document.createElement('div');
@@ -960,7 +1189,6 @@ function renderStarCriteriaPanel() {
     starsGroup.className = 'stars-group';
     starsGroup.setAttribute('data-criterion-id', crit.id);
 
-    // Build stars dynamically
     for (let s = 1; s <= 5; s++) {
       const starSvg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
       starSvg.setAttribute('class', `star-elem ${s <= currentScore ? 'active' : ''}`);
@@ -977,7 +1205,6 @@ function renderStarCriteriaPanel() {
           state.currentRatings[crit.id] = starVal;
         }
 
-        // Re-draw active star states in row
         const rowStars = starsGroup.querySelectorAll('.star-elem');
         rowStars.forEach((st, idx) => {
           if (idx < (state.currentRatings[crit.id] || 0)) {
@@ -1035,7 +1262,7 @@ function renderVideoTagsList() {
       chip.className = 'tag-chip';
       
       const label = document.createElement('span');
-      label.textContent = t.name; // Safe
+      label.textContent = t.name;
       chip.appendChild(label);
       
       const removeBtn = document.createElement('button');
@@ -1057,7 +1284,7 @@ function renderVideoTagsList() {
   }
 }
 
-// Tags Autocomplete dropdown (XSS Safe textContent)
+// Tags Autocomplete dropdown
 function handleTagInputAutocomplete() {
   const val = els.tagInputField.value.trim().toLowerCase();
   if (!val) {
@@ -1078,7 +1305,7 @@ function handleTagInputAutocomplete() {
   matches.forEach(t => {
     const item = document.createElement('div');
     item.className = 'autocomplete-item';
-    item.textContent = t.name; // Safe
+    item.textContent = t.name;
     item.addEventListener('click', async () => {
       if (state.currentVideoId) {
         try {
@@ -1118,7 +1345,6 @@ async function handleTagInputKeydown(e) {
 function renderTimelineNotesList() {
   if (!state.currentVideoId) return;
   
-  // Clear notes thumbnail Blob URLs to prevent leaks
   clearImageBlobUrls();
   
   const notes = db.getTimelineNotes(state.currentVideoId);
@@ -1199,7 +1425,7 @@ function renderTimelineNotesList() {
     const commentP = document.createElement('p');
     commentP.className = 'timeline-note-comment';
     if (note.comment) {
-      commentP.textContent = note.comment; // Safe
+      commentP.textContent = note.comment;
     } else {
       const italicSpan = document.createElement('span');
       italicSpan.style.color = 'var(--color-text-dim)';
@@ -1246,7 +1472,6 @@ async function addTimelineNote() {
       thumbnailBlob: state.capturedNoteThumb
     });
 
-    // Reset inputs
     els.timelineCommentField.value = '';
     state.capturedNoteThumb = null;
     state.capturedNoteTime = 0;
@@ -1259,7 +1484,7 @@ async function addTimelineNote() {
   }
 }
 
-// Save Ratings review data (async with validation / exception propagation)
+// Save Ratings review data
 async function saveReviewForm(isAutosave = false) {
   if (!state.currentVideoId) return;
 
@@ -1285,7 +1510,6 @@ async function saveReviewForm(isAutosave = false) {
       }, 1500);
     }
   } catch (err) {
-    // Show error toast without clearing dirty state
     showToast(`保存できませんでした: ${err.message}`, 'error');
   }
 }
@@ -1293,6 +1517,19 @@ async function saveReviewForm(isAutosave = false) {
 // --- SETTINGS VIEW PANEL OVERLAYS ---
 
 function openSettingsModal() {
+  // Check API capability
+  const isIdbSupported = (typeof indexedDB !== 'undefined');
+  const isFileSystemSupported = (typeof window.showDirectoryPicker === 'function');
+  
+  if (!isFileSystemSupported) {
+    els.folderApiFallbackMsg.classList.remove('hidden');
+    els.folderSettingsPanel.classList.add('hidden');
+  } else {
+    els.folderApiFallbackMsg.classList.add('hidden');
+    els.folderSettingsPanel.classList.remove('hidden');
+    renderFolderSettingsPanel();
+  }
+
   renderSettingsCriteriaList();
   openModal(els.modalSettings);
 }
@@ -1306,7 +1543,354 @@ function closeSettingsModal() {
   }
 }
 
-// Render settings criteria list securely
+// Render Folder Settings Panel inside the settings modal
+function renderFolderSettingsPanel() {
+  const sources = db.getDirectorySources();
+  const source = sources[0]; // Supports 1 active folder source in MVP
+  
+  if (!source) {
+    els.folderNameVal.textContent = '-';
+    els.folderStatusVal.textContent = '未接続';
+    els.folderStatusVal.style.color = 'var(--color-text-muted)';
+    els.folderPermissionVal.textContent = '-';
+    els.folderVideoCountVal.textContent = '0本';
+    els.folderLastScanVal.textContent = '-';
+    
+    els.btnFolderRescan.classList.add('hidden');
+    els.btnFolderRequestPerm.classList.add('hidden');
+    els.btnFolderDisconnect.classList.add('hidden');
+    els.btnFolderSelect.classList.remove('hidden');
+    return;
+  }
+
+  // Bind directory source properties safely
+  els.folderNameVal.textContent = source.name;
+  
+  // Status check
+  els.folderStatusVal.textContent = '接続済み';
+  els.folderStatusVal.style.color = 'var(--color-success)';
+  
+  // Permission status
+  let permColor = 'var(--color-text-dim)';
+  let permText = '確認中';
+  if (source.permissionStatus === 'granted') {
+    permText = '許可済み';
+    permColor = 'var(--color-success)';
+    
+    els.btnFolderRequestPerm.classList.add('hidden');
+    els.btnFolderRescan.classList.remove('hidden');
+  } else if (source.permissionStatus === 'prompt') {
+    permText = '許可が必要';
+    permColor = 'var(--color-warning)';
+    
+    els.btnFolderRequestPerm.classList.remove('hidden');
+    els.btnFolderRescan.classList.add('hidden');
+  } else {
+    permText = '拒否';
+    permColor = 'var(--color-error)';
+    
+    els.btnFolderRequestPerm.classList.remove('hidden');
+    els.btnFolderRescan.classList.add('hidden');
+  }
+  
+  els.folderPermissionVal.textContent = permText;
+  els.folderPermissionVal.style.color = permColor;
+  
+  // Registered videos count
+  const dirVideoCount = db.getVideos().filter(v => v.sourceType === 'directory' && v.directoryId === source.id).length;
+  els.folderVideoCountVal.textContent = `${dirVideoCount}本`;
+  
+  // Last scan
+  els.folderLastScanVal.textContent = source.lastScannedAt 
+    ? new Date(source.lastScannedAt).toLocaleString('ja-JP') 
+    : '未スキャン';
+  
+  // Checkbox state
+  els.folderRecursiveCheckbox.checked = source.includeSubdirectories;
+
+  els.btnFolderSelect.classList.add('hidden');
+  els.btnFolderDisconnect.classList.remove('hidden');
+}
+
+// Select a new folder on the host machine
+async function handleFolderSelect() {
+  if (!window.showDirectoryPicker) {
+    showToast('このブラウザはフォルダ選択に対応していません。', 'error');
+    return;
+  }
+
+  try {
+    const handle = await window.showDirectoryPicker({ mode: 'read' });
+    if (!handle) return;
+
+    // Check if confirming change is needed
+    const sources = db.getDirectorySources();
+    if (sources.length > 0) {
+      if (!confirm('すでに接続されているフォルダ設定があります。上書きして新しいフォルダを選択しますか？')) {
+        return;
+      }
+      // Delete old source
+      await db.deleteDirectorySource(sources[0].id);
+    }
+
+    // Save Directory source in localStorage
+    const source = await db.addDirectorySource({
+      name: handle.name,
+      includeSubdirectories: els.folderRecursiveCheckbox.checked
+    });
+
+    // Save Handle itself in IndexedDB
+    await db.putDirectoryHandle(source.handleKey, handle);
+    
+    // Update permission status in memory
+    const status = await handle.queryPermission({ mode: 'read' });
+    await db.updateDirectorySource(source.id, { permissionStatus: status });
+
+    showToast(`フォルダ「${handle.name}」を接続しました。`);
+    
+    renderFolderSettingsPanel();
+    
+    // Start initial scan
+    await startFolderScanning(source, handle);
+  } catch (err) {
+    // If cancelled, do not throw error UI toast
+    if (err.name === 'AbortError') {
+      console.log('Folder selection cancelled by user');
+      return;
+    }
+    showToast(`フォルダ接続エラー: ${err.message}`, 'error');
+  }
+}
+
+// Request permission context explicitly inside user click
+async function handleFolderRequestPermission() {
+  const source = db.getDirectorySources()[0];
+  if (!source) return;
+
+  try {
+    const handle = await db.getDirectoryHandle(source.handleKey);
+    if (!handle) {
+      showToast('フォルダの参照データが見つかりません。再接続してください。', 'error');
+      return;
+    }
+
+    const status = await handle.requestPermission({ mode: 'read' });
+    await db.updateDirectorySource(source.id, { permissionStatus: status });
+    
+    // Sync videos availabilityStatus
+    db.videos.forEach(v => {
+      if (v.sourceType === 'directory' && v.directoryId === source.id) {
+        v.availabilityStatus = (status === 'granted') ? 'available' : 'permission-required';
+      }
+    });
+    db._saveTable('videos', db.videos);
+
+    showToast(status === 'granted' ? 'アクセス権限が許可されました。' : 'アクセス権限が拒否されました。');
+    renderFolderSettingsPanel();
+    renderLibrary();
+  } catch (err) {
+    showToast(`権限要求エラー: ${err.message}`, 'error');
+  }
+}
+
+// Rescan current connected folder
+async function handleFolderRescan() {
+  const source = db.getDirectorySources()[0];
+  if (!source) return;
+
+  try {
+    const handle = await db.getDirectoryHandle(source.handleKey);
+    if (!handle) {
+      showToast('フォルダが見つかりません。再接続してください。', 'error');
+      return;
+    }
+    await startFolderScanning(source, handle);
+  } catch (err) {
+    showToast(`スキャン起動エラー: ${err.message}`, 'error');
+  }
+}
+
+// Non-blocking Folder scanner recursive traversal
+async function startFolderScanning(source, handle) {
+  state.scanAbort = false;
+  els.scanProgressBox.classList.remove('hidden');
+  els.scanProgressFiles.textContent = '0';
+  els.scanProgressVideos.textContent = '0';
+
+  const videoExtensions = new Set(['mp4', 'm4v', 'mov', 'webm', 'mkv', 'avi', 'wmv']);
+  const recursive = els.folderRecursiveCheckbox.checked;
+  // Update setting choice
+  await db.updateDirectorySource(source.id, { includeSubdirectories: recursive });
+
+  const scannedFilesList = [];
+  const queue = [{ dirHandle: handle, relPath: '' }];
+  let checkedCount = 0;
+
+  try {
+    while (queue.length > 0) {
+      if (state.scanAbort) {
+        throw new Error('Scan Aborted');
+      }
+
+      const { dirHandle, relPath } = queue.shift();
+      
+      for await (const entry of dirHandle.values()) {
+        if (state.scanAbort) {
+          throw new Error('Scan Aborted');
+        }
+
+        checkedCount++;
+
+        if (entry.kind === 'file') {
+          const ext = entry.name.split('.').pop().toLowerCase();
+          if (videoExtensions.has(ext)) {
+            try {
+              const file = await entry.getFile();
+              scannedFilesList.push({
+                fileName: entry.name,
+                fileSize: file.size,
+                lastModified: file.lastModified,
+                relativePath: relPath ? `${relPath}/${entry.name}` : entry.name
+              });
+            } catch (err) {
+              console.warn(`Failed to read file metadata for ${entry.name}:`, err.message);
+              // Continue scanning others
+            }
+          }
+        } else if (entry.kind === 'directory' && recursive) {
+          queue.push({
+            dirHandle: entry,
+            relPath: relPath ? `${relPath}/${entry.name}` : entry.name
+          });
+        }
+
+        // Yield to browser UI event loop periodically
+        if (checkedCount % 20 === 0) {
+          els.scanProgressFiles.textContent = checkedCount.toString();
+          els.scanProgressVideos.textContent = scannedFilesList.length.toString();
+          await new Promise(resolve => setTimeout(resolve, 0));
+        }
+      }
+    }
+
+    // Complete scan updates and differentials
+    els.scanProgressBox.classList.add('hidden');
+    
+    if (state.scanAbort) {
+      showToast('フォルダスキャンが中止されました。', 'error');
+      state.scanAbort = false;
+      return;
+    }
+
+    // Process differentials
+    const summary = await processScanDifferentials(source.id, scannedFilesList);
+    
+    // Save last scanned timestamp
+    await db.updateDirectorySource(source.id, { lastScannedAt: new Date().toISOString() });
+    
+    // Alert summary results to user
+    alert(`スキャン完了\n\n新規：${summary.added}本\n更新：${summary.updated}本\n変更なし：${summary.unchanged}本\n見つからない：${summary.missing}本\nエラー：${summary.error}本`);
+    
+    renderFolderSettingsPanel();
+    renderLibrary();
+  } catch (err) {
+    els.scanProgressBox.classList.add('hidden');
+    if (err.message === 'Scan Aborted') {
+      showToast('フォルダスキャンが中止されました。', 'error');
+    } else {
+      showToast(`スキャンエラー: ${err.message}`, 'error');
+    }
+  }
+}
+
+// Compare scan results with stored DB metadata to find differentials
+async function processScanDifferentials(directoryId, scannedFiles) {
+  const existingVideos = db.getVideos().filter(v => v.sourceType === 'directory' && v.directoryId === directoryId);
+  
+  let added = 0;
+  let updated = 0;
+  let unchanged = 0;
+  let missing = 0;
+  let errorCount = 0;
+
+  const scannedPaths = new Set(scannedFiles.map(sf => sf.relativePath));
+
+  // 1. Process Scanned Files (adds or updates metadata)
+  for (const sf of scannedFiles) {
+    const matched = existingVideos.find(ev => ev.relativePath === sf.relativePath);
+    if (!matched) {
+      // New video
+      try {
+        await db.addVideo({
+          title: sf.fileName,
+          fileName: sf.fileName,
+          fileSize: sf.fileSize,
+          videoUrl: '',
+          duration: 0,
+          thumbnailBlob: null,
+          sourceType: 'directory',
+          directoryId,
+          relativePath: sf.relativePath,
+          lastModified: sf.lastModified
+        });
+        added++;
+      } catch (e) {
+        errorCount++;
+      }
+    } else {
+      // Match relative path. Check updates
+      const isModified = matched.fileSize !== sf.fileSize || matched.lastModified !== sf.lastModified;
+      if (isModified) {
+        try {
+          await db.updateVideo(matched.id, {
+            fileSize: sf.fileSize,
+            lastModified: sf.lastModified,
+            availabilityStatus: 'available'
+          });
+          updated++;
+        } catch (e) {
+          errorCount++;
+        }
+      } else {
+        // Unchanged
+        await db.updateVideo(matched.id, { availabilityStatus: 'available' });
+        unchanged++;
+      }
+    }
+  }
+
+  // 2. Process missing files (registered in DB but missing on disk)
+  for (const ev of existingVideos) {
+    if (!scannedPaths.has(ev.relativePath)) {
+      await db.updateVideo(ev.id, { availabilityStatus: 'missing' });
+      missing++;
+    }
+  }
+
+  return { added, updated, unchanged, missing, error: errorCount };
+}
+
+// Confirm Disconnect Folder Source
+async function handleFolderDisconnect() {
+  const sources = db.getDirectorySources();
+  if (sources.length === 0) return;
+
+  const source = sources[0];
+  if (!confirm(`動画フォルダ「${source.name}」との接続を解除します。\n登録済みの評価・タグ・コメントは削除されません。`)) {
+    return;
+  }
+
+  try {
+    await db.deleteDirectorySource(source.id);
+    showToast('動画フォルダの接続を解除しました。');
+    renderFolderSettingsPanel();
+    renderLibrary();
+  } catch (err) {
+    showToast(`接続解除エラー: ${err.message}`, 'error');
+  }
+}
+
+// Settings criteria rows renderer (XSS Safe DOM)
 function renderSettingsCriteriaList() {
   const criteria = db.getCriteria();
   els.settingsCriteriaList.innerHTML = '';
@@ -1318,7 +1902,6 @@ function renderSettingsCriteriaList() {
     const controlsDiv = document.createElement('div');
     controlsDiv.className = 'criterion-order-controls';
 
-    // Up order button
     const upBtn = document.createElement('button');
     upBtn.className = 'criterion-order-btn up';
     upBtn.title = '上に移動';
@@ -1340,7 +1923,6 @@ function renderSettingsCriteriaList() {
     });
     controlsDiv.appendChild(upBtn);
 
-    // Down order button
     const downBtn = document.createElement('button');
     downBtn.className = 'criterion-order-btn down';
     downBtn.title = '下に移動';
@@ -1363,11 +1945,10 @@ function renderSettingsCriteriaList() {
     controlsDiv.appendChild(downBtn);
     row.appendChild(controlsDiv);
 
-    // Input renaming element
     const input = document.createElement('input');
     input.type = 'text';
     input.className = 'form-input criterion-input-field';
-    input.value = crit.name; // Safe
+    input.value = crit.name;
     input.addEventListener('change', async () => {
       const newName = input.value.trim();
       if (newName) {
@@ -1378,7 +1959,6 @@ function renderSettingsCriteriaList() {
     });
     row.appendChild(input);
 
-    // Active toggle
     const activeLabel = document.createElement('label');
     activeLabel.style.display = 'flex';
     activeLabel.style.alignItems = 'center';
@@ -1408,7 +1988,6 @@ function renderSettingsCriteriaList() {
     activeLabel.appendChild(document.createTextNode('有効'));
     row.appendChild(activeLabel);
 
-    // Delete button
     const deleteBtn = document.createElement('button');
     deleteBtn.className = 'btn-icon btn-danger settings-criterion-delete';
     deleteBtn.title = '削除';
@@ -1427,7 +2006,6 @@ function renderSettingsCriteriaList() {
     els.settingsCriteriaList.appendChild(row);
   });
 
-  // Enable/Disable Add inputs based on max 6 check
   const activeCount = db.getActiveCriteria().length;
   if (activeCount >= 6) {
     els.settingsNewNameInput.disabled = true;
