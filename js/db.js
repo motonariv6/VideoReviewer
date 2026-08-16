@@ -372,6 +372,7 @@ export class AppDatabase {
   }
 
   _saveTable(key, data) {
+    if (this._inRestoreTransaction && !this._allowSaveDuringRestore) return;
     if (!this.storage) return;
     try {
       this.storage.setItem(`${this.prefix}${key}`, JSON.stringify(data));
@@ -1072,29 +1073,63 @@ export class AppDatabase {
   }
 
   _saveAll() {
-    this._saveTable('videos', this.videos);
-    this._saveTable('rating_criteria', this.criteria);
-    this._saveTable('video_reviews', this.reviews);
-    this._saveTable('criterion_ratings', this.criterionRatings);
-    this._saveTable('tags', this.tags);
-    this._saveTable('video_tags', this.videoTags);
-    this._saveTable('timeline_notes', this.timelineNotes);
-    this._saveTable('directory_sources', this.directorySources);
-    this._saveTable('genres', this.genres);
-    this._saveTable('evaluation_templates', this.templates);
+    const prevAllow = this._allowSaveDuringRestore;
+    this._allowSaveDuringRestore = true;
+    try {
+      this._saveTable('videos', this.videos);
+      this._saveTable('rating_criteria', this.criteria);
+      this._saveTable('video_reviews', this.reviews);
+      this._saveTable('criterion_ratings', this.criterionRatings);
+      this._saveTable('tags', this.tags);
+      this._saveTable('video_tags', this.videoTags);
+      this._saveTable('timeline_notes', this.timelineNotes);
+      this._saveTable('directory_sources', this.directorySources);
+      this._saveTable('genres', this.genres);
+      this._saveTable('evaluation_templates', this.templates);
+    } finally {
+      this._allowSaveDuringRestore = prevAllow;
+    }
   }
 
   // Production Backup integrity validator
-  validateBackupData(parsedDb, manifest) {
-    // 1. Verify schemaVersion is exactly a supported integer
+  validateBackupData(parsedDb, manifest, imageIds = []) {
+    // 1. Verify manifest exists
     if (!manifest || typeof manifest !== 'object') {
       throw new Error('マニフェストファイルがありません。');
     }
+
+    // 2. Verify schemaVersion is exactly a supported integer
     if (!Number.isInteger(manifest.schemaVersion) || manifest.schemaVersion !== 1) {
       throw new Error(`サポートされていないスキーマバージョンです: ${manifest.schemaVersion}`);
     }
 
-    // 2. Validate tables presence and types
+    // 3. Verify manifest.createdAt is a valid ISO timestamp
+    if (typeof manifest.createdAt !== 'string' || isNaN(Date.parse(manifest.createdAt))) {
+      throw new Error('マニフェストの作成日時 (createdAt) が不正なフォーマットです。');
+    }
+
+    // 4. Verify counts object and required fields
+    if (!manifest.counts || typeof manifest.counts !== 'object') {
+      throw new Error('マニフェストに counts が存在しません。');
+    }
+    const reqCounts = ['videos', 'reviews', 'images'];
+    reqCounts.forEach(c => {
+      const val = manifest.counts[c];
+      if (typeof val !== 'number' || !Number.isInteger(val) || val < 0) {
+        throw new Error(`manifest.counts.${c} は非負の整数である必要があります。`);
+      }
+    });
+
+    // 5. Validate duplicate ZIP image IDs
+    const seenImages = new Set();
+    imageIds.forEach(imgId => {
+      if (seenImages.has(imgId)) {
+        throw new Error(`ZIP内に重複する画像IDが検出されました: ${imgId}`);
+      }
+      seenImages.add(imgId);
+    });
+
+    // 6. Validate tables presence and types
     const tables = [
       'videos', 'rating_criteria', 'video_reviews', 'criterion_ratings',
       'tags', 'video_tags', 'timeline_notes', 'directory_sources',
@@ -1106,7 +1141,18 @@ export class AppDatabase {
       }
     });
 
-    // 3. Validate structural existence in genres and templates
+    // 7. Match counts
+    if (manifest.counts.videos !== parsedDb.videos.length) {
+      throw new Error('動画の件数がマニフェストのカウントと一致しません。');
+    }
+    if (manifest.counts.reviews !== parsedDb.video_reviews.length) {
+      throw new Error('レビューの件数がマニフェストのカウントと一致しません。');
+    }
+    if (manifest.counts.images !== imageIds.length) {
+      throw new Error('画像の件数がマニフェストのカウントと一致しません。');
+    }
+
+    // 8. Validate structural existence in genres and templates
     parsedDb.genres.forEach(g => {
       if (!g.id || !g.name) {
         throw new Error('ジャンルテーブルのレコードに不正なデータが含まれています。');
@@ -1118,7 +1164,7 @@ export class AppDatabase {
       }
     });
 
-    // 4. Validate duplicate IDs within each table
+    // 9. Validate duplicate IDs within each table
     const tablesWithId = ['videos', 'rating_criteria', 'video_reviews', 'tags', 'timeline_notes', 'directory_sources', 'genres', 'evaluation_templates'];
     tablesWithId.forEach(t => {
       const ids = new Set();
@@ -1129,7 +1175,37 @@ export class AppDatabase {
       });
     });
 
-    // 5. Validate cross-table references (referential integrity check)
+    // 10. Validate criterion_ratings IDs are present and unique
+    const crIds = new Set();
+    parsedDb.criterion_ratings.forEach(cr => {
+      if (!cr.id) {
+        throw new Error('criterion_ratings のレコードに ID がありません。');
+      }
+      if (crIds.has(cr.id)) {
+        throw new Error(`criterion_ratings に重複する ID ${cr.id} が検出されました。`);
+      }
+      crIds.add(cr.id);
+    });
+
+    // 11. Validate every video.thumbnailId references an existing ZIP image
+    parsedDb.videos.forEach(v => {
+      if (v.thumbnailId) {
+        if (!imageIds.includes(v.thumbnailId)) {
+          throw new Error(`動画 ${v.id} が参照するサムネイル画像 ${v.thumbnailId} がZIP内に存在しません。`);
+        }
+      }
+    });
+
+    // 12. Validate every timeline note thumbnailId references an existing ZIP image
+    parsedDb.timeline_notes.forEach(n => {
+      if (n.thumbnailId) {
+        if (!imageIds.includes(n.thumbnailId)) {
+          throw new Error(`タイムラインメモ ${n.id} が参照する画像 ${n.thumbnailId} がZIP内に存在しません。`);
+        }
+      }
+    });
+
+    // 13. Validate cross-table references (referential integrity check)
     parsedDb.video_reviews.forEach(r => {
       if (!parsedDb.videos.some(v => v.id === r.videoId)) {
         throw new Error(`レビュー ${r.id} が参照する動画 ${r.videoId} が存在しません。`);
@@ -1181,41 +1257,126 @@ export class AppDatabase {
     return true;
   }
 
-  // Production Restore execution method
-  async executeRestore(parsedDb, images) {
-    // 1. Import images first
+  // Production Restore execution method with full transaction rollback (memory, storage, IndexedDB)
+  async restoreWithRollback(parsedDb, images) {
+    // 1. Snapshot in-memory collections (deep copy)
+    const inMemorySnapshot = {
+      videos: JSON.parse(JSON.stringify(this.videos)),
+      criteria: JSON.parse(JSON.stringify(this.criteria)),
+      reviews: JSON.parse(JSON.stringify(this.reviews)),
+      criterionRatings: JSON.parse(JSON.stringify(this.criterionRatings)),
+      tags: JSON.parse(JSON.stringify(this.tags)),
+      videoTags: JSON.parse(JSON.stringify(this.videoTags)),
+      timelineNotes: JSON.parse(JSON.stringify(this.timelineNotes)),
+      directorySources: JSON.parse(JSON.stringify(this.directorySources)),
+      genres: JSON.parse(JSON.stringify(this.genres)),
+      templates: JSON.parse(JSON.stringify(this.templates))
+    };
+
+    // 2. Snapshot original localStorage entries
+    const originalLocalData = {};
+    const localKeys = [
+      'videos', 'rating_criteria', 'video_reviews', 'criterion_ratings',
+      'tags', 'video_tags', 'timeline_notes', 'directory_sources',
+      'genres', 'evaluation_templates'
+    ];
+    localKeys.forEach(k => {
+      originalLocalData[k] = this.storage ? this.storage.getItem(`${this.prefix}${k}`) : null;
+    });
+
+    // 3. Snapshot original IndexedDB images and DirectoryHandles
+    let originalImages = [];
+    let originalHandles = [];
     if (this.idbAvailable) {
-      await this.idb.clearImages();
-      const promises = images.map(img => this.idb.put(img.id, img.data, 'images'));
-      await Promise.all(promises);
+      try {
+        originalImages = await this.getAllImages();
+        originalHandles = await this.getAllDirectoryHandles();
+      } catch (e) {
+        console.warn('Failed to snapshot original images/handles:', e.message);
+        throw e;
+      }
     }
 
-    // 2. Save localStorage tables
-    this.videos = parsedDb.videos;
-    this.criteria = parsedDb.rating_criteria;
-    this.reviews = parsedDb.video_reviews;
-    this.criterionRatings = parsedDb.criterion_ratings;
-    this.tags = parsedDb.tags;
-    this.videoTags = parsedDb.video_tags;
-    this.timelineNotes = parsedDb.timeline_notes;
-    
-    // Disconnect folder sources (reset permissionStatus to prompt)
-    this.directorySources = (parsedDb.directory_sources || []).map(src => ({
-      ...src,
-      permissionStatus: 'prompt'
-    }));
-    
-    this.genres = parsedDb.genres;
-    this.templates = parsedDb.evaluation_templates;
+    try {
+      this._inRestoreTransaction = true;
 
-    this._saveAll();
+      // 4. Perform the write sequence
+      // 4a. Import images first
+      if (this.idbAvailable) {
+        await this.idb.clearImages();
+        const promises = images.map(img => this.idb.put(img.id, img.data, 'images'));
+        await Promise.all(promises);
+      }
 
-    // 3. Clear handles ONLY after all other writes succeed
-    if (this.idbAvailable) {
-      await this.idb.clearHandles();
+      // 4b. Assign parsedDb values to in-memory collections
+      this.videos = parsedDb.videos;
+      this.criteria = parsedDb.rating_criteria;
+      this.reviews = parsedDb.video_reviews;
+      this.criterionRatings = parsedDb.criterion_ratings;
+      this.tags = parsedDb.tags;
+      this.videoTags = parsedDb.video_tags;
+      this.timelineNotes = parsedDb.timeline_notes;
+      this.directorySources = (parsedDb.directory_sources || []).map(src => ({
+        ...src,
+        permissionStatus: 'prompt'
+      }));
+      this.genres = parsedDb.genres;
+      this.templates = parsedDb.evaluation_templates;
+
+      // 4c. Persist all tables to storage
+      this._saveAll();
+
+      // 4d. Clear handles only after everything else has succeeded
+      if (this.idbAvailable) {
+        await this.idb.clearHandles();
+      }
+
+      this._inRestoreTransaction = false;
+      return true;
+    } catch (err) {
+      console.error('Error during write phase, triggering rollback:', err);
+
+      // 5. Rollback everything
+      // 5a. Rollback in-memory properties
+      this.videos = inMemorySnapshot.videos;
+      this.criteria = inMemorySnapshot.criteria;
+      this.reviews = inMemorySnapshot.reviews;
+      this.criterionRatings = inMemorySnapshot.criterionRatings;
+      this.tags = inMemorySnapshot.tags;
+      this.videoTags = inMemorySnapshot.videoTags;
+      this.timelineNotes = inMemorySnapshot.timelineNotes;
+      this.directorySources = inMemorySnapshot.directorySources;
+      this.genres = inMemorySnapshot.genres;
+      this.templates = inMemorySnapshot.templates;
+
+      // 5b. Rollback localStorage
+      localKeys.forEach(k => {
+        if (originalLocalData[k] !== null) {
+          if (this.storage) this.storage.setItem(`${this.prefix}${k}`, originalLocalData[k]);
+        } else {
+          if (this.storage) this.storage.removeItem(`${this.prefix}${k}`);
+        }
+      });
+
+      // 5c. Rollback IndexedDB images and handles
+      if (this.idbAvailable) {
+        try {
+          await this.idb.clearImages();
+          await this.idb.clearHandles();
+
+          const rollbackImgPromises = originalImages.map(img => this.idb.put(img.id, img.data, 'images'));
+          await Promise.all(rollbackImgPromises);
+
+          const rollbackHandlePromises = originalHandles.map(h => this.idb.put(h.id, h.data, 'handles'));
+          await Promise.all(rollbackHandlePromises);
+        } catch (rollbackErr) {
+          console.error('Fatal error during IndexedDB rollback:', rollbackErr);
+        }
+      }
+
+      this._inRestoreTransaction = false;
+      throw err;
     }
-
-    return true;
   }
 
   // --- GENRE OPERATIONS ---

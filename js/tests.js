@@ -1002,7 +1002,8 @@ export async function runTests() {
       createdAt: new Date().toISOString(),
       counts: {
         videos: testDb.videos.length,
-        reviews: testDb.reviews.length
+        reviews: testDb.reviews.length,
+        images: 0
       }
     };
     zip.file('manifest.json', JSON.stringify(manifest));
@@ -1024,8 +1025,8 @@ export async function runTests() {
     assert(testDb2.videos.length !== testDb.videos.length, 'Fresh DB should not have the new video');
 
     // Production validation and restore invocation
-    testDb2.validateBackupData(restoredDbData, manifest);
-    await testDb2.executeRestore(restoredDbData, []);
+    testDb2.validateBackupData(restoredDbData, manifest, []);
+    await testDb2.restoreWithRollback(restoredDbData, []);
 
     const restoredVideo = testDb2.getVideo(newVideo.id);
     assert(restoredVideo !== null, 'Restored database must contain our test video');
@@ -1041,60 +1042,131 @@ export async function runTests() {
     const testDb = new AppDatabase(memoryStorage, 'test_v7_validation_');
     await testDb.initAsync();
 
-    // 1. Invalid schema version
-    const invalidManifest = { application: 'VideoReviewer', schemaVersion: 2 };
+    const validManifest = {
+      application: 'VideoReviewer',
+      schemaVersion: 1,
+      createdAt: '2026-08-16T12:00:00.000Z',
+      counts: { videos: 0, reviews: 0, images: 0 }
+    };
     const validDb = {
       videos: [], rating_criteria: [], video_reviews: [], criterion_ratings: [],
       tags: [], video_tags: [], timeline_notes: [], directory_sources: [],
       genres: [], evaluation_templates: []
     };
+
+    // 1. Valid case
+    testDb.validateBackupData(validDb, validManifest, []);
+
+    // 2. Invalid schema version
     try {
-      testDb.validateBackupData(validDb, invalidManifest);
+      testDb.validateBackupData(validDb, { ...validManifest, schemaVersion: 2 }, []);
       assert(false, 'Should throw error for schemaVersion !== 1');
     } catch (e) {
-      assert(e.message.includes('スキーマバージョン'), 'Error message about schema version');
+      assert(e.message.includes('スキーマバージョン'), 'Rejected invalid schema version');
     }
 
-    // 2. Missing templates or genres tables
-    const missingTablesDb = {
-      videos: [], rating_criteria: [], video_reviews: [], criterion_ratings: [],
-      tags: [], video_tags: [], timeline_notes: [], directory_sources: []
-    };
+    // 3. Invalid createdAt (not valid ISO timestamp)
     try {
-      testDb.validateBackupData(missingTablesDb, { application: 'VideoReviewer', schemaVersion: 1 });
-      assert(false, 'Should throw error for missing genres / templates');
+      testDb.validateBackupData(validDb, { ...validManifest, createdAt: 'invalid-date' }, []);
+      assert(false, 'Should throw error for invalid createdAt');
     } catch (e) {
-      assert(e.message.includes('テーブル genres が見つからない'), 'Error message about missing table');
+      assert(e.message.includes('createdAt'), 'Rejected invalid createdAt');
     }
 
-    // 3. Duplicate IDs validation
-    const duplicateIdsDb = {
-      videos: [{ id: 'vid-1', title: 'A' }, { id: 'vid-1', title: 'B' }],
-      rating_criteria: [], video_reviews: [], criterion_ratings: [],
-      tags: [], video_tags: [], timeline_notes: [], directory_sources: [],
-      genres: [], evaluation_templates: []
-    };
+    // 4. Missing manifest counts
     try {
-      testDb.validateBackupData(duplicateIdsDb, { application: 'VideoReviewer', schemaVersion: 1 });
-      assert(false, 'Should throw error for duplicate video IDs');
+      testDb.validateBackupData(validDb, { ...validManifest, counts: undefined }, []);
+      assert(false, 'Should throw error for missing counts');
     } catch (e) {
-      assert(e.message.includes('重複するID'), 'Error message about duplicate IDs');
+      assert(e.message.includes('counts'), 'Rejected missing counts');
     }
 
-    // 4. Referential integrity checks
-    const badRefDb = {
-      videos: [{ id: 'vid-1', title: 'A' }],
-      rating_criteria: [],
-      video_reviews: [{ id: 'rev-1', videoId: 'nonexistent-video' }],
-      criterion_ratings: [],
-      tags: [], video_tags: [], timeline_notes: [], directory_sources: [],
-      genres: [], evaluation_templates: []
+    // 5. Negative counts in manifest
+    try {
+      testDb.validateBackupData(validDb, {
+        ...validManifest,
+        counts: { videos: -1, reviews: 0, images: 0 }
+      }, []);
+      assert(false, 'Should throw error for negative counts');
+    } catch (e) {
+      assert(e.message.includes('非負の整数'), 'Rejected negative count');
+    }
+
+    // 6. manifest counts match database table counts (video count mismatch)
+    try {
+      testDb.validateBackupData(validDb, {
+        ...validManifest,
+        counts: { videos: 1, reviews: 0, images: 0 }
+      }, []);
+      assert(false, 'Should throw error for videos count mismatch');
+    } catch (e) {
+      assert(e.message.includes('動画の件数'), 'Rejected video count mismatch');
+    }
+
+    // 7. manifest image count matches ZIP image entries (image count mismatch)
+    try {
+      testDb.validateBackupData(validDb, {
+        ...validManifest,
+        counts: { videos: 0, reviews: 0, images: 1 }
+      }, []);
+      assert(false, 'Should throw error for images count mismatch');
+    } catch (e) {
+      assert(e.message.includes('画像の件数'), 'Rejected image count mismatch');
+    }
+
+    // 8. duplicate criterion rating ID
+    const badCrDb = {
+      ...validDb,
+      criterion_ratings: [{ id: 'rate-1', score: 3 }, { id: 'rate-1', score: 5 }]
     };
     try {
-      testDb.validateBackupData(badRefDb, { application: 'VideoReviewer', schemaVersion: 1 });
-      assert(false, 'Should throw error for invalid cross-table reference');
+      testDb.validateBackupData(badCrDb, validManifest, []);
+      assert(false, 'Should throw error for duplicate criterion rating ID');
     } catch (e) {
-      assert(e.message.includes('参照する動画 nonexistent-video が存在しません'), 'Error message about bad ref');
+      assert(e.message.includes('重複する ID rate-1'), 'Rejected duplicate criterion rating ID');
+    }
+
+    // 9. missing video thumbnail
+    const badVidDb = {
+      ...validDb,
+      videos: [{ id: 'vid-1', title: 'Test', thumbnailId: 'img-nonexistent' }]
+    };
+    try {
+      testDb.validateBackupData(badVidDb, {
+        ...validManifest,
+        counts: { videos: 1, reviews: 0, images: 0 }
+      }, []);
+      assert(false, 'Should throw error for missing video thumbnail');
+    } catch (e) {
+      assert(e.message.includes('ZIP内に存在しません'), 'Rejected missing video thumbnail image');
+    }
+
+    // 10. missing timeline-note image
+    const badNoteDb = {
+      ...validDb,
+      timeline_notes: [{ id: 'note-1', text: 'note text', thumbnailId: 'img-nonexistent', videoReviewId: 'rev-1' }],
+      video_reviews: [{ id: 'rev-1', videoId: 'vid-1' }],
+      videos: [{ id: 'vid-1', title: 'Test' }]
+    };
+    try {
+      testDb.validateBackupData(badNoteDb, {
+        ...validManifest,
+        counts: { videos: 1, reviews: 1, images: 0 }
+      }, []);
+      assert(false, 'Should throw error for missing timeline-note image');
+    } catch (e) {
+      assert(e.message.includes('ZIP内に存在しません'), 'Rejected missing note image');
+    }
+
+    // 11. duplicate ZIP image IDs
+    try {
+      testDb.validateBackupData(validDb, {
+        ...validManifest,
+        counts: { videos: 0, reviews: 0, images: 2 }
+      }, ['img-1', 'img-1']);
+      assert(false, 'Should throw error for duplicate ZIP image IDs');
+    } catch (e) {
+      assert(e.message.includes('重複する画像ID'), 'Rejected duplicate ZIP image IDs');
     }
   });
 
@@ -1103,8 +1175,17 @@ export async function runTests() {
     const testDb = new AppDatabase(memoryStorage, 'test_v7_tx_');
     await testDb.initAsync();
     
-    // Seed initial data
-    testDb.videos = [{ id: 'vid-original', title: 'Original Video' }];
+    // Seed initial database state with distinct objects in all collections
+    testDb.videos = [{ id: 'vid-original', title: 'Original' }];
+    testDb.criteria = [{ id: 'crit-original', name: 'Original' }];
+    testDb.reviews = [{ id: 'rev-original', videoId: 'vid-original' }];
+    testDb.criterionRatings = [{ id: 'rate-original', videoReviewId: 'rev-original', criterionId: 'crit-original', score: 3 }];
+    testDb.tags = [{ id: 'tag-original', name: 'Original' }];
+    testDb.videoTags = [{ videoId: 'vid-original', tagId: 'tag-original' }];
+    testDb.timelineNotes = [{ id: 'note-original', videoReviewId: 'rev-original', text: 'Original' }];
+    testDb.directorySources = [{ id: 'dir-original', name: 'Original' }];
+    testDb.genres = [{ id: 'genre-original', name: 'Original' }];
+    testDb.templates = [{ id: 'template-original', genreId: 'genre-original' }];
     testDb._saveAll();
     
     // Mock IndexedDB
@@ -1124,7 +1205,7 @@ export async function runTests() {
         return [];
       },
       put: async function(key, val, storeName) {
-        if (this.shouldFailPut) {
+        if (this.shouldFailPut && key === 'img-new') {
           throw new Error('Injected IndexedDB put failure');
         }
         this.store[key] = val;
@@ -1147,83 +1228,81 @@ export async function runTests() {
     // Target restore values
     const restoredData = {
       videos: [{ id: 'vid-new', title: 'New Video' }],
-      rating_criteria: [], video_reviews: [], criterion_ratings: [],
-      tags: [], video_tags: [], timeline_notes: [], directory_sources: [],
-      genres: [], evaluation_templates: []
+      rating_criteria: [{ id: 'crit-new', name: 'New' }],
+      video_reviews: [{ id: 'rev-new', videoId: 'vid-new' }],
+      criterion_ratings: [{ id: 'rate-new', videoReviewId: 'rev-new', criterionId: 'crit-new', score: 5 }],
+      tags: [{ id: 'tag-new', name: 'New' }],
+      video_tags: [{ videoId: 'vid-new', tagId: 'tag-new' }],
+      timeline_notes: [{ id: 'note-new', videoReviewId: 'rev-new', text: 'New' }],
+      directory_sources: [{ id: 'dir-new', name: 'New' }],
+      genres: [{ id: 'genre-new', name: 'New' }],
+      evaluation_templates: [{ id: 'template-new', genreId: 'genre-new' }]
     };
     const newImages = [{ id: 'img-new', data: new Blob(['new-img'], { type: 'image/jpeg' }) }];
 
     // --- TEST 1: Injected image put failure ---
     testDb.idb.shouldFailPut = true;
     
-    const originalTables = {};
-    const localKeys = [
-      'videos', 'rating_criteria', 'video_reviews', 'criterion_ratings',
-      'tags', 'video_tags', 'timeline_notes', 'directory_sources',
-      'genres', 'evaluation_templates'
-    ];
-    localKeys.forEach(k => {
-      originalTables[k] = memoryStorage.getItem(`test_v7_tx_${k}`);
-    });
-    const originalImages = await testDb.getAllImages();
-    const originalHandles = await testDb.getAllDirectoryHandles();
-
     let restoreSucceeded = false;
     try {
-      await testDb.executeRestore(restoredData, newImages);
+      await testDb.restoreWithRollback(restoredData, newImages);
       restoreSucceeded = true;
     } catch (err) {
-      // Disable failure mock to let rollback succeed
-      testDb.idb.shouldFailPut = false;
-      // Rollback sequence
-      await testDb.idb.clearImages();
-      await testDb.idb.clearHandles();
-      await Promise.all(originalImages.map(img => testDb.putImage(img.id, img.data)));
-      await Promise.all(originalHandles.map(h => testDb.putDirectoryHandle(h.id, h.data)));
-      localKeys.forEach(k => {
-        if (originalTables[k] !== null) {
-          memoryStorage.setItem(`test_v7_tx_${k}`, originalTables[k]);
-        } else {
-          memoryStorage.removeItem(`test_v7_tx_${k}`);
-        }
-      });
+      // Handled by restoreWithRollback
     }
 
     assert(restoreSucceeded === false, 'Restore should have failed due to IndexedDB error');
-    assert(testDb.videos[0].id === 'vid-original', 'Original tables must be preserved');
+    // Verify rollback integrity for every in-memory collection
+    assert(testDb.videos[0].id === 'vid-original', 'Original videos must be preserved');
+    assert(testDb.videos.some(v => v.id === 'vid-new') === false, 'New videos must not be present');
+    assert(testDb.criteria[0].id === 'crit-original', 'Original criteria must be preserved');
+    assert(testDb.reviews[0].id === 'rev-original', 'Original reviews must be preserved');
+    assert(testDb.criterionRatings[0].id === 'rate-original', 'Original criterionRatings must be preserved');
+    assert(testDb.tags[0].id === 'tag-original', 'Original tags must be preserved');
+    assert(testDb.videoTags[0].tagId === 'tag-original', 'Original videoTags must be preserved');
+    assert(testDb.timelineNotes[0].id === 'note-original', 'Original timelineNotes must be preserved');
+    assert(testDb.directorySources[0].id === 'dir-original', 'Original directorySources must be preserved');
+    assert(testDb.genres[0].id === 'genre-original', 'Original genres must be preserved');
+    assert(testDb.templates[0].id === 'template-original', 'Original templates must be preserved');
+
     assert(testDb.idb.store['img-original'] !== undefined, 'Original images must be preserved');
     assert(testDb.idb.store['handle-original'] !== undefined, 'Original DirectoryHandles must be preserved');
 
     // --- TEST 2: Injected localStorage write failure ---
     testDb.idb.shouldFailPut = false;
     
+    // Inject localStorage save failure via _saveTable mock
     const origSaveTable = testDb._saveTable;
-    testDb._saveTable = function() {
+    testDb._saveTable = function(key, data) {
       throw new Error('Injected localStorage write failure');
     };
 
     restoreSucceeded = false;
     try {
-      await testDb.executeRestore(restoredData, newImages);
+      await testDb.restoreWithRollback(restoredData, newImages);
       restoreSucceeded = true;
     } catch (err) {
-      // Rollback sequence
-      await testDb.idb.clearImages();
-      await testDb.idb.clearHandles();
-      await Promise.all(originalImages.map(img => testDb.putImage(img.id, img.data)));
-      await Promise.all(originalHandles.map(h => testDb.putDirectoryHandle(h.id, h.data)));
-      localKeys.forEach(k => {
-        if (originalTables[k] !== null) {
-          memoryStorage.setItem(`test_v7_tx_${k}`, originalTables[k]);
-        } else {
-          memoryStorage.removeItem(`test_v7_tx_${k}`);
-        }
-      });
+      // Handled by restoreWithRollback
     }
 
+    // Restore original _saveTable
     testDb._saveTable = origSaveTable;
 
     assert(restoreSucceeded === false, 'Restore should have failed due to localStorage write error');
+    
+    // Verify rollback integrity for every in-memory collection on localStorage failure
+    assert(testDb.videos[0].id === 'vid-original', 'Original videos must be preserved on localStorage write error');
+    assert(testDb.videos.some(v => v.id === 'vid-new') === false, 'New videos must not be present on localStorage write error');
+    assert(testDb.criteria[0].id === 'crit-original', 'Original criteria must be preserved on localStorage write error');
+    assert(testDb.reviews[0].id === 'rev-original', 'Original reviews must be preserved on localStorage write error');
+    assert(testDb.criterionRatings[0].id === 'rate-original', 'Original ratings must be preserved on localStorage write error');
+    assert(testDb.tags[0].id === 'tag-original', 'Original tags must be preserved on localStorage write error');
+    assert(testDb.videoTags[0].tagId === 'tag-original', 'Original videoTags must be preserved on localStorage write error');
+    assert(testDb.timelineNotes[0].id === 'note-original', 'Original timelineNotes must be preserved on localStorage write error');
+    assert(testDb.directorySources[0].id === 'dir-original', 'Original directorySources must be preserved on localStorage write error');
+    assert(testDb.genres[0].id === 'genre-original', 'Original genres must be preserved on localStorage write error');
+    assert(testDb.templates[0].id === 'template-original', 'Original templates must be preserved on localStorage write error');
+
     assert(testDb.idb.store['img-original'] !== undefined, 'Original images must remain intact');
     assert(testDb.idb.store['handle-original'] !== undefined, 'Original DirectoryHandles must remain intact');
   });
@@ -1236,6 +1315,9 @@ export async function runTests() {
     const sequenceLog = [];
     testDb.idbAvailable = true;
     testDb.idb = {
+      getAll: async function(storeName) {
+        return [];
+      },
       clearImages: async function() {
         sequenceLog.push('clearImages');
       },
@@ -1257,7 +1339,7 @@ export async function runTests() {
     };
     const newImages = [{ id: 'img-1', data: null }];
 
-    await testDb.executeRestore(restoredData, newImages);
+    await testDb.restoreWithRollback(restoredData, newImages);
 
     assert(sequenceLog[0] === 'clearImages', 'Images cleared first');
     assert(sequenceLog[1] === 'put:images', 'New images written');

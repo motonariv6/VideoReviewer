@@ -2849,8 +2849,23 @@ async function handleBackupRestore(e) {
 
     const parsedDb = JSON.parse(await dbFile.async('string'));
 
+    // Extract image IDs/keys from ZIP for validation
+    const imageIds = [];
+    const thumbnailsFolder = zip.folder('images/thumbnails');
+    const notesFolder = zip.folder('images/timeline-notes');
+    if (thumbnailsFolder) {
+      thumbnailsFolder.forEach((relativePath, zipEntry) => {
+        if (!zipEntry.dir) imageIds.push(relativePath);
+      });
+    }
+    if (notesFolder) {
+      notesFolder.forEach((relativePath, zipEntry) => {
+        if (!zipEntry.dir) imageIds.push(relativePath);
+      });
+    }
+
     // Invoke production database validation before overwrite confirmation
-    db.validateBackupData(parsedDb, manifest);
+    db.validateBackupData(parsedDb, manifest, imageIds);
 
     els.modalBackupProgress.classList.remove('open');
 
@@ -2878,32 +2893,11 @@ async function handleBackupRestore(e) {
     safetyLink.download = `VideoReviewer-safety-backup-before-restore-${safetyTimestamp}.zip`;
     safetyLink.click();
 
-    // Phase 2: Capture current state in memory for atomic rollback. Failures abort before writing anything.
-    els.backupProgressTitle.textContent = '復元を初期化中...';
-    els.backupProgressMsg.textContent = '現在のバックアップイメージを作成しています。';
-
-    const originalTables = {};
-    const localKeys = [
-      'videos', 'rating_criteria', 'video_reviews', 'criterion_ratings',
-      'tags', 'video_tags', 'timeline_notes', 'directory_sources',
-      'genres', 'evaluation_templates'
-    ];
-    localKeys.forEach(k => {
-      originalTables[k] = localStorage.getItem(`vreview_${k}`);
-    });
-
-    const originalImages = await db.getAllImages();
-    const originalHandles = await db.getAllDirectoryHandles();
-
     els.backupProgressTitle.textContent = 'データを復元中...';
     els.backupProgressMsg.textContent = 'データベースの上書き処理を実行しています。';
 
-    // Phase 3: Execute write sequence inside try-catch to trigger rollback on failures
+    // Phase 2: Extract images and execute production restore
     try {
-      // Extract images from ZIP
-      const thumbnailsFolder = zip.folder('images/thumbnails');
-      const notesFolder = zip.folder('images/timeline-notes');
-      
       const imageEntries = [];
       const imagePromises = [];
       
@@ -2933,8 +2927,8 @@ async function handleBackupRestore(e) {
 
       await Promise.all(imagePromises);
 
-      // Invoke production DB restore routine (writes images, then tables, then clears handles)
-      await db.executeRestore(parsedDb, imageEntries);
+      // Invoke production DB restore routine (writes images, then tables, then clears handles, with full rollback on failure)
+      await db.restoreWithRollback(parsedDb, imageEntries);
 
       els.modalBackupProgress.classList.remove('open');
       showToast('データの復元が完了しました。自動再読み込みします。');
@@ -2943,29 +2937,7 @@ async function handleBackupRestore(e) {
       }, 1000);
 
     } catch (innerErr) {
-      console.error('Error during write phase, triggering rollback:', innerErr);
-      
-      // Rollback IndexedDB images and handles
-      if (db.idbAvailable) {
-        await db.idb.clearImages();
-        await db.idb.clearHandles();
-
-        const rollbackImgPromises = originalImages.map(img => db.putImage(img.id, img.data));
-        await Promise.all(rollbackImgPromises);
-
-        const rollbackHandlePromises = originalHandles.map(h => db.putDirectoryHandle(h.id, h.data));
-        await Promise.all(rollbackHandlePromises);
-      }
-      
-      // Rollback LocalStorage tables
-      localKeys.forEach(k => {
-        if (originalTables[k] !== null) {
-          localStorage.setItem(`vreview_${k}`, originalTables[k]);
-        } else {
-          localStorage.removeItem(`vreview_${k}`);
-        }
-      });
-
+      console.error('Error during write phase:', innerErr);
       throw new Error('復元書き込み処理中にエラーが発生しました。データを元の状態にロールバックしました。: ' + innerErr.message);
     }
 
