@@ -4,7 +4,10 @@ import { RadarChart } from './radar.js';
 import { scanDirectory, classifyScanResults, applyScanDifferentials } from './directory-scanner.js';
 
 // Instantiate DB & components
-const db = new AppDatabase();
+export let db = new AppDatabase();
+export function setDbForTesting(mockDb) {
+  db = mockDb;
+}
 let radar;
 
 // IME Composition State Tracking
@@ -192,19 +195,21 @@ const els = {
 };
 
 // Initialize Application
-document.addEventListener('DOMContentLoaded', async () => {
-  radar = new RadarChart(document.getElementById('radar-chart-container'));
-  
-  // Connect to IndexedDB and run legacy image migration
-  await db.initAsync();
-  
-  // Query permission for active directory sources on boot
-  await syncActiveDirectoryPermissions();
-  
-  initEventListeners();
-  initAutosaveTimer();
-  renderLibrary();
-});
+if (typeof window !== 'undefined' && !window.__TEST_ENV__) {
+  document.addEventListener('DOMContentLoaded', async () => {
+    radar = new RadarChart(document.getElementById('radar-chart-container'));
+    
+    // Connect to IndexedDB and run legacy image migration
+    await db.initAsync();
+    
+    // Query permission for active directory sources on boot
+    await syncActiveDirectoryPermissions();
+    
+    initEventListeners();
+    initAutosaveTimer();
+    renderLibrary();
+  });
+}
 
 // Setup event bindings
 function initEventListeners() {
@@ -490,7 +495,7 @@ function initEventListeners() {
   els.btnCleanOrphanData.addEventListener('click', handleCleanOrphanData);
   
   // Directory Settings Buttons
-  els.btnFolderSelect.addEventListener('click', handleFolderSelect);
+  els.btnFolderSelect.addEventListener('click', () => handleFolderSelect());
   els.btnFolderRescan.addEventListener('click', handleFolderRescan);
   els.btnFolderRequestPerm.addEventListener('click', handleFolderRequestPermission);
   els.btnFolderDisconnect.addEventListener('click', handleFolderDisconnect);
@@ -631,7 +636,11 @@ function showToast(message, type = 'success') {
   span.textContent = message; // Safe text insertion
   toast.appendChild(span);
   
-  els.toastContainer.appendChild(toast);
+  if (els.toastContainer) {
+    els.toastContainer.appendChild(toast);
+  } else {
+    console.log(`[Toast] [${type}] ${message}`);
+  }
   
   setTimeout(() => {
     toast.remove();
@@ -2204,7 +2213,7 @@ function renderFolderSettingsPanel() {
 }
 
 // Select a new folder on the host machine using a Two-Phase Commit with Rollback
-async function handleFolderSelect(reconnectSourceId = null) {
+export async function handleFolderSelect(reconnectSourceId = null) {
   if (!window.showDirectoryPicker) {
     showToast('このブラウザはフォルダ選択に対応していません。', 'error');
     return;
@@ -2242,38 +2251,26 @@ async function handleFolderSelect(reconnectSourceId = null) {
       throw new Error('選択したフォルダへのアクセス権限がないか、読み取りに失敗しました。');
     }
 
-    if (reconnectSourceId) {
+    if (reconnectSourceId && typeof reconnectSourceId === 'string') {
       // Reconnect Mode: Update the existing source in place without creating a new ID
       const source = db.getDirectorySource(reconnectSourceId);
       if (!source) {
         throw new Error('再接続対象のフォルダソースが見つかりません。');
       }
 
-      const handleKey = source.handleKey || `directory-handle-${source.id}`;
-      // Copy handle to permanent location
-      await db.putDirectoryHandle(handleKey, handle);
-
-      const status = await handle.queryPermission({ mode: 'read' });
-      await db.updateDirectorySource(source.id, {
-        name: handle.name,
-        handleKey: handleKey,
-        permissionStatus: status,
-        updatedAt: new Date().toISOString()
-      });
-
-      // Update and persist video availability statuses via public DB method
-      await db.updateDirectoryVideosAvailability(source.id, status === 'granted' ? 'available' : 'permission-required');
+      await db.reconnectDirectorySource(source.id, handle);
 
       // Clean up temporary handle
       await db.deleteDirectoryHandle(tempKey);
       handleSavedToTemp = false;
 
       showToast('フォルダを再接続しました。');
-      renderFolderSettingsPanel();
-      renderLibrary();
-
-      // Trigger initial scan on the reconnected folder
-      await startFolderScanning(source, handle);
+      if (!window.__TEST_ENV__) {
+        renderFolderSettingsPanel();
+        renderLibrary();
+        // Trigger initial scan on the reconnected folder
+        await startFolderScanning(source, handle);
+      }
     } else {
       // Normal Mode: Overwrite / select a brand new folder source
       // Phase 4: Overwrite confirmation
@@ -2311,10 +2308,11 @@ async function handleFolderSelect(reconnectSourceId = null) {
       }
 
       showToast(`フォルダ「${handle.name}」を接続しました。`);
-      renderFolderSettingsPanel();
-      
-      // Trigger initial scan
-      await startFolderScanning(source, handle);
+      if (!window.__TEST_ENV__) {
+        renderFolderSettingsPanel();
+        // Trigger initial scan
+        await startFolderScanning(source, handle);
+      }
     }
   } catch (err) {
     if (err.name === 'AbortError') {
@@ -2335,13 +2333,13 @@ async function handleFolderSelect(reconnectSourceId = null) {
 }
 
 // Request permission context explicitly inside user click
-async function handleFolderRequestPermission() {
+export async function handleFolderRequestPermission() {
   const source = db.getDirectorySources()[0];
   if (!source) return;
 
   const isDisconnected = !source.handleKey || source.permissionStatus === 'disconnected';
   if (isDisconnected) {
-    await handleFolderSelect();
+    await handleFolderSelect(source.id);
     return;
   }
 
@@ -2350,7 +2348,9 @@ async function handleFolderRequestPermission() {
     if (!handle) {
       await db.updateDirectorySource(source.id, { handleKey: '', permissionStatus: 'disconnected' });
       showToast('フォルダの参照データが見つかりません。フォルダを再接続してください。', 'error');
-      renderFolderSettingsPanel();
+      if (!window.__TEST_ENV__) {
+        renderFolderSettingsPanel();
+      }
       return;
     }
 
@@ -2361,8 +2361,10 @@ async function handleFolderRequestPermission() {
     await db.updateDirectoryVideosAvailability(source.id, status === 'granted' ? 'available' : 'permission-required');
 
     showToast(status === 'granted' ? 'アクセス権限が許可されました。' : 'アクセス権限が拒否されました。');
-    renderFolderSettingsPanel();
-    renderLibrary();
+    if (!window.__TEST_ENV__) {
+      renderFolderSettingsPanel();
+      renderLibrary();
+    }
   } catch (err) {
     showToast(`権限要求エラー: ${err.message}`, 'error');
   }

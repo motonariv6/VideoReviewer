@@ -598,6 +598,31 @@ export class AppDatabase {
     return null;
   }
 
+  async reconnectDirectorySource(sourceId, handle) {
+    const source = this.getDirectorySource(sourceId);
+    if (!source) {
+      throw new Error('再接続対象のフォルダソースが見つかりません。');
+    }
+
+    const handleKey = source.handleKey || `directory-handle-${source.id}`;
+    if (this.idbAvailable) {
+      await this.putDirectoryHandle(handleKey, handle);
+    }
+
+    const status = typeof handle.queryPermission === 'function'
+      ? await handle.queryPermission({ mode: 'read' })
+      : 'granted';
+
+    await this.updateDirectorySource(source.id, {
+      name: handle.name,
+      handleKey: handleKey,
+      permissionStatus: status,
+      updatedAt: new Date().toISOString()
+    });
+
+    await this.updateDirectoryVideosAvailability(source.id, status === 'granted' ? 'available' : 'permission-required');
+  }
+
   async deleteDirectorySource(id) {
     const source = this.getDirectorySource(id);
     if (!source) return false;

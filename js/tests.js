@@ -2,6 +2,7 @@ import { AppDatabase } from './db.js';
 import { generateFileSignature, formatTime, parseTime, validateVideoUrl } from './video-helper.js';
 import { isSupportedVideoFile, isPathCoveredByFailedDirectory, scanDirectory, classifyScanResults, applyScanDifferentials } from './directory-scanner.js';
 import { RadarChart } from './radar.js';
+import { db, setDbForTesting, handleFolderSelect, handleFolderRequestPermission } from './app.js';
 
 // In-Memory Storage Driver for 100% isolated tests
 export class MemoryStorage {
@@ -1735,8 +1736,6 @@ export async function runTests() {
 
   console.groupEnd();
 
-  console.group('Group 10: Folder Reconnection & In-Place Re-association Tests');
-
   await runTest('Folder reconnection preserves source ID, video associations, and evaluations without duplication', async () => {
     const memory = new MemoryStorage();
     const testDb = new AppDatabase(memory, 'test_vreview_reconn_', 'TestVideoDB_ReconnectRegression');
@@ -1761,9 +1760,7 @@ export async function runTests() {
       permissionStatus: 'disconnected'
     });
 
-    const videoId = 'vid-1';
-    await testDb.addVideo({
-      id: videoId,
+    const video = await testDb.addVideo({
       title: 'video.mp4',
       fileName: 'video.mp4',
       fileSize: 5000,
@@ -1774,96 +1771,35 @@ export async function runTests() {
       relativePath: 'video.mp4',
       lastModified: 100
     });
+    const videoId = video.id; // Correctly get the generated video ID
 
-    // Add review, rating, tags, timeline notes to verify they are kept
+    // Add review, rating, tags, timeline notes referencing the actual generated videoId
     testDb.reviews = [{ id: 'rev-1', videoId: videoId, overallGrade: 'A' }];
     testDb.criterionRatings = [{ id: 'rate-1', videoReviewId: 'rev-1', criterionId: 'crit-1', score: 4 }];
     testDb.videoTags = [{ videoId: videoId, tagId: 'tag-1' }];
     testDb.timelineNotes = [{ id: 'note-1', videoReviewId: 'rev-1', text: 'Note 1' }];
     testDb._saveAll();
 
-    // Reconnection simulation function (mirroring the updated handleFolderSelect)
-    async function runFolderReconnectSelect({
-      db,
-      reconnectSourceId,
-      folderHandle,
-      isCancel = false
-    }) {
-      if (isCancel) return null; // Simulates user cancelling folder picker
-
-      const tempUUID = 'temp-uuid-reconn';
-      const tempKey = `pending-directory-handle-${tempUUID}`;
-
-      try {
-        // Phase 1: Try saving new handle under temporary key
-        await db.putDirectoryHandle(tempKey, folderHandle);
-
-        // Phase 2: Read it back
-        const verifiedHandle = await db.getDirectoryHandle(tempKey);
-        if (!verifiedHandle) throw new Error('Verification failed');
-
-        // Phase 3: Test-read
-        const iterator = verifiedHandle.values();
-        await iterator.next();
-
-        // Commit Reconnect
-        const source = db.getDirectorySource(reconnectSourceId);
-        if (!source) throw new Error('Source not found');
-
-        const handleKey = source.handleKey || `directory-handle-${source.id}`;
-        await db.putDirectoryHandle(handleKey, folderHandle);
-
-        const status = await folderHandle.queryPermission({ mode: 'read' });
-        const updatedSource = await db.updateDirectorySource(source.id, {
-          name: folderHandle.name,
-          handleKey: handleKey,
-          permissionStatus: status,
-          updatedAt: new Date().toISOString()
-        });
-
-        await db.updateDirectoryVideosAvailability(source.id, status === 'granted' ? 'available' : 'permission-required');
-        await db.deleteDirectoryHandle(tempKey);
-
-        return updatedSource;
-      } catch (err) {
-        throw err;
-      }
-    }
-
-    // A. Reconnection cancel check
-    // Ensure that cancellation does not change any existing source data or video directoryId
-    const cancelResult = await runFolderReconnectSelect({
-      db: testDb,
-      reconnectSourceId: initialSource.id,
-      folderHandle: null,
-      isCancel: true
-    });
-    assert(cancelResult === null, 'Reconnection cancel returns null');
-    assert(testDb.getDirectorySources()[0].permissionStatus === 'disconnected', 'Source permission remains disconnected');
-    assert(testDb.getVideos().find(v => v.relativePath === 'video.mp4').directoryId === initialSource.id, 'Video directoryId remains unchanged after cancel');
-
-    // B. Reconnect folder handle
+    // Reconnection via production DB method (Requirement 4)
     const folderHandle = new MockFileSystemDirectoryHandle('ReconnectedFolder', {
       'video.mp4': new MockFileSystemFileHandle('video.mp4', 5000, 100)
     });
-    const reconnectedSource = await runFolderReconnectSelect({
-      db: testDb,
-      reconnectSourceId: initialSource.id,
-      folderHandle: folderHandle
-    });
+    
+    await testDb.reconnectDirectorySource(initialSource.id, folderHandle);
+    
+    const reconnectedSource = testDb.getDirectorySource(initialSource.id);
 
-    // Check source.id and directoryId are kept
-    assert(reconnectedSource !== null, 'Reconnection must succeed');
+    // Check source.id is kept and updated
+    assert(reconnectedSource !== undefined, 'Reconnection must succeed');
     assert(reconnectedSource.id === initialSource.id, 'source.id is preserved (does not change)');
     assert(reconnectedSource.name === 'ReconnectedFolder', 'Folder source name is updated');
     assert(reconnectedSource.permissionStatus === 'granted', 'permissionStatus is updated to granted');
 
-    // C. Verify video directory ID is kept
+    // Verify video directory ID is kept
     const videoAfterReconnect = testDb.getVideos().find(v => v.relativePath === 'video.mp4');
     assert(videoAfterReconnect.directoryId === initialSource.id, 'Existing video directoryId remains the same');
 
-    // D. Simulate rescan and check for duplicates
-    // Using applyScanDifferentials to simulate scanning the reconnected folder
+    // Simulate rescan and check for duplicates
     const scanResult = {
       scannedFiles: [{ relativePath: 'video.mp4', fileName: 'video.mp4', fileSize: 5000, lastModified: 100 }],
       failedFiles: [],
@@ -1883,12 +1819,65 @@ export async function runTests() {
     assert(summary.unchanged === 1, 'The existing video should be matched and marked unchanged');
     assert(testDb.getVideos().filter(v => v.sourceType === 'directory').length === 1, 'Total video count remains exactly 1 (no duplicates)');
 
-    // E. Verify evaluations are preserved
+    // Verify evaluations are preserved
     assert(testDb.reviews.length === 1, 'Reviews are preserved');
     assert(testDb.reviews[0].videoId === videoId, 'Review is still linked to video');
     assert(testDb.criterionRatings.length === 1, 'Ratings are preserved');
     assert(testDb.videoTags.length === 1, 'Tags are preserved');
     assert(testDb.timelineNotes.length === 1, 'Timeline notes are preserved');
+  });
+
+  await runTest('Event handler path: handleFolderRequestPermission delegates to reconnect mode', async () => {
+    const memory = new MemoryStorage();
+    const testDb = new AppDatabase(memory, 'test_vreview_handler_path_', 'TestVideoDB_HandlerPath');
+    await testDb.initAsync();
+    testDb.idbAvailable = true;
+    testDb.idb = {
+      store: {},
+      get: async function(key, storeName) { return this.store[key] || null; },
+      put: async function(key, val, storeName) { this.store[key] = val; },
+      delete: async function(key, storeName) { delete this.store[key]; },
+      clear: async function() { this.store = {}; }
+    };
+
+    // Set as the app database (Requirement 3 & 4)
+    const originalAppDb = db;
+    setDbForTesting(testDb);
+
+    try {
+      const initialSource = await testDb.addDirectorySource({
+        name: 'OriginalFolder',
+        includeSubdirectories: true
+      });
+      // Set to disconnected
+      await testDb.updateDirectorySource(initialSource.id, {
+        handleKey: '',
+        permissionStatus: 'disconnected'
+      });
+
+      // Mock window.showDirectoryPicker
+      const folderHandle = new MockFileSystemDirectoryHandle('ReconnectedFolder', {
+        'video.mp4': new MockFileSystemFileHandle('video.mp4', 5000, 100)
+      });
+      const originalShowDirectoryPicker = window.showDirectoryPicker;
+      window.showDirectoryPicker = async () => folderHandle;
+
+      // Trigger the actual event handler path
+      await handleFolderRequestPermission();
+
+      // Restore picker
+      window.showDirectoryPicker = originalShowDirectoryPicker;
+
+      // Verify that reconnect happened and the source ID remains initialSource.id
+      const sources = testDb.getDirectorySources();
+      assert(sources.length === 1, 'Still only one directory source');
+      assert(sources[0].id === initialSource.id, 'Source ID is preserved after event handler reconnect');
+      assert(sources[0].name === 'ReconnectedFolder', 'Name updated via event handler');
+      assert(sources[0].permissionStatus === 'granted', 'Permission granted via event handler');
+    } finally {
+      // Revert the app database
+      setDbForTesting(originalAppDb);
+    }
   });
 
   await runTest('Normal folder switching continues to work as expected', async () => {
