@@ -1,6 +1,8 @@
 import { AppDatabase } from './db.js';
 import { generateFileSignature, formatTime, parseTime, validateVideoUrl } from './video-helper.js';
 import { isSupportedVideoFile, isPathCoveredByFailedDirectory, scanDirectory, classifyScanResults, applyScanDifferentials } from './directory-scanner.js';
+import { RadarChart } from './radar.js';
+import { db, setDbForTesting, handleFolderSelect, handleFolderRequestPermission } from './app.js';
 
 // In-Memory Storage Driver for 100% isolated tests
 export class MemoryStorage {
@@ -376,6 +378,22 @@ export async function runTests() {
     const memory = new MemoryStorage();
     const testDb = new AppDatabase(memory, 'test_vreview_fs_', 'TestVideoDB_FolderSwitchRegression');
     await testDb.initAsync();
+    testDb.idbAvailable = true;
+    testDb.idb = {
+      store: {},
+      get: async function(key, storeName) {
+        return this.store[key] || null;
+      },
+      put: async function(key, val, storeName) {
+        this.store[key] = val;
+      },
+      delete: async function(key, storeName) {
+        delete this.store[key];
+      },
+      clear: async function() {
+        this.store = {};
+      }
+    };
 
     // Simulation of handleFolderSelect with snapshotted old sources and safe deletes
     async function runFolderSelectSimulation({
@@ -700,6 +718,8 @@ export async function runTests() {
     const memory = new MemoryStorage();
     const testDb = new AppDatabase(memory, 'test_vreview_del_', 'TestVideoDB_CascadeDelete');
     await testDb.initAsync();
+    testDb.videos = [];
+    testDb._saveTable('videos', []);
 
     // 1. Setup Video A (to be deleted cascade) and Video B (to be kept)
     const vidA = await testDb.addVideo({
@@ -731,7 +751,7 @@ export async function runTests() {
     testDb._saveTable('video_tags', testDb.videoTags);
 
     // Add timeline notes
-    testDb.timelineNotes.push({ id: 'note-a1', videoId: vidA.id, time: 10, text: 'First note', thumbnailId: 'img-note-a1' });
+    testDb.timelineNotes.push({ id: 'note-a1', videoReviewId: revA.id, timestampSeconds: 10, comment: 'First note', thumbnailId: 'img-note-a1' });
     testDb._saveTable('timeline_notes', testDb.timelineNotes);
 
     // Seed thumbnails and note screenshots in IndexedDB mock if available
@@ -750,7 +770,7 @@ export async function runTests() {
     });
     testDb.videoTags.push({ videoId: vidB.id, tagId: 'tag-2' });
     testDb._saveTable('video_tags', testDb.videoTags);
-    testDb.timelineNotes.push({ id: 'note-b1', videoId: vidB.id, time: 20, text: 'Second note', thumbnailId: 'img-note-b1' });
+    testDb.timelineNotes.push({ id: 'note-b1', videoReviewId: revB.id, timestampSeconds: 20, comment: 'Second note', thumbnailId: 'img-note-b1' });
     testDb._saveTable('timeline_notes', testDb.timelineNotes);
 
     if (testDb.idbAvailable) {
@@ -857,6 +877,1053 @@ export async function runTests() {
       document.body.removeChild(container);
     }
   });
+
+  // --- GROUP 7: BACKUP/RESTORE, DISPLAY TITLE, GENRES TESTS ---
+
+  console.group('Group 7: New Features Tests');
+
+  await runTest('Display title fallback and editing constraints', async () => {
+    const memoryStorage = new MemoryStorage();
+    const testDb = new AppDatabase(memoryStorage, 'test_v7_title_');
+    await testDb.initAsync();
+
+    const video = testDb.videos[0];
+    assert(video !== undefined, 'Must have at least one sample video');
+    
+    // 2. Set custom display title
+    await testDb.updateVideo(video.id, { displayTitle: 'カスタムタイトル' });
+    
+    const updatedVideo = testDb.getVideo(video.id);
+    assert(updatedVideo.displayTitle === 'カスタムタイトル', 'Display title should be saved');
+    
+    // 3. Clear/set displayTitle to null
+    await testDb.updateVideo(video.id, { displayTitle: null });
+    const clearedVideo = testDb.getVideo(video.id);
+    assert(clearedVideo.displayTitle === null, 'Display title should be cleared');
+  });
+
+  await runTest('Genres and Genre-specific evaluation templates (CRUD & Constraints)', async () => {
+    const memoryStorage = new MemoryStorage();
+    const testDb = new AppDatabase(memoryStorage, 'test_v7_genres_');
+    await testDb.initAsync();
+
+    // 1. Default genre '一般' should be auto-created
+    const genres = testDb.getActiveGenres();
+    const defaultGenre = genres.find(g => g.id === 'genre-default');
+    assert(defaultGenre !== undefined, 'Default genre 一般 must exist');
+    assert(defaultGenre.name === '一般', 'Default genre name must be 一般');
+
+    // 2. Add a new genre
+    const newGenre = await testDb.addGenre('インタビュー');
+    assert(newGenre !== null && newGenre.name === 'インタビュー', 'Genre インタビュー should be created');
+
+    // 3. Check templates linkage
+    const templates = testDb.templates;
+    const linkedTemplate = templates.find(t => t.genreId === newGenre.id);
+    assert(linkedTemplate !== undefined, 'Genre must have an evaluation template');
+
+    // 4. Add criteria to the new genre
+    const c1 = await testDb.addCriterionToGenre(newGenre.id, '声量');
+    const c2 = await testDb.addCriterionToGenre(newGenre.id, '話すテンポ');
+    
+    const criteria = testDb.getActiveCriteriaForGenre(newGenre.id);
+    assert(criteria.length === 2, 'Should have 2 criteria added');
+    assert(criteria[0].name === '声量', 'First item name matches');
+
+    // 5. Test 6 items limit constraint
+    await testDb.addCriterionToGenre(newGenre.id, '内容');
+    await testDb.addCriterionToGenre(newGenre.id, '表現');
+    await testDb.addCriterionToGenre(newGenre.id, '表情');
+    await testDb.addCriterionToGenre(newGenre.id, '姿勢');
+
+    // Trying to add 7th active criterion should throw an error
+    let threwError = false;
+    try {
+      await testDb.addCriterionToGenre(newGenre.id, '超過項目');
+    } catch (err) {
+      threwError = true;
+    }
+    assert(threwError === true, 'Adding 7th criterion must throw an error');
+
+    // 6. Test copying criteria from another genre
+    const copyTargetGenre = await testDb.addGenre('コピー先ジャンル');
+    await testDb.copyCriteria(newGenre.id, copyTargetGenre.id);
+    const copiedCriteria = testDb.getActiveCriteriaForGenre(copyTargetGenre.id);
+    assert(copiedCriteria.length === 6, 'Copied criteria count must be 6');
+    assert(copiedCriteria[0].name === '声量', 'Copied items names match');
+  });
+
+  await runTest('DB Backup & Restore serialization and content verification', async () => {
+    const memoryStorage = new MemoryStorage();
+    const testDb = new AppDatabase(memoryStorage, 'test_v7_backup_');
+    await testDb.initAsync();
+
+    // Verify we can get all images without failure
+    const images = await testDb.getAllImages();
+    assert(Array.isArray(images), 'getAllImages must return an array');
+
+    // Add custom genre and video
+    const customGenre = await testDb.addGenre('アクション');
+    const newVideo = {
+      id: 'vid-test-back',
+      title: 'バックアップテスト動画',
+      fileName: 'back.mp4',
+      genreId: customGenre.id,
+      sourceType: 'local-file'
+    };
+    testDb.videos.push(newVideo);
+    await testDb.updateVideo(newVideo.id, {});
+
+    // Save a review
+    await testDb.saveReview(newVideo.id, {
+      overallGrade: 'A',
+      comment: '素晴らしい映像',
+      ratings: {
+        'crit-content': 5
+      }
+    });
+
+    const dbData = {
+      videos: testDb.videos,
+      rating_criteria: testDb.criteria,
+      video_reviews: testDb.reviews,
+      criterion_ratings: testDb.criterionRatings,
+      tags: testDb.tags,
+      video_tags: testDb.videoTags,
+      timeline_notes: testDb.timelineNotes,
+      directory_sources: testDb.directorySources,
+      genres: testDb.genres,
+      evaluation_templates: testDb.templates
+    };
+
+    const zip = new JSZip();
+    const manifest = {
+      application: "VideoReviewer",
+      schemaVersion: 1,
+      createdAt: new Date().toISOString(),
+      counts: {
+        videos: testDb.videos.length,
+        reviews: testDb.reviews.length,
+        images: 0
+      }
+    };
+    zip.file('manifest.json', JSON.stringify(manifest));
+    zip.file('database.json', JSON.stringify(dbData));
+
+    const contentBlob = await zip.generateAsync({ type: 'blob' });
+    assert(contentBlob !== null && contentBlob.size > 0, 'Backup ZIP should be generated');
+
+    const zipLoaded = await JSZip.loadAsync(contentBlob);
+    const dbFile = zipLoaded.file('database.json');
+    assert(dbFile !== null, 'ZIP must contain database.json');
+
+    const restoredDbData = JSON.parse(await dbFile.async('string'));
+    
+    const memoryStorage2 = new MemoryStorage();
+    const testDb2 = new AppDatabase(memoryStorage2, 'test_v7_restored_');
+    await testDb2.initAsync();
+
+    assert(testDb2.videos.length !== testDb.videos.length, 'Fresh DB should not have the new video');
+
+    assert(testDb2.videos.length !== testDb.videos.length, 'Fresh DB should not have the new video');
+
+    // Production validation and restore invocation
+    const valRes = testDb2.validateBackupData(restoredDbData, manifest, []);
+    assert(valRes.isValid === true, 'Restored data must pass validation');
+    await testDb2.restoreWithRollback(valRes.repairedDb, []);
+
+    const restoredVideo = testDb2.getVideo(newVideo.id);
+    assert(restoredVideo !== null, 'Restored database must contain our test video');
+    assert(restoredVideo.genreId === customGenre.id, 'Restored video genre link must be preserved');
+    
+    const restoredReview = testDb2.getReviewForVideo(newVideo.id);
+    assert(restoredReview !== undefined, 'Restored database must contain video reviews');
+    assert(restoredReview.overallGrade === 'A', 'Restored review overall grade matches');
+  });
+
+  await runTest('DB Backup & Restore safety validation constraint checks', async () => {
+    const memoryStorage = new MemoryStorage();
+    const testDb = new AppDatabase(memoryStorage, 'test_v7_validation_');
+    await testDb.initAsync();
+
+    const validManifest = {
+      application: 'VideoReviewer',
+      schemaVersion: 1,
+      createdAt: '2026-08-16T12:00:00.000Z',
+      counts: { videos: 0, reviews: 0, images: 0 }
+    };
+    const validDb = {
+      videos: [], rating_criteria: [], video_reviews: [], criterion_ratings: [],
+      tags: [], video_tags: [], timeline_notes: [], directory_sources: [],
+      genres: [], evaluation_templates: []
+    };
+
+    // 1. Valid case
+    const res1 = testDb.validateBackupData(validDb, validManifest, []);
+    assert(res1.isValid === true, 'Valid manifest is accepted');
+
+    // 2. Invalid schema version
+    const res2 = testDb.validateBackupData(validDb, { ...validManifest, schemaVersion: 2 }, []);
+    assert(res2.isValid === false, 'Should be invalid for schemaVersion !== 1');
+    assert(res2.fatalErrors.some(e => e.includes('スキーマバージョン')), 'Rejected invalid schema version');
+
+    // 3. Invalid createdAt (not valid ISO timestamp)
+    const res3 = testDb.validateBackupData(validDb, { ...validManifest, createdAt: 'invalid-date' }, []);
+    assert(res3.isValid === false, 'Should be invalid for invalid createdAt');
+    assert(res3.fatalErrors.some(e => e.includes('createdAt')), 'Rejected invalid createdAt');
+
+    // 4. Missing manifest counts
+    const res4 = testDb.validateBackupData(validDb, { ...validManifest, counts: undefined }, []);
+    assert(res4.isValid === false, 'Should be invalid for missing counts');
+    assert(res4.fatalErrors.some(e => e.includes('counts')), 'Rejected missing counts');
+
+    // 5. Negative counts in manifest
+    const res5 = testDb.validateBackupData(validDb, {
+      ...validManifest,
+      counts: { videos: -1, reviews: 0, images: 0 }
+    }, []);
+    assert(res5.isValid === false, 'Should be invalid for negative counts');
+    assert(res5.fatalErrors.some(e => e.includes('非負の整数')), 'Rejected negative count');
+
+    // 6. manifest counts match database table counts (video count mismatch)
+    const res6 = testDb.validateBackupData(validDb, {
+      ...validManifest,
+      counts: { videos: 1, reviews: 0, images: 0 }
+    }, []);
+    assert(res6.isValid === false, 'Should be invalid for videos count mismatch');
+    assert(res6.fatalErrors.some(e => e.includes('動画の件数')), 'Rejected video count mismatch');
+
+    // 7. manifest image count matches ZIP image entries (image count mismatch)
+    const res7 = testDb.validateBackupData(validDb, {
+      ...validManifest,
+      counts: { videos: 0, reviews: 0, images: 1 }
+    }, []);
+    assert(res7.isValid === false, 'Should be invalid for images count mismatch');
+    assert(res7.fatalErrors.some(e => e.includes('画像の件数')), 'Rejected image count mismatch');
+
+    // 8. duplicate criterion rating ID
+    const badCrDb = {
+      ...validDb,
+      criterion_ratings: [{ id: 'rate-1', score: 3 }, { id: 'rate-1', score: 5 }]
+    };
+    const res8 = testDb.validateBackupData(badCrDb, validManifest, []);
+    assert(res8.isValid === false, 'Should be invalid for duplicate criterion rating ID');
+    assert(res8.fatalErrors.some(e => e.includes('重複する ID rate-1')), 'Rejected duplicate criterion rating ID');
+
+    // 9. missing video thumbnail
+    const badVidDb = {
+      ...validDb,
+      videos: [{ id: 'vid-1', title: 'Test', thumbnailId: 'img-nonexistent' }]
+    };
+    const res9 = testDb.validateBackupData(badVidDb, {
+      ...validManifest,
+      counts: { videos: 1, reviews: 0, images: 0 }
+    }, []);
+    assert(res9.isValid === false, 'Should be invalid for missing video thumbnail');
+    assert(res9.fatalErrors.some(e => e.includes('ZIP内に存在しません')), 'Rejected missing video thumbnail image');
+
+    // 10. missing timeline-note image
+    const badNoteDb = {
+      ...validDb,
+      timeline_notes: [{ id: 'note-1', text: 'note text', thumbnailId: 'img-nonexistent', videoReviewId: 'rev-1' }],
+      video_reviews: [{ id: 'rev-1', videoId: 'vid-1' }],
+      videos: [{ id: 'vid-1', title: 'Test' }]
+    };
+    const res10 = testDb.validateBackupData(badNoteDb, {
+      ...validManifest,
+      counts: { videos: 1, reviews: 1, images: 0 }
+    }, []);
+    assert(res10.isValid === false, 'Should be invalid for missing timeline-note image');
+    assert(res10.fatalErrors.some(e => e.includes('ZIP内に存在しません')), 'Rejected missing note image');
+
+    // 11. duplicate ZIP image IDs
+    const res11 = testDb.validateBackupData(validDb, {
+      ...validManifest,
+      counts: { videos: 0, reviews: 0, images: 2 }
+    }, ['img-1', 'img-1']);
+    assert(res11.isValid === false, 'Should be invalid for duplicate ZIP image IDs');
+    assert(res11.fatalErrors.some(e => e.includes('重複する画像ID')), 'Rejected duplicate ZIP image IDs');
+  });
+
+  await runTest('DB Restore atomic transaction rollback under image/write failures', async () => {
+    const memoryStorage = new MemoryStorage();
+    const testDb = new AppDatabase(memoryStorage, 'test_v7_tx_');
+    await testDb.initAsync();
+    
+    // Seed initial database state with distinct objects in all collections
+    testDb.videos = [{ id: 'vid-original', title: 'Original' }];
+    testDb.criteria = [{ id: 'crit-original', name: 'Original' }];
+    testDb.reviews = [{ id: 'rev-original', videoId: 'vid-original' }];
+    testDb.criterionRatings = [{ id: 'rate-original', videoReviewId: 'rev-original', criterionId: 'crit-original', score: 3 }];
+    testDb.tags = [{ id: 'tag-original', name: 'Original' }];
+    testDb.videoTags = [{ videoId: 'vid-original', tagId: 'tag-original' }];
+    testDb.timelineNotes = [{ id: 'note-original', videoReviewId: 'rev-original', text: 'Original' }];
+    testDb.directorySources = [{ id: 'dir-original', name: 'Original' }];
+    testDb.genres = [{ id: 'genre-original', name: 'Original' }];
+    testDb.templates = [{ id: 'template-original', genreId: 'genre-original' }];
+    testDb._saveAll();
+    
+    // Mock IndexedDB
+    testDb.idbAvailable = true;
+    testDb.idb = {
+      store: {
+        'img-original': new Blob(['original-img'], { type: 'image/jpeg' }),
+        'handle-original': { name: 'orig-dir' }
+      },
+      getAll: async function(storeName) {
+        if (storeName === 'images') {
+          return [{ id: 'img-original', data: this.store['img-original'] }];
+        }
+        if (storeName === 'handles') {
+          return [{ id: 'handle-original', data: this.store['handle-original'] }];
+        }
+        return [];
+      },
+      put: async function(key, val, storeName) {
+        if (this.shouldFailPut && key === 'img-new') {
+          throw new Error('Injected IndexedDB put failure');
+        }
+        this.store[key] = val;
+      },
+      clearImages: async function() {
+        for (const k in this.store) {
+          if (k.startsWith('img-')) delete this.store[k];
+        }
+      },
+      clearHandles: async function() {
+        for (const k in this.store) {
+          if (k.startsWith('handle-')) delete this.store[k];
+        }
+      },
+      delete: async function(key) {
+        delete this.store[key];
+      }
+    };
+
+    // Target restore values
+    const restoredData = {
+      videos: [{ id: 'vid-new', title: 'New Video' }],
+      rating_criteria: [{ id: 'crit-new', name: 'New' }],
+      video_reviews: [{ id: 'rev-new', videoId: 'vid-new' }],
+      criterion_ratings: [{ id: 'rate-new', videoReviewId: 'rev-new', criterionId: 'crit-new', score: 5 }],
+      tags: [{ id: 'tag-new', name: 'New' }],
+      video_tags: [{ videoId: 'vid-new', tagId: 'tag-new' }],
+      timeline_notes: [{ id: 'note-new', videoReviewId: 'rev-new', text: 'New' }],
+      directory_sources: [{ id: 'dir-new', name: 'New' }],
+      genres: [{ id: 'genre-new', name: 'New' }],
+      evaluation_templates: [{ id: 'template-new', genreId: 'genre-new' }]
+    };
+    const newImages = [{ id: 'img-new', data: new Blob(['new-img'], { type: 'image/jpeg' }) }];
+
+    // --- TEST 1: Injected image put failure ---
+    testDb.idb.shouldFailPut = true;
+    
+    let restoreSucceeded = false;
+    try {
+      await testDb.restoreWithRollback(restoredData, newImages);
+      restoreSucceeded = true;
+    } catch (err) {
+      // Handled by restoreWithRollback
+    }
+
+    assert(restoreSucceeded === false, 'Restore should have failed due to IndexedDB error');
+    // Verify rollback integrity for every in-memory collection
+    assert(testDb.videos[0].id === 'vid-original', 'Original videos must be preserved');
+    assert(testDb.videos.some(v => v.id === 'vid-new') === false, 'New videos must not be present');
+    assert(testDb.criteria[0].id === 'crit-original', 'Original criteria must be preserved');
+    assert(testDb.reviews[0].id === 'rev-original', 'Original reviews must be preserved');
+    assert(testDb.criterionRatings[0].id === 'rate-original', 'Original criterionRatings must be preserved');
+    assert(testDb.tags[0].id === 'tag-original', 'Original tags must be preserved');
+    assert(testDb.videoTags[0].tagId === 'tag-original', 'Original videoTags must be preserved');
+    assert(testDb.timelineNotes[0].id === 'note-original', 'Original timelineNotes must be preserved');
+    assert(testDb.directorySources[0].id === 'dir-original', 'Original directorySources must be preserved');
+    assert(testDb.genres[0].id === 'genre-original', 'Original genres must be preserved');
+    assert(testDb.templates[0].id === 'template-original', 'Original templates must be preserved');
+
+    assert(testDb.idb.store['img-original'] !== undefined, 'Original images must be preserved');
+    assert(testDb.idb.store['handle-original'] !== undefined, 'Original DirectoryHandles must be preserved');
+
+    // --- TEST 2: Injected localStorage write failure ---
+    testDb.idb.shouldFailPut = false;
+    
+    // Inject localStorage save failure via _saveTable mock
+    const origSaveTable = testDb._saveTable;
+    testDb._saveTable = function(key, data) {
+      throw new Error('Injected localStorage write failure');
+    };
+
+    restoreSucceeded = false;
+    try {
+      await testDb.restoreWithRollback(restoredData, newImages);
+      restoreSucceeded = true;
+    } catch (err) {
+      // Handled by restoreWithRollback
+    }
+
+    // Restore original _saveTable
+    testDb._saveTable = origSaveTable;
+
+    assert(restoreSucceeded === false, 'Restore should have failed due to localStorage write error');
+    
+    // Verify rollback integrity for every in-memory collection on localStorage failure
+    assert(testDb.videos[0].id === 'vid-original', 'Original videos must be preserved on localStorage write error');
+    assert(testDb.videos.some(v => v.id === 'vid-new') === false, 'New videos must not be present on localStorage write error');
+    assert(testDb.criteria[0].id === 'crit-original', 'Original criteria must be preserved on localStorage write error');
+    assert(testDb.reviews[0].id === 'rev-original', 'Original reviews must be preserved on localStorage write error');
+    assert(testDb.criterionRatings[0].id === 'rate-original', 'Original ratings must be preserved on localStorage write error');
+    assert(testDb.tags[0].id === 'tag-original', 'Original tags must be preserved on localStorage write error');
+    assert(testDb.videoTags[0].tagId === 'tag-original', 'Original videoTags must be preserved on localStorage write error');
+    assert(testDb.timelineNotes[0].id === 'note-original', 'Original timelineNotes must be preserved on localStorage write error');
+    assert(testDb.directorySources[0].id === 'dir-original', 'Original directorySources must be preserved on localStorage write error');
+    assert(testDb.genres[0].id === 'genre-original', 'Original genres must be preserved on localStorage write error');
+    assert(testDb.templates[0].id === 'template-original', 'Original templates must be preserved on localStorage write error');
+
+    assert(testDb.idb.store['img-original'] !== undefined, 'Original images must remain intact');
+    assert(testDb.idb.store['handle-original'] !== undefined, 'Original DirectoryHandles must remain intact');
+  });
+
+  await runTest('DB Restore successful execution writes sequence verification', async () => {
+    const memoryStorage = new MemoryStorage();
+    const testDb = new AppDatabase(memoryStorage, 'test_v7_seq_');
+    await testDb.initAsync();
+
+    const sequenceLog = [];
+    testDb.idbAvailable = true;
+    testDb.idb = {
+      getAll: async function(storeName) {
+        return [];
+      },
+      clearImages: async function() {
+        sequenceLog.push('clearImages');
+      },
+      clearHandles: async function() {
+        sequenceLog.push('clearHandles');
+      },
+      put: async function(key, val, storeName) {
+        sequenceLog.push(`put:${storeName}`);
+      }
+    };
+    testDb._saveTable = function(key) {
+      sequenceLog.push(`saveTable:${key}`);
+    };
+
+    const restoredData = {
+      videos: [], rating_criteria: [], video_reviews: [], criterion_ratings: [],
+      tags: [], video_tags: [], timeline_notes: [], directory_sources: [],
+      genres: [], evaluation_templates: []
+    };
+    const newImages = [{ id: 'img-1', data: null }];
+
+    await testDb.restoreWithRollback(restoredData, newImages);
+
+    assert(sequenceLog[0] === 'clearImages', 'Images cleared first');
+    assert(sequenceLog[1] === 'put:images', 'New images written');
+    
+    assert(sequenceLog.includes('clearHandles') === false, 'Handles must not be cleared on successful restore');
+  });
+
+  console.group('Group 8: Legacy Orphan Note Recovery & Clean-up Tests');
+
+  await runTest('Legacy timeline note repair and orphan exclusion validation', async () => {
+    const memoryStorage = new MemoryStorage();
+    const testDb = new AppDatabase(memoryStorage, 'test_v8_legacy_');
+    await testDb.initAsync();
+
+    // Seed base DB state
+    testDb.videos = [{ id: 'vid-1', title: 'Test Video' }];
+    testDb.reviews = [{ id: 'rev-1', videoId: 'vid-1' }];
+    testDb.timelineNotes = [];
+    testDb._saveAll();
+
+    const manifest = {
+      application: 'VideoReviewer',
+      schemaVersion: 1,
+      createdAt: '2026-08-16T12:00:00.000Z',
+      counts: { videos: 1, reviews: 1, images: 2 }
+    };
+
+    const parsedDb = {
+      videos: [{ id: 'vid-1', title: 'Test Video' }],
+      rating_criteria: [],
+      video_reviews: [{ id: 'rev-1', videoId: 'vid-1' }],
+      criterion_ratings: [],
+      tags: [],
+      video_tags: [],
+      timeline_notes: [
+        // 1. Repairable note (missing videoReviewId but has videoId and exactly one review)
+        { id: 'note-repairable', text: 'Repairable', videoId: 'vid-1', videoReviewId: 'nonexistent-rev', thumbnailId: 'img-valid' },
+        // 2. Irreparable note (missing review and videoId)
+        { id: 'note-irreparable', text: 'Irreparable', videoReviewId: 'nonexistent-rev-2', thumbnailId: 'img-orphan' }
+      ],
+      directory_sources: [],
+      genres: [],
+      evaluation_templates: []
+    };
+
+    const zipImageIds = ['img-valid', 'img-orphan'];
+
+    // Validate
+    const validationResult = testDb.validateBackupData(parsedDb, manifest, zipImageIds);
+
+    // Assertions
+    assert(validationResult.isValid === true, 'Validation is valid because warnings are not fatal');
+    assert(validationResult.fatalErrors.length === 0, 'No fatal errors');
+    
+    // Warnings check
+    const repairableWarning = validationResult.warnings.find(w => w.noteId === 'note-repairable');
+    const irreparableWarning = validationResult.warnings.find(w => w.noteId === 'note-irreparable');
+    
+    assert(repairableWarning !== undefined, 'Has warning for repairable note');
+    assert(repairableWarning.repaired === true, 'Repairable note is marked repaired');
+    assert(repairableWarning.repairedToReviewId === 'rev-1', 'Repairable note is mapped to rev-1');
+    
+    assert(irreparableWarning !== undefined, 'Has warning for irreparable note');
+    assert(irreparableWarning.repaired === false, 'Irreparable note is marked not repaired');
+
+    // Repaired DB state check
+    const repairedNotes = validationResult.repairedDb.timeline_notes;
+    assert(repairedNotes.length === 1, 'Irreparable note must be excluded from active timeline_notes');
+    assert(repairedNotes[0].id === 'note-repairable', 'Repairable note must be included');
+    assert(repairedNotes[0].videoReviewId === 'rev-1', 'Repairable note review ID must be updated');
+
+    // Image exclusion check
+    assert(validationResult.requiredImageIds.includes('img-valid') === true, 'img-valid must be included');
+    assert(validationResult.requiredImageIds.includes('img-orphan') === false, 'img-orphan must be excluded');
+
+    // Confirm that other broken references (e.g. broken review video reference) still reject the backup
+    const fatalDb = {
+      ...parsedDb,
+      video_reviews: [{ id: 'rev-1', videoId: 'nonexistent-video' }]
+    };
+    const fatalResult = testDb.validateBackupData(fatalDb, manifest, zipImageIds);
+    assert(fatalResult.isValid === false, 'Broken review video reference must make validation invalid');
+    assert(fatalResult.fatalErrors.length > 0, 'Must contain fatal error messages');
+  });
+
+  await runTest('Legacy note rollback and cancellation safety', async () => {
+    const memoryStorage = new MemoryStorage();
+    const testDb = new AppDatabase(memoryStorage, 'test_v8_cancel_');
+    await testDb.initAsync();
+
+    // Seed original DB state
+    testDb.videos = [{ id: 'vid-original', title: 'Original' }];
+    testDb.timelineNotes = [{ id: 'note-original', videoReviewId: 'rev-original', text: 'Original' }];
+    testDb._saveAll();
+
+    const parsedDb = {
+      videos: [{ id: 'vid-new', title: 'New' }],
+      rating_criteria: [], video_reviews: [], criterion_ratings: [],
+      tags: [], video_tags: [], timeline_notes: [], directory_sources: [],
+      genres: [], evaluation_templates: []
+    };
+
+    const manifest = {
+      application: 'VideoReviewer',
+      schemaVersion: 1,
+      createdAt: '2026-08-16T12:00:00.000Z',
+      counts: { videos: 1, reviews: 0, images: 0 }
+    };
+
+    // Preflight validation - changes nothing
+    testDb.validateBackupData(parsedDb, manifest, []);
+    assert(testDb.videos[0].id === 'vid-original', 'In-memory state remains unchanged before confirmation');
+    assert(memoryStorage.getItem('test_v8_cancel_videos').includes('vid-original'), 'Storage state remains unchanged before confirmation');
+  });
+
+  await runTest('Check & Clean up orphan data action', async () => {
+    const memoryStorage = new MemoryStorage();
+    const testDb = new AppDatabase(memoryStorage, 'test_v8_cleanup_');
+    await testDb.initAsync();
+
+    // Mock IndexedDB
+    testDb.idbAvailable = true;
+    testDb.idb = {
+      store: {
+        'img-referenced': new Blob(['img-ref'], { type: 'image/jpeg' }),
+        'img-referenced-by-note': new Blob(['img-note'], { type: 'image/jpeg' }),
+        'img-orphan': new Blob(['img-orph'], { type: 'image/jpeg' })
+      },
+      getAll: async function(storeName) {
+        if (storeName === 'images') {
+          return Object.keys(this.store).map(id => ({ id, data: this.store[id] }));
+        }
+        return [];
+      },
+      delete: async function(id, storeName) {
+        if (storeName === 'images') delete this.store[id];
+      }
+    };
+
+    // Seed database
+    testDb.videos = [{ id: 'vid-1', title: 'Video', thumbnailId: 'img-referenced' }];
+    testDb.reviews = [{ id: 'rev-1', videoId: 'vid-1' }];
+    testDb.timelineNotes = [
+      // Valid note
+      { id: 'note-valid', videoReviewId: 'rev-1', text: 'Valid', thumbnailId: 'img-referenced-by-note' },
+      // Irreparable orphan note
+      { id: 'note-orphan', videoReviewId: 'nonexistent-rev', text: 'Orphan', thumbnailId: 'img-orphan' }
+    ];
+    testDb._saveAll();
+
+    // Check orphan data
+    const checkResult = await testDb.checkOrphanData();
+    assert(checkResult.orphanNotes.length === 1, 'Should detect exactly 1 orphan note');
+    assert(checkResult.orphanNotes[0].id === 'note-orphan', 'Detected orphan note id matches');
+    assert(checkResult.unreferencedImageIds.length === 1, 'Should detect exactly 1 unreferenced image');
+    assert(checkResult.unreferencedImageIds[0] === 'img-orphan', 'Detected unreferenced image id matches');
+
+    // Clean orphan data
+    const cleanResult = await testDb.cleanOrphanData();
+    assert(cleanResult.notesCleanedCount === 1, 'Cleans 1 note');
+    assert(cleanResult.imagesCleanedCount === 1, 'Cleans 1 image');
+
+    // Verify post-clean state
+    assert(testDb.timelineNotes.length === 1, 'Only 1 note left');
+    assert(testDb.timelineNotes[0].id === 'note-valid', 'Valid note remains');
+    assert(testDb.idb.store['img-referenced'] !== undefined, 'Referenced video image not removed');
+    assert(testDb.idb.store['img-referenced-by-note'] !== undefined, 'Referenced note image not removed');
+    assert(testDb.idb.store['img-orphan'] === undefined, 'Orphan image must be removed');
+  });
+
+  console.group('Group 9: Backup Restore Folder Handle Preservation Tests');
+
+  await runTest('Test A: restored handleKey is identical to local handleKey -> reused', async () => {
+    const memoryStorage = new MemoryStorage();
+    const testDb = new AppDatabase(memoryStorage, 'test_v9_a_');
+    await testDb.initAsync();
+
+    testDb.idbAvailable = true;
+    const mockHandle = {
+      name: 'real-dir',
+      queryPermission: async () => 'granted'
+    };
+    testDb.idb = {
+      store: { 'handle-1': mockHandle },
+      getAll: async function(storeName) {
+        if (storeName === 'handles') return [{ id: 'handle-1', data: this.store['handle-1'] }];
+        return [];
+      },
+      clearImages: async function() {},
+      clearHandles: async function() {},
+      put: async function() {}
+    };
+
+    const restoredData = {
+      videos: [], rating_criteria: [], video_reviews: [], criterion_ratings: [],
+      tags: [], video_tags: [], timeline_notes: [],
+      directory_sources: [
+        { id: 'src-1', name: 'real-dir', handleKey: 'handle-1', permissionStatus: 'prompt' }
+      ],
+      genres: [], evaluation_templates: []
+    };
+
+    await testDb.restoreWithRollback(restoredData, []);
+
+    const src = testDb.directorySources[0];
+    assert(src.handleKey === 'handle-1', 'handleKey remains handle-1');
+    assert(src.permissionStatus === 'granted', 'permissionStatus is queried as granted');
+  });
+
+  await runTest('Test B: source.id is identical, but handleKey differs -> remapped to existing local handleKey', async () => {
+    const memoryStorage = new MemoryStorage();
+    const testDb = new AppDatabase(memoryStorage, 'test_v9_b_');
+    await testDb.initAsync();
+
+    // Setup local state with src-1 pointing to handle-local
+    testDb.directorySources = [{ id: 'src-1', name: 'real-dir', handleKey: 'handle-local', permissionStatus: 'granted' }];
+    testDb._saveAll();
+
+    testDb.idbAvailable = true;
+    const mockHandle = {
+      name: 'real-dir',
+      queryPermission: async () => 'granted'
+    };
+    testDb.idb = {
+      store: { 'handle-local': mockHandle },
+      getAll: async function(storeName) {
+        if (storeName === 'handles') return [{ id: 'handle-local', data: this.store['handle-local'] }];
+        return [];
+      },
+      clearImages: async function() {},
+      clearHandles: async function() {},
+      put: async function() {}
+    };
+
+    // Restored data has src-1 pointing to handle-backup (different handleKey)
+    const restoredData = {
+      videos: [], rating_criteria: [], video_reviews: [], criterion_ratings: [],
+      tags: [], video_tags: [], timeline_notes: [],
+      directory_sources: [
+        { id: 'src-1', name: 'real-dir', handleKey: 'handle-backup', permissionStatus: 'prompt' }
+      ],
+      genres: [], evaluation_templates: []
+    };
+
+    await testDb.restoreWithRollback(restoredData, []);
+
+    const src = testDb.directorySources[0];
+    assert(src.handleKey === 'handle-local', 'handleKey is remapped to handle-local');
+    assert(src.permissionStatus === 'granted', 'permissionStatus is queried as granted');
+  });
+
+  await runTest('Test C: no handle matches handleKey -> prompt/disconnected and clears handleKey', async () => {
+    const memoryStorage = new MemoryStorage();
+    const testDb = new AppDatabase(memoryStorage, 'test_v9_c_');
+    await testDb.initAsync();
+
+    testDb.idbAvailable = true;
+    testDb.idb = {
+      store: {},
+      getAll: async function() { return []; },
+      clearImages: async function() {},
+      clearHandles: async function() {},
+      put: async function() {}
+    };
+
+    const restoredData = {
+      videos: [], rating_criteria: [], video_reviews: [], criterion_ratings: [],
+      tags: [], video_tags: [], timeline_notes: [],
+      directory_sources: [
+        { id: 'src-1', name: 'missing-dir', handleKey: 'handle-missing', permissionStatus: 'granted' }
+      ],
+      genres: [], evaluation_templates: []
+    };
+
+    await testDb.restoreWithRollback(restoredData, []);
+
+    const src = testDb.directorySources[0];
+    assert(src.handleKey === '', 'handleKey must be cleared');
+    assert(src.permissionStatus === 'disconnected', 'permissionStatus becomes disconnected');
+  });
+
+  await runTest('Test D: clean machine (0 saved handles) -> succeeds but requires reconnection', async () => {
+    const memoryStorage = new MemoryStorage();
+    const testDb = new AppDatabase(memoryStorage, 'test_v9_d_');
+    await testDb.initAsync();
+
+    testDb.idbAvailable = true;
+    testDb.idb = {
+      store: {},
+      getAll: async function() { return []; },
+      clearImages: async function() {},
+      clearHandles: async function() {},
+      put: async function() {}
+    };
+
+    const restoredData = {
+      videos: [], rating_criteria: [], video_reviews: [], criterion_ratings: [],
+      tags: [], video_tags: [], timeline_notes: [],
+      directory_sources: [
+        { id: 'src-1', name: 'some-dir', handleKey: 'handle-some', permissionStatus: 'granted' }
+      ],
+      genres: [], evaluation_templates: []
+    };
+
+    await testDb.restoreWithRollback(restoredData, []);
+
+    const src = testDb.directorySources[0];
+    assert(src.handleKey === '', 'handleKey is empty');
+    assert(src.permissionStatus === 'disconnected', 'Requires reconnection (disconnected)');
+  });
+
+  await runTest('Test E: reload simulation retrieves preserved handle', async () => {
+    const memoryStorage = new MemoryStorage();
+    const testDb = new AppDatabase(memoryStorage, 'test_v9_e_');
+    await testDb.initAsync();
+
+    testDb.idbAvailable = true;
+    const mockHandle = {
+      name: 'real-dir',
+      queryPermission: async () => 'granted'
+    };
+    testDb.idb = {
+      store: { 'handle-1': mockHandle },
+      getAll: async function(storeName) {
+        if (storeName === 'handles') return [{ id: 'handle-1', data: this.store['handle-1'] }];
+        return [];
+      },
+      get: async function(key) {
+        return this.store[key];
+      },
+      clearImages: async function() {},
+      clearHandles: async function() {},
+      put: async function() {}
+    };
+
+    const restoredData = {
+      videos: [], rating_criteria: [], video_reviews: [], criterion_ratings: [],
+      tags: [], video_tags: [], timeline_notes: [],
+      directory_sources: [
+        { id: 'src-1', name: 'real-dir', handleKey: 'handle-1', permissionStatus: 'prompt' }
+      ],
+      genres: [], evaluation_templates: []
+    };
+
+    await testDb.restoreWithRollback(restoredData, []);
+
+    // Simulating page reload by instantiating database again pointing to same memoryStorage & IndexedDB
+    const reloadedDb = new AppDatabase(memoryStorage, 'test_v9_e_');
+    await reloadedDb.initAsync();
+    reloadedDb.idbAvailable = true;
+    reloadedDb.idb = testDb.idb;
+
+    const handle = await reloadedDb.getDirectoryHandle(reloadedDb.directorySources[0].handleKey);
+    assert(handle === mockHandle, 'Reloaded database retrieves the correct preserved handle');
+  });
+
+  await runTest('Test F: failed restore rolls back all directory_sources, handleKey, and DirectoryHandle', async () => {
+    const memoryStorage = new MemoryStorage();
+    const testDb = new AppDatabase(memoryStorage, 'test_v9_f_');
+    await testDb.initAsync();
+
+    testDb.idbAvailable = true;
+    testDb.idb = {
+      store: {
+        'handle-orig': { name: 'orig-dir' }
+      },
+      clearCalls: [],
+      getAll: async function(storeName) {
+        if (storeName === 'handles') {
+          return Object.keys(this.store)
+            .filter(k => k.startsWith('handle-'))
+            .map(k => ({ id: k, data: this.store[k] }));
+        }
+        return [];
+      },
+      clearImages: async function() {},
+      clearHandles: async function() {
+        this.clearCalls.push('clearHandles');
+        for (const k in this.store) {
+          if (k.startsWith('handle-')) delete this.store[k];
+        }
+      },
+      put: async function(key, val, storeName) {
+        this.store[key] = val;
+      }
+    };
+
+    // Seed original data
+    testDb.directorySources = [{ id: 'src-orig', name: 'orig-dir', handleKey: 'handle-orig', permissionStatus: 'granted' }];
+    testDb._saveAll();
+
+    // Setup localStorage failure mock
+    testDb._saveTable = function() {
+      throw new Error('Injected localStorage write failure');
+    };
+
+    const restoredData = {
+      videos: [], rating_criteria: [], video_reviews: [], criterion_ratings: [],
+      tags: [], video_tags: [], timeline_notes: [],
+      directory_sources: [
+        { id: 'src-new', name: 'new-dir', handleKey: 'handle-new', permissionStatus: 'granted' }
+      ],
+      genres: [], evaluation_templates: []
+    };
+
+    let restoreSucceeded = false;
+    try {
+      await testDb.restoreWithRollback(restoredData, []);
+      restoreSucceeded = true;
+    } catch (err) {
+      // expected
+    }
+
+    assert(restoreSucceeded === false, 'Restore must fail');
+    assert(testDb.idb.clearCalls.includes('clearHandles') === true, 'Failed restore must call clearHandles() during rollback');
+    assert(testDb.idb.store['handle-orig'] !== undefined, 'Original handles must be restored after rollback');
+    assert(testDb.directorySources[0].id === 'src-orig', 'In-memory directory sources must be rolled back');
+  });
+
+  console.groupEnd();
+
+  await runTest('Folder reconnection preserves source ID, video associations, and evaluations without duplication', async () => {
+    const memory = new MemoryStorage();
+    const testDb = new AppDatabase(memory, 'test_vreview_reconn_', 'TestVideoDB_ReconnectRegression');
+    await testDb.initAsync();
+    testDb.idbAvailable = true;
+    testDb.idb = {
+      store: {},
+      get: async function(key, storeName) { return this.store[key] || null; },
+      put: async function(key, val, storeName) { this.store[key] = val; },
+      delete: async function(key, storeName) { delete this.store[key]; },
+      clear: async function() { this.store = {}; }
+    };
+
+    // 1. Setup initial source and video with evaluations
+    const initialSource = await testDb.addDirectorySource({
+      name: 'OriginalFolder',
+      includeSubdirectories: true
+    });
+    // Set to disconnected (simulating restore on different browser or lost handle)
+    await testDb.updateDirectorySource(initialSource.id, {
+      handleKey: '',
+      permissionStatus: 'disconnected'
+    });
+
+    const video = await testDb.addVideo({
+      title: 'video.mp4',
+      fileName: 'video.mp4',
+      fileSize: 5000,
+      videoUrl: '',
+      duration: 10,
+      sourceType: 'directory',
+      directoryId: initialSource.id,
+      relativePath: 'video.mp4',
+      lastModified: 100
+    });
+    const videoId = video.id; // Correctly get the generated video ID
+
+    // Add review, rating, tags, timeline notes referencing the actual generated videoId
+    testDb.reviews = [{ id: 'rev-1', videoId: videoId, overallGrade: 'A' }];
+    testDb.criterionRatings = [{ id: 'rate-1', videoReviewId: 'rev-1', criterionId: 'crit-1', score: 4 }];
+    testDb.videoTags = [{ videoId: videoId, tagId: 'tag-1' }];
+    testDb.timelineNotes = [{ id: 'note-1', videoReviewId: 'rev-1', text: 'Note 1' }];
+    testDb._saveAll();
+
+    // Reconnection via production DB method (Requirement 4)
+    const folderHandle = new MockFileSystemDirectoryHandle('ReconnectedFolder', {
+      'video.mp4': new MockFileSystemFileHandle('video.mp4', 5000, 100)
+    });
+    
+    await testDb.reconnectDirectorySource(initialSource.id, folderHandle);
+    
+    const reconnectedSource = testDb.getDirectorySource(initialSource.id);
+
+    // Check source.id is kept and updated
+    assert(reconnectedSource !== undefined, 'Reconnection must succeed');
+    assert(reconnectedSource.id === initialSource.id, 'source.id is preserved (does not change)');
+    assert(reconnectedSource.name === 'ReconnectedFolder', 'Folder source name is updated');
+    assert(reconnectedSource.permissionStatus === 'granted', 'permissionStatus is updated to granted');
+
+    // Verify video directory ID is kept
+    const videoAfterReconnect = testDb.getVideos().find(v => v.relativePath === 'video.mp4');
+    assert(videoAfterReconnect.directoryId === initialSource.id, 'Existing video directoryId remains the same');
+
+    // Simulate rescan and check for duplicates
+    const scanResult = {
+      scannedFiles: [{ relativePath: 'video.mp4', fileName: 'video.mp4', fileSize: 5000, lastModified: 100 }],
+      failedFiles: [],
+      failedDirectories: [],
+      completed: true,
+      aborted: false
+    };
+
+    const summary = await applyScanDifferentials({
+      db: testDb,
+      directoryId: initialSource.id,
+      scanResult,
+      recursive: true
+    });
+
+    assert(summary.added === 0, 'No new videos should be added during scan because relativePath matched');
+    assert(summary.unchanged === 1, 'The existing video should be matched and marked unchanged');
+    assert(testDb.getVideos().filter(v => v.sourceType === 'directory').length === 1, 'Total video count remains exactly 1 (no duplicates)');
+
+    // Verify evaluations are preserved
+    assert(testDb.reviews.length === 1, 'Reviews are preserved');
+    assert(testDb.reviews[0].videoId === videoId, 'Review is still linked to video');
+    assert(testDb.criterionRatings.length === 1, 'Ratings are preserved');
+    assert(testDb.videoTags.length === 1, 'Tags are preserved');
+    assert(testDb.timelineNotes.length === 1, 'Timeline notes are preserved');
+  });
+
+  await runTest('Event handler path: handleFolderRequestPermission delegates to reconnect mode', async () => {
+    const memory = new MemoryStorage();
+    const testDb = new AppDatabase(memory, 'test_vreview_handler_path_', 'TestVideoDB_HandlerPath');
+    await testDb.initAsync();
+    testDb.idbAvailable = true;
+    testDb.idb = {
+      store: {},
+      get: async function(key, storeName) { return this.store[key] || null; },
+      put: async function(key, val, storeName) { this.store[key] = val; },
+      delete: async function(key, storeName) { delete this.store[key]; },
+      clear: async function() { this.store = {}; }
+    };
+
+    // Set as the app database (Requirement 3 & 4)
+    const originalAppDb = db;
+    setDbForTesting(testDb);
+
+    try {
+      const initialSource = await testDb.addDirectorySource({
+        name: 'OriginalFolder',
+        includeSubdirectories: true
+      });
+      // Set to disconnected
+      await testDb.updateDirectorySource(initialSource.id, {
+        handleKey: '',
+        permissionStatus: 'disconnected'
+      });
+
+      // Mock window.showDirectoryPicker
+      const folderHandle = new MockFileSystemDirectoryHandle('ReconnectedFolder', {
+        'video.mp4': new MockFileSystemFileHandle('video.mp4', 5000, 100)
+      });
+      const originalShowDirectoryPicker = window.showDirectoryPicker;
+      window.showDirectoryPicker = async () => folderHandle;
+
+      // Trigger the actual event handler path
+      await handleFolderRequestPermission();
+
+      // Restore picker
+      window.showDirectoryPicker = originalShowDirectoryPicker;
+
+      // Verify that reconnect happened and the source ID remains initialSource.id
+      const sources = testDb.getDirectorySources();
+      assert(sources.length === 1, 'Still only one directory source');
+      assert(sources[0].id === initialSource.id, 'Source ID is preserved after event handler reconnect');
+      assert(sources[0].name === 'ReconnectedFolder', 'Name updated via event handler');
+      assert(sources[0].permissionStatus === 'granted', 'Permission granted via event handler');
+    } finally {
+      // Revert the app database
+      setDbForTesting(originalAppDb);
+    }
+  });
+
+  await runTest('Normal folder switching continues to work as expected', async () => {
+    const memory = new MemoryStorage();
+    const testDb = new AppDatabase(memory, 'test_vreview_normal_switch_', 'TestVideoDB_NormalSwitch');
+    await testDb.initAsync();
+    testDb.idbAvailable = true;
+    testDb.idb = {
+      store: {},
+      get: async function(key, storeName) { return this.store[key] || null; },
+      put: async function(key, val, storeName) { this.store[key] = val; },
+      delete: async function(key, storeName) { delete this.store[key]; },
+      clear: async function() { this.store = {}; }
+    };
+
+    // 1. Add directory source A
+    const sourceA = await testDb.addDirectorySource({ name: 'FolderA', includeSubdirectories: true });
+    
+    // 2. Select directory source B (Normal Switch)
+    const folderHandleB = new MockFileSystemDirectoryHandle('FolderB', {
+      'new_video.mp4': new MockFileSystemFileHandle('new_video.mp4', 8000, 200)
+    });
+
+    // Simulating normal handleFolderSelect (without reconnectSourceId)
+    const tempKey = 'pending-directory-handle-temp';
+    await testDb.putDirectoryHandle(tempKey, folderHandleB);
+    
+    const sourceB = await testDb.addDirectorySource({ name: 'FolderB', includeSubdirectories: true });
+    await testDb.putDirectoryHandle(sourceB.handleKey, folderHandleB);
+    await testDb.updateDirectorySource(sourceB.id, { permissionStatus: 'granted' });
+    await testDb.deleteDirectoryHandle(tempKey);
+
+    // Normal switch: delete old source A
+    const oldSourceIds = [sourceA.id];
+    for (const oldId of oldSourceIds) {
+      if (oldId !== sourceB.id) {
+        await testDb.deleteDirectorySource(oldId);
+      }
+    }
+
+    assert(testDb.getDirectorySources().length === 1, 'Only one directory source remains');
+    assert(testDb.getDirectorySources()[0].id === sourceB.id, 'Remaining source is FolderB');
+    assert(testDb.getDirectorySource(sourceA.id) === undefined, 'FolderA has been deleted');
+  });
+
+  console.groupEnd();
 
   console.groupEnd();
   return results;

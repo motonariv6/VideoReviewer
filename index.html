@@ -156,13 +156,28 @@
       <!-- Left Column: Video and Basic Controls -->
       <div class="editor-left-pane">
         <div class="pane-nav-bar">
-          <div class="video-title-area">
+          <div class="video-title-area" style="display:flex;align-items:center;gap:8px;flex:1;min-width:0">
             <button id="editor-btn-back" class="btn btn-icon" title="動画一覧へ戻る">
               <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 19l-7-7m0 0l7-7m-7 7h18" />
               </svg>
             </button>
-            <h3 id="editor-video-title" class="video-title-heading">動画タイトル...</h3>
+            <div id="title-display-container" style="display:flex;align-items:center;gap:8px;flex:1;min-width:0">
+              <h3 id="editor-video-title" class="video-title-heading" style="margin:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:350px">動画タイトル...</h3>
+              <button id="btn-edit-display-title" class="btn btn-icon" title="表示タイトルを変更" style="padding:4px;width:24px;height:24px;color:var(--color-text-muted)">
+                <svg xmlns="http://www.w3.org/2000/svg" style="width:14px;height:14px" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
+                </svg>
+              </button>
+            </div>
+            <div id="title-edit-container" class="hidden" style="display:flex;align-items:center;gap:6px;flex:1;min-width:0">
+              <div style="display:flex;flex-direction:column;flex:1;min-width:0">
+                <input type="text" id="display-title-input" class="form-input" style="height:32px;padding:4px 8px;font-size:0.9rem;width:100%" placeholder="表示タイトルを入力...">
+                <div style="font-size: 0.6875rem; color: var(--color-text-muted); margin-top: 2px;">※ 動画ファイル名は変更されません</div>
+              </div>
+              <button id="btn-save-display-title" class="btn btn-primary" style="padding:4px 10px;height:32px;font-size:0.8rem">保存</button>
+              <button id="btn-cancel-display-title" class="btn btn-secondary" style="padding:4px 10px;height:32px;font-size:0.8rem">キャンセル</button>
+            </div>
           </div>
           <div class="player-nav-buttons">
             <button id="player-btn-prev" class="btn btn-secondary" title="前の動画">前の動画</button>
@@ -294,6 +309,14 @@
       <div class="editor-right-pane">
         <div class="right-pane-scroll-container">
           
+          <!-- 0. Video Genre Selection -->
+          <div class="editor-section">
+            <label class="editor-section-title" for="video-genre-select">0. 動画ジャンル</label>
+            <select id="video-genre-select" class="form-input" style="width:100%">
+              <!-- Genre options dynamically injected -->
+            </select>
+          </div>
+
           <!-- 1. Overall Evaluation Grade -->
           <div class="editor-section">
             <label class="editor-section-title">1. 総合評価</label>
@@ -412,29 +435,70 @@
           </svg>
         </button>
       </div>
-      <div class="modal-body">
-        <p style="color:var(--color-text-muted);font-size:0.875rem">
-          評価項目は最大6項目まで登録できます。項目名を編集、並べ替え、または削除（非表示）が行えます。過去のレビュー済みの項目スコアは消えずに保持されます。
-        </p>
-
-        <!-- Evaluation List Grid -->
-        <div id="settings-criteria-list" class="settings-criteria-list">
-          <!-- Dynamically populated from settings -->
+      <div class="modal-body" style="max-height: 70vh; overflow-y: auto;">
+        
+        <!-- Genre Configuration Section -->
+        <div class="editor-section" style="gap: 8px; margin-bottom: 20px;">
+          <h4 style="font-size: 1rem; font-weight: 600; color: var(--color-text-main); margin-bottom: 4px;">動画ジャンル設定</h4>
+          <div style="display:flex; gap:8px; align-items: center; margin-bottom: 8px;">
+            <select id="settings-genre-select" class="form-input" style="flex:1; height:38px;">
+              <!-- Genres dynamically loaded -->
+            </select>
+            <button id="settings-btn-genre-rename" class="btn btn-secondary" style="height:38px; font-size:0.8125rem; padding: 0 12px;">変更</button>
+            <button id="settings-btn-genre-toggle-active" class="btn btn-danger" style="height:38px; font-size:0.8125rem; padding: 0 12px;">無効化</button>
+          </div>
+          
+          <!-- Add New Genre form -->
+          <div class="settings-add-box" style="margin-top: 8px;">
+            <input type="text" id="settings-new-genre-input" class="form-input" style="flex:1;" placeholder="新しいジャンル名を入力 (例: インタビュー)...">
+            <button id="settings-btn-genre-add" class="btn btn-primary" style="padding: 0 16px;">追加</button>
+          </div>
+          
+          <div style="display:flex; justify-content: space-between; align-items: center; margin-top: 10px;">
+            <span style="font-size:0.75rem; color:var(--color-text-muted);">ジャンル並べ替え：</span>
+            <div style="display:flex; gap:6px;">
+              <button id="settings-btn-genre-up" class="btn btn-secondary" style="padding:4px 10px; font-size:0.75rem;">▲ 上へ</button>
+              <button id="settings-btn-genre-down" class="btn btn-secondary" style="padding:4px 10px; font-size:0.75rem;">▼ 下へ</button>
+            </div>
+          </div>
         </div>
 
-        <!-- Add New Field Form -->
-        <div class="settings-add-box">
-          <input type="text" id="settings-new-name-input" class="form-input" style="flex:1" placeholder="新しい評価項目名を入力 (例: 独自性)...">
-          <button id="settings-btn-add" class="btn btn-primary">
-            追加
-          </button>
+        <!-- Divider -->
+        <div style="border-top: 1px solid var(--color-border); margin: 16px 0;"></div>
+
+        <!-- Criteria Configuration Section (for Selected Genre) -->
+        <div class="editor-section" style="gap: 8px; margin-bottom: 20px;">
+          <h4 style="font-size: 1rem; font-weight: 600; color: var(--color-text-main); margin-bottom: 4px;">ジャンル別評価項目設定</h4>
+          <p style="color:var(--color-text-muted);font-size:0.8125rem;line-height:1.4;margin-bottom:8px">
+            選択中ジャンルに紐づく評価項目は最大6項目まで登録できます。項目名の変更、並べ替え、無効化が行えます。
+          </p>
+
+          <!-- Copy Criteria Box -->
+          <div style="display:flex; gap:8px; align-items: center; background: rgba(255,255,255,0.03); padding:8px 12px; border-radius:var(--radius-sm); border: 1px dashed var(--color-border); margin-bottom: 12px;">
+            <span style="font-size: 0.75rem; white-space: nowrap; color: var(--color-text-muted);">他ジャンルからコピー:</span>
+            <select id="settings-copy-source-select" class="form-input" style="flex:1; height:30px; font-size: 0.75rem; padding: 2px 6px;">
+              <!-- Other genres to copy from -->
+            </select>
+            <button id="settings-btn-copy-criteria" class="btn btn-secondary" style="height:30px; padding:0 8px; font-size:0.75rem;">コピー実行</button>
+          </div>
+
+          <!-- Criteria List Grid -->
+          <div id="settings-criteria-list" class="settings-criteria-list">
+            <!-- Dynamically populated from settings -->
+          </div>
+
+          <!-- Add New Field Form -->
+          <div class="settings-add-box">
+            <input type="text" id="settings-new-name-input" class="form-input" style="flex:1" placeholder="項目名を入力 (例: 内容)...">
+            <button id="settings-btn-add" class="btn btn-primary">項目追加</button>
+          </div>
         </div>
 
         <!-- Divider -->
         <div style="border-top: 1px solid var(--color-border); margin: 24px 0 16px 0;"></div>
 
         <!-- Video Folder Settings Section -->
-        <div class="editor-section" style="gap: 12px">
+        <div class="editor-section" style="gap: 12px; margin-bottom: 20px;">
           <h4 style="font-size: 1rem; font-weight: 600; color: var(--color-text-main);">動画フォルダ設定</h4>
           <p id="folder-api-fallback-msg" class="hidden" style="color: var(--color-warning); font-size: 0.8125rem; line-height: 1.4;">
             このブラウザではフォルダの継続参照に対応していません。<br>従来の「ローカル動画を追加」を使用してください。
@@ -468,6 +532,31 @@
               <button id="btn-folder-rescan" class="btn btn-secondary hidden" style="flex: 1; padding: 6px 12px; font-size: 0.8125rem;">再スキャン</button>
               <button id="btn-folder-request-perm" class="btn btn-secondary hidden" style="flex: 1; padding: 6px 12px; font-size: 0.8125rem; border-color: var(--color-warning); color: var(--color-warning);">アクセスを許可</button>
               <button id="btn-folder-disconnect" class="btn btn-danger hidden" style="padding: 6px 12px; font-size: 0.8125rem;">接続解除</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Divider -->
+        <div style="border-top: 1px solid var(--color-border); margin: 24px 0 16px 0;"></div>
+
+        <!-- Data Management (Backup/Restore) Section -->
+        <div class="editor-section" style="gap: 12px">
+          <h4 style="font-size: 1rem; font-weight: 600; color: var(--color-text-main);">データ管理</h4>
+          <p style="color: var(--color-text-muted); font-size: 0.8125rem; line-height: 1.4;">
+            アプリ内DBのバックアップ（ZIP形式）を作成・復元します。動画ファイル本体やフォルダ権限（DirectoryHandle）はバックアップに含まれません。復元後は再度フォルダの接続が必要となります。
+          </p>
+          <div class="glass-card" style="padding: 16px; display: flex; flex-direction: column; gap: 10px; font-size: 0.875rem;">
+            <div style="display: flex; justify-content: space-between;">
+              <span style="color: var(--color-text-muted);">最終バックアップ：</span>
+              <strong id="backup-last-time-val">-</strong>
+            </div>
+            <div style="display: flex; gap: 8px; margin-top: 6px;">
+              <button id="btn-backup-create" class="btn btn-primary" style="flex: 1; padding: 6px 12px; font-size: 0.8125rem;">バックアップを作成</button>
+              <button id="btn-backup-restore-trigger" class="btn btn-secondary" style="flex: 1; padding: 6px 12px; font-size: 0.8125rem;">バックアップから復元</button>
+              <input type="file" id="backup-restore-file" accept=".zip" style="display:none">
+            </div>
+            <div style="display: flex; margin-top: 4px;">
+              <button id="btn-clean-orphan-data" class="btn btn-secondary" style="flex: 1; padding: 6px 12px; font-size: 0.8125rem; background-color: transparent; border: 1px solid var(--color-border); color: var(--color-text-main);">孤立データを確認・整理</button>
             </div>
           </div>
         </div>
@@ -515,7 +604,17 @@
   <!-- Toast Notification Container -->
   <div id="toast-container" class="toast-container"></div>
 
+  <!-- Backup/Restore Loading Overlay -->
+  <div id="modal-backup-progress" class="modal-overlay">
+    <div class="modal-container glass-panel" style="max-width: 400px; text-align: center; padding: 30px;">
+      <div id="backup-progress-spinner" class="spinner" style="margin: 0 auto 16px; width: 40px; height: 40px; border: 4px solid rgba(255,255,255,0.1); border-top-color: var(--color-primary); border-radius: 50%; animation: spin 1s linear infinite;"></div>
+      <h3 id="backup-progress-title" style="margin-bottom: 8px;">データを処理中...</h3>
+      <p id="backup-progress-msg" style="color: var(--color-text-muted); font-size: 0.875rem;">ブラウザを閉じずに少々お待ちください。</p>
+    </div>
+  </div>
+
   <!-- Core Javascript Loader (ES Modules) -->
+  <script src="js/jszip.min.js"></script>
   <script type="module" src="js/app.js"></script>
 
 </body>

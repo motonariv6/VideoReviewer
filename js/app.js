@@ -4,7 +4,10 @@ import { RadarChart } from './radar.js';
 import { scanDirectory, classifyScanResults, applyScanDifferentials } from './directory-scanner.js';
 
 // Instantiate DB & components
-const db = new AppDatabase();
+export let db = new AppDatabase();
+export function setDbForTesting(mockDb) {
+  db = mockDb;
+}
 let radar;
 
 // IME Composition State Tracking
@@ -27,6 +30,7 @@ const state = {
   capturedNoteTime: 0,
   capturedNoteThumb: null,    // Blob of screenshot frame
   scanAbort: false,           // Scan abort flag
+  selectedSettingsGenreId: null, // Tracks selected genre in settings panel
   
   // Filter & Sort state for library
   filters: {
@@ -155,23 +159,57 @@ const els = {
   btnFolderDisconnect: document.getElementById('btn-folder-disconnect'),
   
   // Toast notifications
-  toastContainer: document.getElementById('toast-container')
+  toastContainer: document.getElementById('toast-container'),
+
+  // Display Title Override UI
+  titleDisplayContainer: document.getElementById('title-display-container'),
+  titleEditContainer: document.getElementById('title-edit-container'),
+  btnEditDisplayTitle: document.getElementById('btn-edit-display-title'),
+  displayTitleInput: document.getElementById('display-title-input'),
+  btnSaveDisplayTitle: document.getElementById('btn-save-display-title'),
+  btnCancelDisplayTitle: document.getElementById('btn-cancel-display-title'),
+
+  // Video Genre dropdown
+  videoGenreSelect: document.getElementById('video-genre-select'),
+
+  // Settings Modal Genre additions
+  settingsGenreSelect: document.getElementById('settings-genre-select'),
+  settingsBtnGenreRename: document.getElementById('settings-btn-genre-rename'),
+  settingsBtnGenreToggleActive: document.getElementById('settings-btn-genre-toggle-active'),
+  settingsNewGenreInput: document.getElementById('settings-new-genre-input'),
+  settingsBtnGenreAdd: document.getElementById('settings-btn-genre-add'),
+  settingsBtnGenreUp: document.getElementById('settings-btn-genre-up'),
+  settingsBtnGenreDown: document.getElementById('settings-btn-genre-down'),
+  settingsCopySourceSelect: document.getElementById('settings-copy-source-select'),
+  settingsBtnCopyCriteria: document.getElementById('settings-btn-copy-criteria'),
+
+  // Data Management Backup / Restore
+  backupLastTimeVal: document.getElementById('backup-last-time-val'),
+  btnBackupCreate: document.getElementById('btn-backup-create'),
+  btnBackupRestoreTrigger: document.getElementById('btn-backup-restore-trigger'),
+  backupRestoreFile: document.getElementById('backup-restore-file'),
+  modalBackupProgress: document.getElementById('modal-backup-progress'),
+  backupProgressTitle: document.getElementById('backup-progress-title'),
+  backupProgressMsg: document.getElementById('backup-progress-msg'),
+  btnCleanOrphanData: document.getElementById('btn-clean-orphan-data')
 };
 
 // Initialize Application
-document.addEventListener('DOMContentLoaded', async () => {
-  radar = new RadarChart(document.getElementById('radar-chart-container'));
-  
-  // Connect to IndexedDB and run legacy image migration
-  await db.initAsync();
-  
-  // Query permission for active directory sources on boot
-  await syncActiveDirectoryPermissions();
-  
-  initEventListeners();
-  initAutosaveTimer();
-  renderLibrary();
-});
+if (typeof window !== 'undefined' && !window.__TEST_ENV__) {
+  document.addEventListener('DOMContentLoaded', async () => {
+    radar = new RadarChart(document.getElementById('radar-chart-container'));
+    
+    // Connect to IndexedDB and run legacy image migration
+    await db.initAsync();
+    
+    // Query permission for active directory sources on boot
+    await syncActiveDirectoryPermissions();
+    
+    initEventListeners();
+    initAutosaveTimer();
+    renderLibrary();
+  });
+}
 
 // Setup event bindings
 function initEventListeners() {
@@ -225,13 +263,239 @@ function initEventListeners() {
   els.btnBulkDelete.addEventListener('click', handleBulkDelete);
   
   // Settings triggers
+  // Settings triggers
   els.btnSettings.addEventListener('click', openSettingsModal);
   els.settingsCloseX.addEventListener('click', closeSettingsModal);
   els.settingsBtnAdd.addEventListener('click', handleSettingsAddCriterion);
   els.settingsBtnSave.addEventListener('click', closeSettingsModal);
+
+  // 1. Display Title Editor Events
+  els.btnEditDisplayTitle.addEventListener('click', () => {
+    const video = db.getVideo(state.currentVideoId);
+    if (video) {
+      els.displayTitleInput.value = video.displayTitle || '';
+      els.titleDisplayContainer.classList.add('hidden');
+      els.titleEditContainer.classList.remove('hidden');
+      els.displayTitleInput.focus();
+    }
+  });
+
+  els.btnCancelDisplayTitle.addEventListener('click', () => {
+    els.titleDisplayContainer.classList.remove('hidden');
+    els.titleEditContainer.classList.add('hidden');
+  });
+
+  els.btnSaveDisplayTitle.addEventListener('click', async () => {
+    const video = db.getVideo(state.currentVideoId);
+    if (!video) return;
+    
+    // Sanitize input: strip HTML tags and trim
+    let titleVal = els.displayTitleInput.value.replace(/<\/?[^>]+(>|$)/g, "").trim();
+    
+    // Save to DB
+    await db.updateVideo(video.id, { displayTitle: titleVal || null });
+    
+    // Update UI headers
+    els.editorTitle.textContent = titleVal || video.title;
+    els.titleDisplayContainer.classList.remove('hidden');
+    els.titleEditContainer.classList.add('hidden');
+    
+    showToast('表示タイトルを更新しました。');
+    
+    // Re-render library in background so it's correct when we go back
+    renderLibrary();
+  });
+
+  // Keep Enter/ESC shortcuts for display title input
+  els.displayTitleInput.addEventListener('keydown', async (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      els.btnSaveDisplayTitle.click();
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      els.btnCancelDisplayTitle.click();
+    }
+  });
+
+  // 2. Video Genre Select Dropdown
+  els.videoGenreSelect.addEventListener('change', async () => {
+    const videoId = state.currentVideoId;
+    if (!videoId) return;
+
+    const genreId = els.videoGenreSelect.value;
+    await db.updateVideo(videoId, { genreId });
+
+    // Reload ratings workspace
+    const review = db.getReviewForVideo(videoId);
+    
+    // Load individual ratings stars map
+    const scores = review ? db.getCriterionRatingsForReview(review.id) : [];
+    state.currentRatings = {};
+    scores.forEach(s => {
+      state.currentRatings[s.criterionId] = s.score;
+    });
+
+    renderStarCriteriaPanel();
+    updateRadar();
+    markDirty();
+    showToast('動画のジャンルを切り替えました。');
+  });
+
+  // 3. Settings Modal - Genre Select Dropdown
+  els.settingsGenreSelect.addEventListener('change', () => {
+    state.selectedSettingsGenreId = els.settingsGenreSelect.value;
+    renderSettingsCriteriaList();
+    renderSettingsGenreControls();
+  });
+
+  // 4. Settings Modal - Genre Add
+  els.settingsBtnGenreAdd.addEventListener('click', async () => {
+    const name = els.settingsNewGenreInput.value.trim();
+    if (!name) {
+      showToast('ジャンル名を入力してください。', 'error');
+      return;
+    }
+    try {
+      const g = await db.addGenre(name);
+      els.settingsNewGenreInput.value = '';
+      state.selectedSettingsGenreId = g.id;
+      // Reload dropdowns
+      populateSettingsGenreSelect();
+      renderSettingsCriteriaList();
+      renderSettingsGenreControls();
+      showToast(`ジャンル「${name}」を追加しました。`);
+    } catch (err) {
+      showToast(err.message, 'error');
+    }
+  });
+
+  // 5. Settings Modal - Genre Rename
+  els.settingsBtnGenreRename.addEventListener('click', async () => {
+    const genreId = state.selectedSettingsGenreId || 'genre-default';
+    const genre = db.getGenre(genreId);
+    if (!genre) return;
+
+    const newName = prompt('新しいジャンル名を入力してください。', genre.name);
+    if (newName === null) return;
+    const cleanName = newName.trim();
+    if (!cleanName) {
+      showToast('有効なジャンル名を入力してください。', 'error');
+      return;
+    }
+
+    try {
+      await db.updateGenre(genreId, { name: cleanName });
+      populateSettingsGenreSelect();
+      renderSettingsGenreControls();
+      showToast('ジャンル名を変更しました。');
+    } catch (err) {
+      showToast(err.message, 'error');
+    }
+  });
+
+  // 6. Settings Modal - Genre Disable/Enable Toggle
+  els.settingsBtnGenreToggleActive.addEventListener('click', async () => {
+    const genreId = state.selectedSettingsGenreId || 'genre-default';
+    if (genreId === 'genre-default') {
+      showToast('既定のジャンルは無効化できません。', 'error');
+      return;
+    }
+
+    const genre = db.getGenre(genreId);
+    if (!genre) return;
+
+    if (genre.isActive) {
+      if (confirm(`ジャンル「${genre.name}」を無効化しますか？\n過去に登録した動画および評価データは消えずに残ります。`)) {
+        await db.updateGenre(genreId, { isActive: false });
+        populateSettingsGenreSelect();
+        renderSettingsCriteriaList();
+        renderSettingsGenreControls();
+        showToast(`ジャンル「${genre.name}」を無効にしました。`);
+      }
+    } else {
+      await db.updateGenre(genreId, { isActive: true });
+      populateSettingsGenreSelect();
+      renderSettingsCriteriaList();
+      renderSettingsGenreControls();
+      showToast(`ジャンル「${genre.name}」を有効にしました。`);
+    }
+  });
+
+  // 7. Settings Modal - Genre Up & Down Sorting
+  els.settingsBtnGenreUp.addEventListener('click', async () => {
+    const genreId = state.selectedSettingsGenreId;
+    if (!genreId) return;
+    const genres = db.getGenres();
+    const idx = genres.findIndex(g => g.id === genreId);
+    if (idx > 0) {
+      const g1 = genres[idx];
+      const g2 = genres[idx - 1];
+      const temp = g1.displayOrder;
+      g1.displayOrder = g2.displayOrder;
+      g2.displayOrder = temp;
+      
+      await db.updateGenre(g1.id, { displayOrder: g1.displayOrder });
+      await db.updateGenre(g2.id, { displayOrder: g2.displayOrder });
+
+      populateSettingsGenreSelect();
+      renderSettingsGenreControls();
+    }
+  });
+
+  els.settingsBtnGenreDown.addEventListener('click', async () => {
+    const genreId = state.selectedSettingsGenreId;
+    if (!genreId) return;
+    const genres = db.getGenres();
+    const idx = genres.findIndex(g => g.id === genreId);
+    if (idx !== -1 && idx < genres.length - 1) {
+      const g1 = genres[idx];
+      const g2 = genres[idx + 1];
+      const temp = g1.displayOrder;
+      g1.displayOrder = g2.displayOrder;
+      g2.displayOrder = temp;
+      
+      await db.updateGenre(g1.id, { displayOrder: g1.displayOrder });
+      await db.updateGenre(g2.id, { displayOrder: g2.displayOrder });
+
+      populateSettingsGenreSelect();
+      renderSettingsGenreControls();
+    }
+  });
+
+  // 8. Settings Modal - Criteria Template Copy
+  els.settingsBtnCopyCriteria.addEventListener('click', async () => {
+    const fromGenreId = els.settingsCopySourceSelect.value;
+    const toGenreId = state.selectedSettingsGenreId || 'genre-default';
+    if (!fromGenreId) {
+      showToast('コピー元のジャンルが選択されていません。', 'error');
+      return;
+    }
+    if (fromGenreId === toGenreId) {
+      showToast('コピー元とコピー先が同じです。', 'error');
+      return;
+    }
+
+    if (confirm('現在のジャンルの評価項目を上書きして、コピー元の項目に置き換えますか？')) {
+      try {
+        await db.copyCriteria(fromGenreId, toGenreId);
+        renderSettingsCriteriaList();
+        showToast('他のジャンルから評価項目をコピーしました。');
+      } catch (err) {
+        showToast(err.message, 'error');
+      }
+    }
+  });
+
+  // 9. Backup & Restore triggers
+  els.btnBackupCreate.addEventListener('click', handleBackupCreate);
+  els.btnBackupRestoreTrigger.addEventListener('click', () => {
+    els.backupRestoreFile.click();
+  });
+  els.backupRestoreFile.addEventListener('change', handleBackupRestore);
+  els.btnCleanOrphanData.addEventListener('click', handleCleanOrphanData);
   
   // Directory Settings Buttons
-  els.btnFolderSelect.addEventListener('click', handleFolderSelect);
+  els.btnFolderSelect.addEventListener('click', () => handleFolderSelect());
   els.btnFolderRescan.addEventListener('click', handleFolderRescan);
   els.btnFolderRequestPerm.addEventListener('click', handleFolderRequestPermission);
   els.btnFolderDisconnect.addEventListener('click', handleFolderDisconnect);
@@ -372,7 +636,11 @@ function showToast(message, type = 'success') {
   span.textContent = message; // Safe text insertion
   toast.appendChild(span);
   
-  els.toastContainer.appendChild(toast);
+  if (els.toastContainer) {
+    els.toastContainer.appendChild(toast);
+  } else {
+    console.log(`[Toast] [${type}] ${message}`);
+  }
   
   setTimeout(() => {
     toast.remove();
@@ -485,7 +753,7 @@ function getFilteredVideosList() {
   // 1. Text Search Filter
   if (state.filters.search) {
     const query = state.filters.search.toLowerCase();
-    videos = videos.filter(v => v.title.toLowerCase().includes(query) || v.fileName.toLowerCase().includes(query));
+    videos = videos.filter(v => (v.displayTitle || v.title).toLowerCase().includes(query) || v.fileName.toLowerCase().includes(query));
   }
 
   // 2. Tag Filter
@@ -779,8 +1047,8 @@ function renderLibrary() {
       // Title heading
       const titleH4 = document.createElement('h4');
       titleH4.className = 'video-card-title';
-      titleH4.title = v.title;
-      titleH4.textContent = v.title;
+      titleH4.title = v.displayTitle || v.title;
+      titleH4.textContent = v.displayTitle || v.title;
       titleH4.style.flex = '1';
       titleContainer.appendChild(titleH4);
 
@@ -804,7 +1072,7 @@ function renderLibrary() {
       delBtn.addEventListener('click', async (e) => {
         e.stopPropagation(); // Avoid opening the editing workspace
         
-        const confirmMsg = `一覧からこの動画を削除します。評価、タグ、コメント、タイムラインメモも削除されます。実際の動画ファイルは削除されません。\n\n動画: 「${v.title}」\n本当に削除しますか？`;
+        const confirmMsg = `一覧からこの動画を削除します。評価、タグ、コメント、タイムラインメモも削除されます。実際の動画ファイルは削除されません。\n\n動画: 「${v.displayTitle || v.title}」\n本当に削除しますか？`;
         if (confirm(confirmMsg)) {
           try {
             if (state.currentVideoId === v.id) {
@@ -834,7 +1102,14 @@ function renderLibrary() {
       titleContainer.appendChild(delBtn);
       bodyDiv.appendChild(titleContainer);
 
-      // Source/Path Meta details for Directory Videos
+      // Display original title as subtitle if displayTitle is present
+      if (v.displayTitle) {
+        const fileDiv = document.createElement('div');
+        fileDiv.className = 'video-card-meta-detail';
+        fileDiv.style.fontStyle = 'italic';
+        fileDiv.textContent = `ファイル: ${v.title}`;
+        bodyDiv.appendChild(fileDiv);
+      }
       if (v.sourceType === 'directory') {
         const pathDiv = document.createElement('div');
         pathDiv.className = 'video-card-meta-detail';
@@ -974,10 +1249,28 @@ function switchScreenToEditor(videoId) {
   els.btnBack.classList.remove('hidden');
 
   // Set header details safely
-  els.editorTitle.textContent = video.title;
+  els.editorTitle.textContent = video.displayTitle || video.title;
   els.infoFileName.textContent = video.fileName || (video.sourceType === 'url' ? 'URL動画' : 'フォルダ内動画');
   els.infoFileSize.textContent = video.fileSize ? (video.fileSize / 1024 / 1024).toFixed(1) + ' MB' : '-';
   els.infoDuration.textContent = formatTime(video.duration);
+
+  // Reset display title edit widgets
+  els.titleDisplayContainer.classList.remove('hidden');
+  els.titleEditContainer.classList.add('hidden');
+  els.displayTitleInput.value = video.displayTitle || '';
+
+  // Populate and select Video Genre select dropdown options
+  els.videoGenreSelect.innerHTML = '';
+  const allGenres = db.getGenres();
+  allGenres.forEach(g => {
+    if (g.isActive || g.id === video.genreId) {
+      const opt = document.createElement('option');
+      opt.value = g.id;
+      opt.textContent = g.isActive ? g.name : `${g.name} (無効)`;
+      els.videoGenreSelect.appendChild(opt);
+    }
+  });
+  els.videoGenreSelect.value = video.genreId || 'genre-default';
 
   // Load ratings content
   const review = db.getReviewForVideo(videoId);
@@ -1056,11 +1349,26 @@ async function handlePlayerFolderPermissionClick() {
   
   const source = db.getDirectorySource(video.directoryId);
   if (!source) return;
+
+  const isDisconnected = !source.handleKey || source.permissionStatus === 'disconnected';
+  let handle = null;
+  if (!isDisconnected) {
+    try {
+      handle = await db.getDirectoryHandle(source.handleKey);
+    } catch (err) {
+      console.warn('Failed to retrieve folder handle:', err);
+    }
+  }
+
+  if (isDisconnected || !handle) {
+    // Clean up handleKey and update status
+    await db.updateDirectorySource(source.id, { handleKey: '', permissionStatus: 'disconnected' });
+    showToast('フォルダの参照データが見つかりません。フォルダを再接続してください。', 'error');
+    openSettingsModal();
+    return;
+  }
   
   try {
-    const handle = await db.getDirectoryHandle(source.handleKey);
-    if (!handle) return;
-    
     const status = await handle.requestPermission({ mode: 'read' });
     await db.updateDirectorySource(source.id, { permissionStatus: status });
     
@@ -1099,13 +1407,15 @@ async function loadVideoMediaSource(video) {
     try {
       const handle = await db.getDirectoryHandle(source.handleKey);
       if (!handle) {
-        showFolderErrorOnPlayer('フォルダの継続参照ハンドルが見つかりません。再接続してください。');
+        els.playerFolderPermissionButton.textContent = 'フォルダを再接続する';
+        showFolderErrorOnPlayer('フォルダの継続参照ハンドルが見つかりません。再接続してください。', 'permission');
         return;
       }
 
       // Query active permissions
       const perm = await handle.queryPermission({ mode: 'read' });
       if (perm !== 'granted') {
+        els.playerFolderPermissionButton.textContent = 'フォルダのアクセスを許可する';
         showFolderErrorOnPlayer(`動画フォルダ「${source.name}」へのアクセス権限が必要です。`, 'permission');
         return;
       }
@@ -1363,7 +1673,7 @@ function navigateAdjacentVideo(direction) {
   let videos = db.getVideos();
   if (state.filters.search) {
     const query = state.filters.search.toLowerCase();
-    videos = videos.filter(v => v.title.toLowerCase().includes(query) || v.fileName.toLowerCase().includes(query));
+    videos = videos.filter(v => (v.displayTitle || v.title).toLowerCase().includes(query) || v.fileName.toLowerCase().includes(query));
   }
   if (state.filters.tagId) {
     const tagAssoc = db.videoTags.filter(vt => vt.tagId === state.filters.tagId).map(vt => vt.videoId);
@@ -1403,7 +1713,7 @@ function navigateAdjacentVideo(direction) {
 
 // Individual Criteria Stars panel
 function renderStarCriteriaPanel() {
-  const activeCriteria = db.getActiveCriteria();
+  const activeCriteria = db.getCriteriaForVideoReview(state.currentVideoId);
   els.criteriaPanel.innerHTML = '';
   
   if (activeCriteria.length === 0) {
@@ -1425,7 +1735,12 @@ function renderStarCriteriaPanel() {
 
     const labelSpan = document.createElement('span');
     labelSpan.className = 'star-rating-label';
-    labelSpan.textContent = crit.name;
+    if (crit.isActive === false) {
+      labelSpan.textContent = crit.name + ' (非表示)';
+      labelSpan.style.color = 'var(--color-text-muted)';
+    } else {
+      labelSpan.textContent = crit.name;
+    }
     row.appendChild(labelSpan);
 
     const interactiveDiv = document.createElement('div');
@@ -1486,8 +1801,8 @@ function renderStarCriteriaPanel() {
 
 // Redraw custom Radar
 function updateRadar() {
-  const activeCriteria = db.getActiveCriteria();
-  radar.render(activeCriteria, state.currentRatings);
+  const criteria = db.getCriteriaForVideoReview(state.currentVideoId);
+  radar.render(criteria, state.currentRatings);
 }
 
 // Render video tags chips (XSS Safe DOM)
@@ -1788,7 +2103,23 @@ function openSettingsModal() {
     renderFolderSettingsPanel();
   }
 
+  // Set active settings genre ID
+  if (state.currentVideoId && state.currentView === 'editor') {
+    const video = db.getVideo(state.currentVideoId);
+    state.selectedSettingsGenreId = video ? (video.genreId || 'genre-default') : 'genre-default';
+  } else {
+    state.selectedSettingsGenreId = 'genre-default';
+  }
+
+  // Populate dropdowns & configure states
+  populateSettingsGenreSelect();
+  renderSettingsGenreControls();
   renderSettingsCriteriaList();
+
+  // Populate backup timestamp label
+  const lastBackup = localStorage.getItem('vreview_last_backup_time');
+  els.backupLastTimeVal.textContent = lastBackup ? new Date(lastBackup).toLocaleString() : '未作成';
+
   openModal(els.modalSettings);
 }
 
@@ -1825,30 +2156,41 @@ function renderFolderSettingsPanel() {
   els.folderNameVal.textContent = source.name;
   
   // Status check
-  els.folderStatusVal.textContent = '接続済み';
-  els.folderStatusVal.style.color = 'var(--color-success)';
+  const isDisconnected = !source.handleKey || source.permissionStatus === 'disconnected';
+  els.folderStatusVal.textContent = isDisconnected ? '再接続が必要' : '接続済み';
+  els.folderStatusVal.style.color = isDisconnected ? 'var(--color-error)' : 'var(--color-success)';
   
   // Permission status
   let permColor = 'var(--color-text-dim)';
   let permText = '確認中';
-  if (source.permissionStatus === 'granted') {
-    permText = '許可済み';
-    permColor = 'var(--color-success)';
-    
-    els.btnFolderRequestPerm.classList.add('hidden');
-    els.btnFolderRescan.classList.remove('hidden');
-  } else if (source.permissionStatus === 'prompt') {
-    permText = '許可が必要';
-    permColor = 'var(--color-warning)';
-    
+  
+  if (isDisconnected) {
+    permText = '再接続が必要';
+    permColor = 'var(--color-error)';
+    els.btnFolderRequestPerm.textContent = 'フォルダを再接続';
     els.btnFolderRequestPerm.classList.remove('hidden');
     els.btnFolderRescan.classList.add('hidden');
   } else {
-    permText = '拒否';
-    permColor = 'var(--color-error)';
-    
-    els.btnFolderRequestPerm.classList.remove('hidden');
-    els.btnFolderRescan.classList.add('hidden');
+    els.btnFolderRequestPerm.textContent = 'アクセスを許可';
+    if (source.permissionStatus === 'granted') {
+      permText = '許可済み';
+      permColor = 'var(--color-success)';
+      
+      els.btnFolderRequestPerm.classList.add('hidden');
+      els.btnFolderRescan.classList.remove('hidden');
+    } else if (source.permissionStatus === 'prompt') {
+      permText = '許可が必要';
+      permColor = 'var(--color-warning)';
+      
+      els.btnFolderRequestPerm.classList.remove('hidden');
+      els.btnFolderRescan.classList.add('hidden');
+    } else {
+      permText = '拒否';
+      permColor = 'var(--color-error)';
+      
+      els.btnFolderRequestPerm.classList.remove('hidden');
+      els.btnFolderRescan.classList.add('hidden');
+    }
   }
   
   els.folderPermissionVal.textContent = permText;
@@ -1871,7 +2213,7 @@ function renderFolderSettingsPanel() {
 }
 
 // Select a new folder on the host machine using a Two-Phase Commit with Rollback
-async function handleFolderSelect() {
+export async function handleFolderSelect(reconnectSourceId = null) {
   if (!window.showDirectoryPicker) {
     showToast('このブラウザはフォルダ選択に対応していません。', 'error');
     return;
@@ -1909,45 +2251,69 @@ async function handleFolderSelect() {
       throw new Error('選択したフォルダへのアクセス権限がないか、読み取りに失敗しました。');
     }
 
-    // Phase 4: Overwrite confirmation
-    const oldSourceIds = db.getDirectorySources().map(s => s.id);
-    if (oldSourceIds.length > 0) {
-      if (!confirm('すでに接続されているフォルダ設定があります。上書きして新しいフォルダを選択しますか？')) {
-        // Clean temp handle and return
-        await db.deleteDirectoryHandle(tempKey);
-        return;
+    if (reconnectSourceId && typeof reconnectSourceId === 'string') {
+      // Reconnect Mode: Update the existing source in place without creating a new ID
+      const source = db.getDirectorySource(reconnectSourceId);
+      if (!source) {
+        throw new Error('再接続対象のフォルダソースが見つかりません。');
+      }
+
+      await db.reconnectDirectorySource(source.id, handle);
+
+      // Clean up temporary handle
+      await db.deleteDirectoryHandle(tempKey);
+      handleSavedToTemp = false;
+
+      showToast('フォルダを再接続しました。');
+      if (!window.__TEST_ENV__) {
+        renderFolderSettingsPanel();
+        renderLibrary();
+        // Trigger initial scan on the reconnected folder
+        await startFolderScanning(source, handle);
+      }
+    } else {
+      // Normal Mode: Overwrite / select a brand new folder source
+      // Phase 4: Overwrite confirmation
+      const oldSourceIds = db.getDirectorySources().map(s => s.id);
+      if (oldSourceIds.length > 0) {
+        if (!confirm('すでに接続されているフォルダ設定があります。上書きして新しいフォルダを選択しますか？')) {
+          // Clean temp handle and return
+          await db.deleteDirectoryHandle(tempKey);
+          return;
+        }
+      }
+
+      // Phase 5: Commit changes to Database
+      const source = await db.addDirectorySource({
+        name: handle.name,
+        includeSubdirectories: els.folderRecursiveCheckbox.checked
+      });
+
+      // Copy from temporary key to permanent handle key
+      await db.putDirectoryHandle(source.handleKey, handle);
+      
+      // Set permission status
+      const status = await handle.queryPermission({ mode: 'read' });
+      await db.updateDirectorySource(source.id, { permissionStatus: status });
+
+      // Clean up temporary handle
+      await db.deleteDirectoryHandle(tempKey);
+      handleSavedToTemp = false;
+
+      // Disconnect old source if exists
+      for (const oldId of oldSourceIds) {
+        if (oldId !== source.id) {
+          await db.deleteDirectorySource(oldId);
+        }
+      }
+
+      showToast(`フォルダ「${handle.name}」を接続しました。`);
+      if (!window.__TEST_ENV__) {
+        renderFolderSettingsPanel();
+        // Trigger initial scan
+        await startFolderScanning(source, handle);
       }
     }
-
-    // Phase 5: Commit changes to Database
-    const source = await db.addDirectorySource({
-      name: handle.name,
-      includeSubdirectories: els.folderRecursiveCheckbox.checked
-    });
-
-    // Copy from temporary key to permanent handle key
-    await db.putDirectoryHandle(source.handleKey, handle);
-    
-    // Set permission status
-    const status = await handle.queryPermission({ mode: 'read' });
-    await db.updateDirectorySource(source.id, { permissionStatus: status });
-
-    // Clean up temporary handle
-    await db.deleteDirectoryHandle(tempKey);
-    handleSavedToTemp = false;
-
-    // Disconnect old source if exists
-    for (const oldId of oldSourceIds) {
-      if (oldId !== source.id) {
-        await db.deleteDirectorySource(oldId);
-      }
-    }
-
-    showToast(`フォルダ「${handle.name}」を接続しました。`);
-    renderFolderSettingsPanel();
-    
-    // Trigger initial scan
-    await startFolderScanning(source, handle);
   } catch (err) {
     if (err.name === 'AbortError') {
       console.log('Folder selection cancelled by user');
@@ -1962,19 +2328,29 @@ async function handleFolderSelect() {
       try { await db.deleteDirectoryHandle(tempKey); } catch (e) {}
     }
     
-    showToast(`新しいフォルダへ切り替えられませんでした: ${err.message}`, 'error');
+    showToast(`フォルダ接続エラー: ${err.message}`, 'error');
   }
 }
 
 // Request permission context explicitly inside user click
-async function handleFolderRequestPermission() {
+export async function handleFolderRequestPermission() {
   const source = db.getDirectorySources()[0];
   if (!source) return;
+
+  const isDisconnected = !source.handleKey || source.permissionStatus === 'disconnected';
+  if (isDisconnected) {
+    await handleFolderSelect(source.id);
+    return;
+  }
 
   try {
     const handle = await db.getDirectoryHandle(source.handleKey);
     if (!handle) {
-      showToast('フォルダの参照データが見つかりません。再接続してください。', 'error');
+      await db.updateDirectorySource(source.id, { handleKey: '', permissionStatus: 'disconnected' });
+      showToast('フォルダの参照データが見つかりません。フォルダを再接続してください。', 'error');
+      if (!window.__TEST_ENV__) {
+        renderFolderSettingsPanel();
+      }
       return;
     }
 
@@ -1985,8 +2361,10 @@ async function handleFolderRequestPermission() {
     await db.updateDirectoryVideosAvailability(source.id, status === 'granted' ? 'available' : 'permission-required');
 
     showToast(status === 'granted' ? 'アクセス権限が許可されました。' : 'アクセス権限が拒否されました。');
-    renderFolderSettingsPanel();
-    renderLibrary();
+    if (!window.__TEST_ENV__) {
+      renderFolderSettingsPanel();
+      renderLibrary();
+    }
   } catch (err) {
     showToast(`権限要求エラー: ${err.message}`, 'error');
   }
@@ -2099,7 +2477,8 @@ async function handleFolderDisconnect() {
 
 // Settings criteria rows renderer (XSS Safe DOM)
 function renderSettingsCriteriaList() {
-  const criteria = db.getCriteria();
+  const genreId = state.selectedSettingsGenreId || 'genre-default';
+  const criteria = db.getCriteriaForGenre(genreId);
   els.settingsCriteriaList.innerHTML = '';
 
   criteria.forEach((crit, index) => {
@@ -2181,7 +2560,7 @@ function renderSettingsCriteriaList() {
       const active = checkbox.checked;
       
       if (active) {
-        const activeCount = db.getActiveCriteria().length;
+        const activeCount = db.getActiveCriteriaForGenre(genreId).length;
         if (activeCount >= 6) {
           showToast('有効な評価項目は最大6項目までです。', 'error');
           checkbox.checked = false;
@@ -2230,8 +2609,9 @@ async function handleSettingsAddCriterion() {
   const name = els.settingsNewNameInput.value.trim();
   if (!name) return;
 
+  const genreId = state.selectedSettingsGenreId || 'genre-default';
   try {
-    await db.addCriterion(name);
+    await db.addCriterionToGenre(genreId, name);
     els.settingsNewNameInput.value = '';
     renderSettingsCriteriaList();
     showToast('評価項目を追加しました');
@@ -2371,5 +2751,324 @@ function handleKeyboardShortcuts(e) {
     if (state.currentView === 'editor') {
       saveReviewForm();
     }
+  }
+}
+
+// --- VIDEOPLAY / EVALUATION GENRES & BACKUP HELPERS ---
+
+function populateSettingsGenreSelect() {
+  const genres = db.getGenres();
+  
+  // 1. Configure configuration genre select dropdown
+  els.settingsGenreSelect.innerHTML = '';
+  genres.forEach(g => {
+    const opt = document.createElement('option');
+    opt.value = g.id;
+    opt.textContent = g.isActive ? g.name : `${g.name} (無効)`;
+    els.settingsGenreSelect.appendChild(opt);
+  });
+  
+  if (state.selectedSettingsGenreId) {
+    els.settingsGenreSelect.value = state.selectedSettingsGenreId;
+  } else if (genres.length > 0) {
+    state.selectedSettingsGenreId = genres[0].id;
+    els.settingsGenreSelect.value = genres[0].id;
+  }
+
+  // 2. Configure copy source select dropdown (only active genres, excluding current one)
+  els.settingsCopySourceSelect.innerHTML = '';
+  const currentGenreId = state.selectedSettingsGenreId;
+  
+  const placeholderOpt = document.createElement('option');
+  placeholderOpt.value = '';
+  placeholderOpt.textContent = '-- コピー元ジャンルを選択 --';
+  els.settingsCopySourceSelect.appendChild(placeholderOpt);
+
+  genres.forEach(g => {
+    if (g.isActive && g.id !== currentGenreId) {
+      const opt = document.createElement('option');
+      opt.value = g.id;
+      opt.textContent = g.name;
+      els.settingsCopySourceSelect.appendChild(opt);
+    }
+  });
+}
+
+function renderSettingsGenreControls() {
+  const genreId = state.selectedSettingsGenreId || 'genre-default';
+  const genre = db.getGenre(genreId);
+  if (!genre) return;
+
+  if (genre.isActive) {
+    els.settingsBtnGenreToggleActive.textContent = '無効化';
+    els.settingsBtnGenreToggleActive.className = 'btn btn-danger';
+  } else {
+    els.settingsBtnGenreToggleActive.textContent = '有効化';
+    els.settingsBtnGenreToggleActive.className = 'btn btn-primary';
+  }
+
+  const genres = db.getGenres();
+  const idx = genres.findIndex(g => g.id === genreId);
+  els.settingsBtnGenreUp.disabled = (idx <= 0);
+  els.settingsBtnGenreDown.disabled = (idx === -1 || idx === genres.length - 1);
+}
+
+// Helper to generate a ZIP Blob of the current database state
+async function generateLocalBackupZipBlob() {
+  const dbData = {
+    videos: db.videos,
+    rating_criteria: db.criteria,
+    video_reviews: db.reviews,
+    criterion_ratings: db.criterionRatings,
+    tags: db.tags,
+    video_tags: db.videoTags,
+    timeline_notes: db.timelineNotes,
+    directory_sources: db.directorySources,
+    genres: db.genres,
+    evaluation_templates: db.templates
+  };
+
+  // Strip DirectoryHandles and reset status to 'prompt'
+  dbData.directory_sources = dbData.directory_sources.map(src => ({
+    ...src,
+    permissionStatus: 'prompt'
+  }));
+
+  const images = await db.getAllImages();
+
+  const manifest = {
+    application: "VideoReviewer",
+    schemaVersion: 1,
+    createdAt: new Date().toISOString(),
+    appVersion: "1.0.0",
+    counts: {
+      videos: db.videos.length,
+      reviews: db.reviews.length,
+      criterionRatings: db.criterionRatings.length,
+      tags: db.tags.length,
+      timelineNotes: db.timelineNotes.length,
+      images: images.length
+    }
+  };
+
+  const zip = new JSZip();
+  zip.file('manifest.json', JSON.stringify(manifest, null, 2));
+  zip.file('database.json', JSON.stringify(dbData, null, 2));
+
+  const imgFolder = zip.folder('images');
+  const thumbFolder = imgFolder.folder('thumbnails');
+  const noteFolder = imgFolder.folder('timeline-notes');
+
+  images.forEach(image => {
+    if (image.id.startsWith('img-vid-')) {
+      thumbFolder.file(image.id, image.data);
+    } else if (image.id.startsWith('img-note-')) {
+      noteFolder.file(image.id, image.data);
+    } else {
+      thumbFolder.file(image.id, image.data);
+    }
+  });
+
+  return await zip.generateAsync({ type: 'blob' });
+}
+
+// DB Backup Zip Creator
+async function handleBackupCreate() {
+  els.backupProgressTitle.textContent = 'バックアップを作成中...';
+  els.backupProgressMsg.textContent = 'データベースおよび画像をパッケージ化しています。';
+  els.modalBackupProgress.classList.add('open');
+
+  try {
+    const content = await generateLocalBackupZipBlob();
+
+    const link = document.createElement('a');
+    link.href = URL.createObjectURL(content);
+    const timestamp = new Date().toISOString().replace(/[:T]/g, '-').slice(0, 19);
+    link.download = `VideoReviewer-backup-${timestamp}.zip`;
+    link.click();
+
+    localStorage.setItem('vreview_last_backup_time', new Date().toISOString());
+    els.backupLastTimeVal.textContent = new Date().toLocaleString();
+    
+    showToast('バックアップを作成しました。');
+  } catch (err) {
+    console.error(err);
+    showToast(`バックアップ作成に失敗しました: ${err.message}`, 'error');
+  } finally {
+    els.modalBackupProgress.classList.remove('open');
+  }
+}
+
+// DB Backup Zip Restorer
+async function handleBackupRestore(e) {
+  const file = e.target.files[0];
+  if (!file) return;
+
+  els.backupProgressTitle.textContent = 'バックアップを検証中...';
+  els.backupProgressMsg.textContent = 'ファイルを読み込んで内容を確認しています。';
+  els.modalBackupProgress.classList.add('open');
+
+  try {
+    const zip = await JSZip.loadAsync(file);
+    const manifestFile = zip.file('manifest.json');
+    const dbFile = zip.file('database.json');
+
+    if (!manifestFile || !dbFile) {
+      throw new Error('ZIP内に必要なファイル（manifest.json, database.json）が見つかりません。');
+    }
+
+    const manifest = JSON.parse(await manifestFile.async('string'));
+    if (manifest.application !== 'VideoReviewer') {
+      throw new Error('VideoReviewerのバックアップファイルではありません。');
+    }
+
+    const parsedDb = JSON.parse(await dbFile.async('string'));
+
+    // Extract image IDs/keys from ZIP for validation
+    const imageIds = [];
+    const thumbnailsFolder = zip.folder('images/thumbnails');
+    const notesFolder = zip.folder('images/timeline-notes');
+    if (thumbnailsFolder) {
+      thumbnailsFolder.forEach((relativePath, zipEntry) => {
+        if (!zipEntry.dir) imageIds.push(relativePath);
+      });
+    }
+    if (notesFolder) {
+      notesFolder.forEach((relativePath, zipEntry) => {
+        if (!zipEntry.dir) imageIds.push(relativePath);
+      });
+    }
+
+    // Invoke production database validation before overwrite confirmation
+    const validationResult = db.validateBackupData(parsedDb, manifest, imageIds);
+    if (!validationResult.isValid) {
+      throw new Error('検証エラーが発生しました:\n' + validationResult.fatalErrors.join('\n'));
+    }
+
+    els.modalBackupProgress.classList.remove('open');
+
+    const irreparableWarnings = validationResult.warnings.filter(w => !w.repaired);
+    const repairedWarnings = validationResult.warnings.filter(w => w.repaired);
+
+    let confirmMsg = `バックアップデータを復元しますか？\n現在のデータは上書きされ、復元されたデータに置き換わります。\n\n` +
+      `作成日時: ${new Date(manifest.createdAt).toLocaleString()}\n` +
+      `動画数: ${manifest.counts.videos}本\n` +
+      `レビュー数: ${manifest.counts.reviews}件\n` +
+      `画像数: ${manifest.counts.images}枚\n\n`;
+
+    if (repairedWarnings.length > 0) {
+      confirmMsg += `【自動修復】\n旧バージョンの孤立したタイムラインメモ ${repairedWarnings.length} 件を修復しました（レビューへの再紐付け）。\n\n`;
+    }
+
+    if (irreparableWarnings.length > 0) {
+      confirmMsg += `【警告：孤立データの除外】\n以下の修復不可能な孤立したタイムラインメモ ${irreparableWarnings.length} 件を除外して復元します。これらは復旧できません。\n` +
+        `対象ID: ${irreparableWarnings.map(w => w.noteId).join(', ')}\n\n`;
+    }
+
+    confirmMsg += `※ 復元前に現在のデータが自動でダウンロード退避されます。\n本当に復元しますか？`;
+
+    if (!confirm(confirmMsg)) {
+      els.backupRestoreFile.value = '';
+      return;
+    }
+
+    // Phase 1: Generate safety download ZIP of current state before restore starts
+    els.backupProgressTitle.textContent = '現在のデータを退避中...';
+    els.backupProgressMsg.textContent = '上書き前のデータを安全にZIPへ書き出しています。';
+    els.modalBackupProgress.classList.add('open');
+
+    const safetyZipBlob = await generateLocalBackupZipBlob();
+    const safetyLink = document.createElement('a');
+    safetyLink.href = URL.createObjectURL(safetyZipBlob);
+    const safetyTimestamp = new Date().toISOString().replace(/[:T]/g, '-').slice(0, 19);
+    safetyLink.download = `VideoReviewer-safety-backup-before-restore-${safetyTimestamp}.zip`;
+    safetyLink.click();
+
+    els.backupProgressTitle.textContent = 'データを復元中...';
+    els.backupProgressMsg.textContent = 'データベースの上書き処理を実行しています。';
+
+    // Phase 2: Extract images and execute production restore
+    try {
+      const imageEntries = [];
+      const imagePromises = [];
+      
+      if (thumbnailsFolder) {
+        thumbnailsFolder.forEach((relativePath, zipEntry) => {
+          if (!zipEntry.dir) {
+            imagePromises.push(
+              zipEntry.async('blob').then(blob => {
+                imageEntries.push({ id: relativePath, data: blob });
+              })
+            );
+          }
+        });
+      }
+      
+      if (notesFolder) {
+        notesFolder.forEach((relativePath, zipEntry) => {
+          if (!zipEntry.dir) {
+            imagePromises.push(
+              zipEntry.async('blob').then(blob => {
+                imageEntries.push({ id: relativePath, data: blob });
+              })
+            );
+          }
+        });
+      }
+
+      await Promise.all(imagePromises);
+
+      // Exclude orphaned images by filtering based on requiredImageIds from validationResult
+      const filteredImageEntries = imageEntries.filter(img => validationResult.requiredImageIds.includes(img.id));
+
+      // Invoke production DB restore routine with repaired database and filtered images (rollback transaction on failure)
+      await db.restoreWithRollback(validationResult.repairedDb, filteredImageEntries);
+
+      els.modalBackupProgress.classList.remove('open');
+      showToast('データの復元が完了しました。自動再読み込みします。');
+      setTimeout(() => {
+        window.location.reload();
+      }, 1000);
+
+    } catch (innerErr) {
+      console.error('Error during write phase:', innerErr);
+      throw new Error('復元書き込み処理中にエラーが発生しました。データを元の状態にロールバックしました。: ' + innerErr.message);
+    }
+
+  } catch (err) {
+    console.error(err);
+    alert(`復元に失敗しました: ${err.message}`);
+  } finally {
+    els.backupRestoreFile.value = '';
+    els.modalBackupProgress.classList.remove('open');
+  }
+}
+
+// Clean up orphan timeline notes and unreferenced images
+async function handleCleanOrphanData() {
+  try {
+    const { orphanNotes, unreferencedImageIds } = await db.checkOrphanData();
+    
+    if (orphanNotes.length === 0 && unreferencedImageIds.length === 0) {
+      alert('クリーンアップが必要な孤立データ（メモ・画像）は見つかりませんでした。');
+      return;
+    }
+
+    let confirmMsg = 'データベース内の孤立データをクリーンアップしますか？\n\n' +
+      `孤立したタイムラインメモ: ${orphanNotes.length} 件\n` +
+      `参照されていない画像: ${unreferencedImageIds.length} 枚\n\n` +
+      '※ この操作は元に戻せません。本当に実行しますか？';
+
+    if (!confirm(confirmMsg)) {
+      return;
+    }
+
+    const { notesCleanedCount, imagesCleanedCount } = await db.cleanOrphanData();
+    
+    showToast(`クリーンアップを完了しました（タイムラインメモ: ${notesCleanedCount}件、画像: ${imagesCleanedCount}枚）。`);
+    renderLibrary();
+  } catch (err) {
+    console.error(err);
+    alert(`クリーンアップに失敗しました: ${err.message}`);
   }
 }

@@ -128,7 +128,7 @@ export async function scanDirectory({ directoryHandle, recursive = true, signal 
         }
       } catch (err) {
         failedDirectories.push({
-          relativePath: relPath || dirHandle.name,
+          relativePath: relPath,
           errorName: err.name,
           errorMessage: err.message
         });
