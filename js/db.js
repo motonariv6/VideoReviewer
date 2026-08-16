@@ -327,17 +327,17 @@ export class AppDatabase {
   }
 
   _loadTable(key, defaults) {
-    if (!this.storage) return defaults;
+    if (!this.storage) return JSON.parse(JSON.stringify(defaults));
     try {
       const data = this.storage.getItem(`${this.prefix}${key}`);
       if (!data) {
         this.storage.setItem(`${this.prefix}${key}`, JSON.stringify(defaults));
-        return defaults;
+        return JSON.parse(JSON.stringify(defaults));
       }
       return JSON.parse(data);
     } catch (e) {
       console.error(`Failed to load localStorage table for ${key}:`, e);
-      return defaults;
+      return JSON.parse(JSON.stringify(defaults));
     }
   }
 
@@ -712,6 +712,9 @@ export class AppDatabase {
     const video = this.getVideo(videoId);
     if (!video) return false;
 
+    const reviewsToDelete = this.reviews.filter(r => r.videoId === videoId);
+    const reviewIds = reviewsToDelete.map(r => r.id);
+
     // 1. Delete image Blobs from IndexedDB
     if (this.idbAvailable) {
       // Delete Video Thumbnail
@@ -724,7 +727,7 @@ export class AppDatabase {
       }
 
       // Delete Timeline Note Screenshots
-      const matchedNotes = this.timelineNotes.filter(n => n.videoId === videoId);
+      const matchedNotes = this.timelineNotes.filter(n => n.videoId === videoId || reviewIds.includes(n.videoReviewId));
       for (const note of matchedNotes) {
         if (note.thumbnailId) {
           try {
@@ -740,9 +743,6 @@ export class AppDatabase {
     this.videos = this.videos.filter(v => v.id !== videoId);
     this._saveTable('videos', this.videos);
 
-    const reviewsToDelete = this.reviews.filter(r => r.videoId === videoId);
-    const reviewIds = reviewsToDelete.map(r => r.id);
-
     this.reviews = this.reviews.filter(r => r.videoId !== videoId);
     this._saveTable('video_reviews', this.reviews);
 
@@ -752,7 +752,7 @@ export class AppDatabase {
     this.videoTags = this.videoTags.filter(vt => vt.videoId !== videoId);
     this._saveTable('video_tags', this.videoTags);
 
-    this.timelineNotes = this.timelineNotes.filter(n => n.videoId !== videoId);
+    this.timelineNotes = this.timelineNotes.filter(n => n.videoId !== videoId && !reviewIds.includes(n.videoReviewId));
     this._saveTable('timeline_notes', this.timelineNotes);
 
     return true;

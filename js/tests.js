@@ -1,6 +1,7 @@
 import { AppDatabase } from './db.js';
 import { generateFileSignature, formatTime, parseTime, validateVideoUrl } from './video-helper.js';
 import { isSupportedVideoFile, isPathCoveredByFailedDirectory, scanDirectory, classifyScanResults, applyScanDifferentials } from './directory-scanner.js';
+import { RadarChart } from './radar.js';
 
 // In-Memory Storage Driver for 100% isolated tests
 export class MemoryStorage {
@@ -376,6 +377,22 @@ export async function runTests() {
     const memory = new MemoryStorage();
     const testDb = new AppDatabase(memory, 'test_vreview_fs_', 'TestVideoDB_FolderSwitchRegression');
     await testDb.initAsync();
+    testDb.idbAvailable = true;
+    testDb.idb = {
+      store: {},
+      get: async function(key, storeName) {
+        return this.store[key] || null;
+      },
+      put: async function(key, val, storeName) {
+        this.store[key] = val;
+      },
+      delete: async function(key, storeName) {
+        delete this.store[key];
+      },
+      clear: async function() {
+        this.store = {};
+      }
+    };
 
     // Simulation of handleFolderSelect with snapshotted old sources and safe deletes
     async function runFolderSelectSimulation({
@@ -700,6 +717,8 @@ export async function runTests() {
     const memory = new MemoryStorage();
     const testDb = new AppDatabase(memory, 'test_vreview_del_', 'TestVideoDB_CascadeDelete');
     await testDb.initAsync();
+    testDb.videos = [];
+    testDb._saveTable('videos', []);
 
     // 1. Setup Video A (to be deleted cascade) and Video B (to be kept)
     const vidA = await testDb.addVideo({
@@ -731,7 +750,7 @@ export async function runTests() {
     testDb._saveTable('video_tags', testDb.videoTags);
 
     // Add timeline notes
-    testDb.timelineNotes.push({ id: 'note-a1', videoId: vidA.id, time: 10, text: 'First note', thumbnailId: 'img-note-a1' });
+    testDb.timelineNotes.push({ id: 'note-a1', videoReviewId: revA.id, timestampSeconds: 10, comment: 'First note', thumbnailId: 'img-note-a1' });
     testDb._saveTable('timeline_notes', testDb.timelineNotes);
 
     // Seed thumbnails and note screenshots in IndexedDB mock if available
@@ -750,7 +769,7 @@ export async function runTests() {
     });
     testDb.videoTags.push({ videoId: vidB.id, tagId: 'tag-2' });
     testDb._saveTable('video_tags', testDb.videoTags);
-    testDb.timelineNotes.push({ id: 'note-b1', videoId: vidB.id, time: 20, text: 'Second note', thumbnailId: 'img-note-b1' });
+    testDb.timelineNotes.push({ id: 'note-b1', videoReviewId: revB.id, timestampSeconds: 20, comment: 'Second note', thumbnailId: 'img-note-b1' });
     testDb._saveTable('timeline_notes', testDb.timelineNotes);
 
     if (testDb.idbAvailable) {
