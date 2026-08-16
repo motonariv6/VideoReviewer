@@ -1398,20 +1398,33 @@ export class AppDatabase {
       this.tags = parsedDb.tags;
       this.videoTags = parsedDb.video_tags;
       this.timelineNotes = parsedDb.timeline_notes;
-      this.directorySources = (parsedDb.directory_sources || []).map(src => ({
-        ...src,
-        permissionStatus: 'prompt'
-      }));
+
+      // Reconcile directory sources with existing DirectoryHandles in IndexedDB
+      const reconciledSources = [];
+      if (Array.isArray(parsedDb.directory_sources)) {
+        for (const src of parsedDb.directory_sources) {
+          const matchingHandleObj = originalHandles.find(h => h.id === src.handleKey);
+          let status = 'prompt';
+          if (matchingHandleObj && matchingHandleObj.data && typeof matchingHandleObj.data.queryPermission === 'function') {
+            try {
+              status = await matchingHandleObj.data.queryPermission({ mode: 'read' });
+            } catch (err) {
+              console.warn('Failed to query handle permission during restore:', err);
+            }
+          }
+          reconciledSources.push({
+            ...src,
+            permissionStatus: status
+          });
+        }
+      }
+      this.directorySources = reconciledSources;
+
       this.genres = parsedDb.genres;
       this.templates = parsedDb.evaluation_templates;
 
       // 4c. Persist all tables to storage
       this._saveAll();
-
-      // 4d. Clear handles only after everything else has succeeded
-      if (this.idbAvailable) {
-        await this.idb.clearHandles();
-      }
 
       this._inRestoreTransaction = false;
       return true;
