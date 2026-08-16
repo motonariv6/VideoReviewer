@@ -2204,7 +2204,7 @@ function renderFolderSettingsPanel() {
 }
 
 // Select a new folder on the host machine using a Two-Phase Commit with Rollback
-async function handleFolderSelect() {
+async function handleFolderSelect(reconnectSourceId = null) {
   if (!window.showDirectoryPicker) {
     showToast('このブラウザはフォルダ選択に対応していません。', 'error');
     return;
@@ -2242,45 +2242,80 @@ async function handleFolderSelect() {
       throw new Error('選択したフォルダへのアクセス権限がないか、読み取りに失敗しました。');
     }
 
-    // Phase 4: Overwrite confirmation
-    const oldSourceIds = db.getDirectorySources().map(s => s.id);
-    if (oldSourceIds.length > 0) {
-      if (!confirm('すでに接続されているフォルダ設定があります。上書きして新しいフォルダを選択しますか？')) {
-        // Clean temp handle and return
-        await db.deleteDirectoryHandle(tempKey);
-        return;
+    if (reconnectSourceId) {
+      // Reconnect Mode: Update the existing source in place without creating a new ID
+      const source = db.getDirectorySource(reconnectSourceId);
+      if (!source) {
+        throw new Error('再接続対象のフォルダソースが見つかりません。');
       }
-    }
 
-    // Phase 5: Commit changes to Database
-    const source = await db.addDirectorySource({
-      name: handle.name,
-      includeSubdirectories: els.folderRecursiveCheckbox.checked
-    });
+      const handleKey = source.handleKey || `directory-handle-${source.id}`;
+      // Copy handle to permanent location
+      await db.putDirectoryHandle(handleKey, handle);
 
-    // Copy from temporary key to permanent handle key
-    await db.putDirectoryHandle(source.handleKey, handle);
-    
-    // Set permission status
-    const status = await handle.queryPermission({ mode: 'read' });
-    await db.updateDirectorySource(source.id, { permissionStatus: status });
+      const status = await handle.queryPermission({ mode: 'read' });
+      await db.updateDirectorySource(source.id, {
+        name: handle.name,
+        handleKey: handleKey,
+        permissionStatus: status,
+        updatedAt: new Date().toISOString()
+      });
 
-    // Clean up temporary handle
-    await db.deleteDirectoryHandle(tempKey);
-    handleSavedToTemp = false;
+      // Update and persist video availability statuses via public DB method
+      await db.updateDirectoryVideosAvailability(source.id, status === 'granted' ? 'available' : 'permission-required');
 
-    // Disconnect old source if exists
-    for (const oldId of oldSourceIds) {
-      if (oldId !== source.id) {
-        await db.deleteDirectorySource(oldId);
+      // Clean up temporary handle
+      await db.deleteDirectoryHandle(tempKey);
+      handleSavedToTemp = false;
+
+      showToast('フォルダを再接続しました。');
+      renderFolderSettingsPanel();
+      renderLibrary();
+
+      // Trigger initial scan on the reconnected folder
+      await startFolderScanning(source, handle);
+    } else {
+      // Normal Mode: Overwrite / select a brand new folder source
+      // Phase 4: Overwrite confirmation
+      const oldSourceIds = db.getDirectorySources().map(s => s.id);
+      if (oldSourceIds.length > 0) {
+        if (!confirm('すでに接続されているフォルダ設定があります。上書きして新しいフォルダを選択しますか？')) {
+          // Clean temp handle and return
+          await db.deleteDirectoryHandle(tempKey);
+          return;
+        }
       }
-    }
 
-    showToast(`フォルダ「${handle.name}」を接続しました。`);
-    renderFolderSettingsPanel();
-    
-    // Trigger initial scan
-    await startFolderScanning(source, handle);
+      // Phase 5: Commit changes to Database
+      const source = await db.addDirectorySource({
+        name: handle.name,
+        includeSubdirectories: els.folderRecursiveCheckbox.checked
+      });
+
+      // Copy from temporary key to permanent handle key
+      await db.putDirectoryHandle(source.handleKey, handle);
+      
+      // Set permission status
+      const status = await handle.queryPermission({ mode: 'read' });
+      await db.updateDirectorySource(source.id, { permissionStatus: status });
+
+      // Clean up temporary handle
+      await db.deleteDirectoryHandle(tempKey);
+      handleSavedToTemp = false;
+
+      // Disconnect old source if exists
+      for (const oldId of oldSourceIds) {
+        if (oldId !== source.id) {
+          await db.deleteDirectorySource(oldId);
+        }
+      }
+
+      showToast(`フォルダ「${handle.name}」を接続しました。`);
+      renderFolderSettingsPanel();
+      
+      // Trigger initial scan
+      await startFolderScanning(source, handle);
+    }
   } catch (err) {
     if (err.name === 'AbortError') {
       console.log('Folder selection cancelled by user');
@@ -2295,7 +2330,7 @@ async function handleFolderSelect() {
       try { await db.deleteDirectoryHandle(tempKey); } catch (e) {}
     }
     
-    showToast(`新しいフォルダへ切り替えられませんでした: ${err.message}`, 'error');
+    showToast(`フォルダ接続エラー: ${err.message}`, 'error');
   }
 }
 
