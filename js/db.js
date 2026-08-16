@@ -1403,17 +1403,57 @@ export class AppDatabase {
       const reconciledSources = [];
       if (Array.isArray(parsedDb.directory_sources)) {
         for (const src of parsedDb.directory_sources) {
-          const matchingHandleObj = originalHandles.find(h => h.id === src.handleKey);
-          let status = 'prompt';
-          if (matchingHandleObj && matchingHandleObj.data && typeof matchingHandleObj.data.queryPermission === 'function') {
-            try {
-              status = await matchingHandleObj.data.queryPermission({ mode: 'read' });
-            } catch (err) {
-              console.warn('Failed to query handle permission during restore:', err);
+          let matchedHandleKey = null;
+
+          // Priority 1: Restored src.id matches origSrc.id and origSrc has a handle in IndexedDB
+          const origSrcById = inMemorySnapshot.directorySources.find(os => os.id === src.id);
+          if (origSrcById && origSrcById.handleKey) {
+            const hasHandle = originalHandles.some(h => h.id === origSrcById.handleKey);
+            if (hasHandle) {
+              matchedHandleKey = origSrcById.handleKey;
             }
           }
+
+          // Priority 2: Restored handleKey exists in IndexedDB directly
+          if (!matchedHandleKey && src.handleKey) {
+            const hasHandle = originalHandles.some(h => h.id === src.handleKey);
+            if (hasHandle) {
+              matchedHandleKey = src.handleKey;
+            }
+          }
+
+          // Priority 3: Restored src.name matches origSrc.name where exactly one candidates has a handle
+          if (!matchedHandleKey) {
+            const candidates = inMemorySnapshot.directorySources.filter(os => 
+              os.name === src.name && 
+              os.handleKey && 
+              originalHandles.some(h => h.id === os.handleKey)
+            );
+            if (candidates.length === 1) {
+              matchedHandleKey = candidates[0].handleKey;
+            }
+          }
+
+          let status = 'prompt';
+          let finalHandleKey = '';
+
+          if (matchedHandleKey) {
+            finalHandleKey = matchedHandleKey;
+            const matchingHandleObj = originalHandles.find(h => h.id === matchedHandleKey);
+            if (matchingHandleObj && matchingHandleObj.data && typeof matchingHandleObj.data.queryPermission === 'function') {
+              try {
+                status = await matchingHandleObj.data.queryPermission({ mode: 'read' });
+              } catch (err) {
+                console.warn('Failed to query handle permission during restore:', err);
+              }
+            }
+          } else {
+            status = 'disconnected';
+          }
+
           reconciledSources.push({
             ...src,
+            handleKey: finalHandleKey,
             permissionStatus: status
           });
         }

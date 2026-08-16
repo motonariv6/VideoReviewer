@@ -1340,11 +1340,26 @@ async function handlePlayerFolderPermissionClick() {
   
   const source = db.getDirectorySource(video.directoryId);
   if (!source) return;
+
+  const isDisconnected = !source.handleKey || source.permissionStatus === 'disconnected';
+  let handle = null;
+  if (!isDisconnected) {
+    try {
+      handle = await db.getDirectoryHandle(source.handleKey);
+    } catch (err) {
+      console.warn('Failed to retrieve folder handle:', err);
+    }
+  }
+
+  if (isDisconnected || !handle) {
+    // Clean up handleKey and update status
+    await db.updateDirectorySource(source.id, { handleKey: '', permissionStatus: 'disconnected' });
+    showToast('フォルダの参照データが見つかりません。フォルダを再接続してください。', 'error');
+    openSettingsModal();
+    return;
+  }
   
   try {
-    const handle = await db.getDirectoryHandle(source.handleKey);
-    if (!handle) return;
-    
     const status = await handle.requestPermission({ mode: 'read' });
     await db.updateDirectorySource(source.id, { permissionStatus: status });
     
@@ -1383,13 +1398,15 @@ async function loadVideoMediaSource(video) {
     try {
       const handle = await db.getDirectoryHandle(source.handleKey);
       if (!handle) {
-        showFolderErrorOnPlayer('フォルダの継続参照ハンドルが見つかりません。再接続してください。');
+        els.playerFolderPermissionButton.textContent = 'フォルダを再接続する';
+        showFolderErrorOnPlayer('フォルダの継続参照ハンドルが見つかりません。再接続してください。', 'permission');
         return;
       }
 
       // Query active permissions
       const perm = await handle.queryPermission({ mode: 'read' });
       if (perm !== 'granted') {
+        els.playerFolderPermissionButton.textContent = 'フォルダのアクセスを許可する';
         showFolderErrorOnPlayer(`動画フォルダ「${source.name}」へのアクセス権限が必要です。`, 'permission');
         return;
       }
@@ -2130,30 +2147,41 @@ function renderFolderSettingsPanel() {
   els.folderNameVal.textContent = source.name;
   
   // Status check
-  els.folderStatusVal.textContent = '接続済み';
-  els.folderStatusVal.style.color = 'var(--color-success)';
+  const isDisconnected = !source.handleKey || source.permissionStatus === 'disconnected';
+  els.folderStatusVal.textContent = isDisconnected ? '再接続が必要' : '接続済み';
+  els.folderStatusVal.style.color = isDisconnected ? 'var(--color-error)' : 'var(--color-success)';
   
   // Permission status
   let permColor = 'var(--color-text-dim)';
   let permText = '確認中';
-  if (source.permissionStatus === 'granted') {
-    permText = '許可済み';
-    permColor = 'var(--color-success)';
-    
-    els.btnFolderRequestPerm.classList.add('hidden');
-    els.btnFolderRescan.classList.remove('hidden');
-  } else if (source.permissionStatus === 'prompt') {
-    permText = '許可が必要';
-    permColor = 'var(--color-warning)';
-    
+  
+  if (isDisconnected) {
+    permText = '再接続が必要';
+    permColor = 'var(--color-error)';
+    els.btnFolderRequestPerm.textContent = 'フォルダを再接続';
     els.btnFolderRequestPerm.classList.remove('hidden');
     els.btnFolderRescan.classList.add('hidden');
   } else {
-    permText = '拒否';
-    permColor = 'var(--color-error)';
-    
-    els.btnFolderRequestPerm.classList.remove('hidden');
-    els.btnFolderRescan.classList.add('hidden');
+    els.btnFolderRequestPerm.textContent = 'アクセスを許可';
+    if (source.permissionStatus === 'granted') {
+      permText = '許可済み';
+      permColor = 'var(--color-success)';
+      
+      els.btnFolderRequestPerm.classList.add('hidden');
+      els.btnFolderRescan.classList.remove('hidden');
+    } else if (source.permissionStatus === 'prompt') {
+      permText = '許可が必要';
+      permColor = 'var(--color-warning)';
+      
+      els.btnFolderRequestPerm.classList.remove('hidden');
+      els.btnFolderRescan.classList.add('hidden');
+    } else {
+      permText = '拒否';
+      permColor = 'var(--color-error)';
+      
+      els.btnFolderRequestPerm.classList.remove('hidden');
+      els.btnFolderRescan.classList.add('hidden');
+    }
   }
   
   els.folderPermissionVal.textContent = permText;
@@ -2276,10 +2304,18 @@ async function handleFolderRequestPermission() {
   const source = db.getDirectorySources()[0];
   if (!source) return;
 
+  const isDisconnected = !source.handleKey || source.permissionStatus === 'disconnected';
+  if (isDisconnected) {
+    await handleFolderSelect();
+    return;
+  }
+
   try {
     const handle = await db.getDirectoryHandle(source.handleKey);
     if (!handle) {
-      showToast('フォルダの参照データが見つかりません。再接続してください。', 'error');
+      await db.updateDirectorySource(source.id, { handleKey: '', permissionStatus: 'disconnected' });
+      showToast('フォルダの参照データが見つかりません。フォルダを再接続してください。', 'error');
+      renderFolderSettingsPanel();
       return;
     }
 

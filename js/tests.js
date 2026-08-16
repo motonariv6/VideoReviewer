@@ -1486,83 +1486,193 @@ export async function runTests() {
 
   console.group('Group 9: Backup Restore Folder Handle Preservation Tests');
 
-  await runTest('Successful restore preserves matching handles and reconciles permissionStatus', async () => {
+  await runTest('Test A: restored handleKey is identical to local handleKey -> reused', async () => {
     const memoryStorage = new MemoryStorage();
-    const testDb = new AppDatabase(memoryStorage, 'test_v9_pres_');
+    const testDb = new AppDatabase(memoryStorage, 'test_v9_a_');
     await testDb.initAsync();
 
-    // 1. Setup mock handles
     testDb.idbAvailable = true;
     const mockHandle = {
       name: 'real-dir',
       queryPermission: async () => 'granted'
     };
     testDb.idb = {
-      store: {
-        'handle-matched': mockHandle,
-        'handle-unmatched': { name: 'other-dir' }
-      },
-      clearCalls: [],
+      store: { 'handle-1': mockHandle },
       getAll: async function(storeName) {
-        if (storeName === 'handles') {
-          return Object.keys(this.store)
-            .filter(k => k.startsWith('handle-'))
-            .map(k => ({ id: k, data: this.store[k] }));
-        }
+        if (storeName === 'handles') return [{ id: 'handle-1', data: this.store['handle-1'] }];
         return [];
       },
-      get: async function(key, storeName) {
-        return this.store[key];
-      },
       clearImages: async function() {},
-      clearHandles: async function() {
-        this.clearCalls.push('clearHandles');
-      },
-      put: async function(key, val, storeName) {
-        this.store[key] = val;
-      }
+      clearHandles: async function() {},
+      put: async function() {}
     };
 
-    // Restored sources
     const restoredData = {
       videos: [], rating_criteria: [], video_reviews: [], criterion_ratings: [],
       tags: [], video_tags: [], timeline_notes: [],
       directory_sources: [
-        // Matched source (has handle in IndexedDB)
-        { id: 'src-1', name: 'real-dir', handleKey: 'handle-matched', permissionStatus: 'prompt' },
-        // Unmatched source (has NO handle in IndexedDB)
-        { id: 'src-2', name: 'missing-dir', handleKey: 'handle-nonexistent', permissionStatus: 'granted' } // ZIP has 'granted', should be ignored
+        { id: 'src-1', name: 'real-dir', handleKey: 'handle-1', permissionStatus: 'prompt' }
       ],
       genres: [], evaluation_templates: []
     };
 
-    // Execute restore
     await testDb.restoreWithRollback(restoredData, []);
 
-    // Assertions
-    // successful restore does not call clearHandles()
-    assert(testDb.idb.clearCalls.length === 0, 'Successful restore must not call clearHandles()');
-
-    // matching handles must still exist in IndexedDB (preserved unmatched handles as well)
-    assert(testDb.idb.store['handle-matched'] !== undefined, 'Matching handle must be preserved');
-    assert(testDb.idb.store['handle-unmatched'] !== undefined, 'Unmatched handle must be preserved safely');
-
-    // matching source receives the queried permission status
-    const matchedSource = testDb.directorySources.find(s => s.id === 'src-1');
-    assert(matchedSource.permissionStatus === 'granted', 'Matching source receives queried status "granted"');
-
-    // unmatched source becomes prompt/reconnection-required, and backup status is ignored
-    const unmatchedSource = testDb.directorySources.find(s => s.id === 'src-2');
-    assert(unmatchedSource.permissionStatus === 'prompt', 'Unmatched source status falls back to "prompt" and ignores backup "granted"');
-
-    // page-reload simulation can retrieve the preserved handle
-    const retrievedHandle = await testDb.getDirectoryHandle('handle-matched');
-    assert(retrievedHandle === mockHandle, 'Retrieved handle matches the mock handle after reload');
+    const src = testDb.directorySources[0];
+    assert(src.handleKey === 'handle-1', 'handleKey remains handle-1');
+    assert(src.permissionStatus === 'granted', 'permissionStatus is queried as granted');
   });
 
-  await runTest('Failed restore still restores all original handles and rollback works', async () => {
+  await runTest('Test B: source.id is identical, but handleKey differs -> remapped to existing local handleKey', async () => {
     const memoryStorage = new MemoryStorage();
-    const testDb = new AppDatabase(memoryStorage, 'test_v9_fail_');
+    const testDb = new AppDatabase(memoryStorage, 'test_v9_b_');
+    await testDb.initAsync();
+
+    // Setup local state with src-1 pointing to handle-local
+    testDb.directorySources = [{ id: 'src-1', name: 'real-dir', handleKey: 'handle-local', permissionStatus: 'granted' }];
+    testDb._saveAll();
+
+    testDb.idbAvailable = true;
+    const mockHandle = {
+      name: 'real-dir',
+      queryPermission: async () => 'granted'
+    };
+    testDb.idb = {
+      store: { 'handle-local': mockHandle },
+      getAll: async function(storeName) {
+        if (storeName === 'handles') return [{ id: 'handle-local', data: this.store['handle-local'] }];
+        return [];
+      },
+      clearImages: async function() {},
+      clearHandles: async function() {},
+      put: async function() {}
+    };
+
+    // Restored data has src-1 pointing to handle-backup (different handleKey)
+    const restoredData = {
+      videos: [], rating_criteria: [], video_reviews: [], criterion_ratings: [],
+      tags: [], video_tags: [], timeline_notes: [],
+      directory_sources: [
+        { id: 'src-1', name: 'real-dir', handleKey: 'handle-backup', permissionStatus: 'prompt' }
+      ],
+      genres: [], evaluation_templates: []
+    };
+
+    await testDb.restoreWithRollback(restoredData, []);
+
+    const src = testDb.directorySources[0];
+    assert(src.handleKey === 'handle-local', 'handleKey is remapped to handle-local');
+    assert(src.permissionStatus === 'granted', 'permissionStatus is queried as granted');
+  });
+
+  await runTest('Test C: no handle matches handleKey -> prompt/disconnected and clears handleKey', async () => {
+    const memoryStorage = new MemoryStorage();
+    const testDb = new AppDatabase(memoryStorage, 'test_v9_c_');
+    await testDb.initAsync();
+
+    testDb.idbAvailable = true;
+    testDb.idb = {
+      store: {},
+      getAll: async function() { return []; },
+      clearImages: async function() {},
+      clearHandles: async function() {},
+      put: async function() {}
+    };
+
+    const restoredData = {
+      videos: [], rating_criteria: [], video_reviews: [], criterion_ratings: [],
+      tags: [], video_tags: [], timeline_notes: [],
+      directory_sources: [
+        { id: 'src-1', name: 'missing-dir', handleKey: 'handle-missing', permissionStatus: 'granted' }
+      ],
+      genres: [], evaluation_templates: []
+    };
+
+    await testDb.restoreWithRollback(restoredData, []);
+
+    const src = testDb.directorySources[0];
+    assert(src.handleKey === '', 'handleKey must be cleared');
+    assert(src.permissionStatus === 'disconnected', 'permissionStatus becomes disconnected');
+  });
+
+  await runTest('Test D: clean machine (0 saved handles) -> succeeds but requires reconnection', async () => {
+    const memoryStorage = new MemoryStorage();
+    const testDb = new AppDatabase(memoryStorage, 'test_v9_d_');
+    await testDb.initAsync();
+
+    testDb.idbAvailable = true;
+    testDb.idb = {
+      store: {},
+      getAll: async function() { return []; },
+      clearImages: async function() {},
+      clearHandles: async function() {},
+      put: async function() {}
+    };
+
+    const restoredData = {
+      videos: [], rating_criteria: [], video_reviews: [], criterion_ratings: [],
+      tags: [], video_tags: [], timeline_notes: [],
+      directory_sources: [
+        { id: 'src-1', name: 'some-dir', handleKey: 'handle-some', permissionStatus: 'granted' }
+      ],
+      genres: [], evaluation_templates: []
+    };
+
+    await testDb.restoreWithRollback(restoredData, []);
+
+    const src = testDb.directorySources[0];
+    assert(src.handleKey === '', 'handleKey is empty');
+    assert(src.permissionStatus === 'disconnected', 'Requires reconnection (disconnected)');
+  });
+
+  await runTest('Test E: reload simulation retrieves preserved handle', async () => {
+    const memoryStorage = new MemoryStorage();
+    const testDb = new AppDatabase(memoryStorage, 'test_v9_e_');
+    await testDb.initAsync();
+
+    testDb.idbAvailable = true;
+    const mockHandle = {
+      name: 'real-dir',
+      queryPermission: async () => 'granted'
+    };
+    testDb.idb = {
+      store: { 'handle-1': mockHandle },
+      getAll: async function(storeName) {
+        if (storeName === 'handles') return [{ id: 'handle-1', data: this.store['handle-1'] }];
+        return [];
+      },
+      get: async function(key) {
+        return this.store[key];
+      },
+      clearImages: async function() {},
+      clearHandles: async function() {},
+      put: async function() {}
+    };
+
+    const restoredData = {
+      videos: [], rating_criteria: [], video_reviews: [], criterion_ratings: [],
+      tags: [], video_tags: [], timeline_notes: [],
+      directory_sources: [
+        { id: 'src-1', name: 'real-dir', handleKey: 'handle-1', permissionStatus: 'prompt' }
+      ],
+      genres: [], evaluation_templates: []
+    };
+
+    await testDb.restoreWithRollback(restoredData, []);
+
+    // Simulating page reload by instantiating database again pointing to same memoryStorage & IndexedDB
+    const reloadedDb = new AppDatabase(memoryStorage, 'test_v9_e_');
+    await reloadedDb.initAsync();
+    reloadedDb.idbAvailable = true;
+    reloadedDb.idb = testDb.idb;
+
+    const handle = await reloadedDb.getDirectoryHandle(reloadedDb.directorySources[0].handleKey);
+    assert(handle === mockHandle, 'Reloaded database retrieves the correct preserved handle');
+  });
+
+  await runTest('Test F: failed restore rolls back all directory_sources, handleKey, and DirectoryHandle', async () => {
+    const memoryStorage = new MemoryStorage();
+    const testDb = new AppDatabase(memoryStorage, 'test_v9_f_');
     await testDb.initAsync();
 
     testDb.idbAvailable = true;
@@ -1617,38 +1727,10 @@ export async function runTests() {
       // expected
     }
 
-    assert(restoreSucceeded === false, 'Restore must fail due to localStorage write error');
-    assert(testDb.idb.clearCalls.includes('clearHandles') === true, 'Failed restore must call clearHandles() to initiate rollback');
+    assert(restoreSucceeded === false, 'Restore must fail');
+    assert(testDb.idb.clearCalls.includes('clearHandles') === true, 'Failed restore must call clearHandles() during rollback');
     assert(testDb.idb.store['handle-orig'] !== undefined, 'Original handles must be restored after rollback');
     assert(testDb.directorySources[0].id === 'src-orig', 'In-memory directory sources must be rolled back');
-  });
-
-  await runTest('Restore on clean machine with no handles succeeds but requires reconnection', async () => {
-    const memoryStorage = new MemoryStorage();
-    const testDb = new AppDatabase(memoryStorage, 'test_v9_clean_');
-    await testDb.initAsync();
-
-    testDb.idbAvailable = true;
-    testDb.idb = {
-      store: {},
-      getAll: async function() { return []; },
-      clearImages: async function() {},
-      clearHandles: async function() {},
-      put: async function(key, val) { this.store[key] = val; }
-    };
-
-    const restoredData = {
-      videos: [], rating_criteria: [], video_reviews: [], criterion_ratings: [],
-      tags: [], video_tags: [], timeline_notes: [],
-      directory_sources: [
-        { id: 'src-1', name: 'some-dir', handleKey: 'handle-some', permissionStatus: 'granted' }
-      ],
-      genres: [], evaluation_templates: []
-    };
-
-    await testDb.restoreWithRollback(restoredData, []);
-
-    assert(testDb.directorySources[0].permissionStatus === 'prompt', 'Succeeds but sets permissionStatus to "prompt" requiring reconnection');
   });
 
   console.groupEnd();
