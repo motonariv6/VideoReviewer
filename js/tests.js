@@ -106,9 +106,17 @@ export async function runTests() {
   const runTest = async (name, fn) => {
     try {
       await fn();
-      results.push({ name, passed: true, error: null });
+      const res = { name, passed: true, error: null };
+      results.push(res);
+      if (typeof window !== 'undefined' && typeof window.__onTestResult__ === 'function') {
+        window.__onTestResult__(res);
+      }
     } catch (e) {
-      results.push({ name, passed: false, error: e.message });
+      const res = { name, passed: false, error: e.message };
+      results.push(res);
+      if (typeof window !== 'undefined' && typeof window.__onTestResult__ === 'function') {
+        window.__onTestResult__(res);
+      }
     }
   };
 
@@ -718,8 +726,10 @@ export async function runTests() {
     const memory = new MemoryStorage();
     const testDb = new AppDatabase(memory, 'test_vreview_del_', 'TestVideoDB_CascadeDelete');
     await testDb.initAsync();
-    testDb.videos = [];
-    testDb._saveTable('videos', []);
+    testDb.mediaAssets = [];
+    testDb.fileLocations = [];
+    testDb._saveTable('media_assets', []);
+    testDb._saveTable('file_locations', []);
 
     // 1. Setup Video A (to be deleted cascade) and Video B (to be kept)
     const vidA = await testDb.addVideo({
@@ -747,11 +757,11 @@ export async function runTests() {
     });
 
     // Add tags association
-    testDb.videoTags.push({ videoId: vidA.id, tagId: 'tag-1' });
+    testDb.videoTags.push({ mediaAssetId: vidA.id, tagId: 'tag-1' });
     testDb._saveTable('video_tags', testDb.videoTags);
 
     // Add timeline notes
-    testDb.timelineNotes.push({ id: 'note-a1', videoReviewId: revA.id, timestampSeconds: 10, comment: 'First note', thumbnailId: 'img-note-a1' });
+    testDb.timelineNotes.push({ id: 'note-a1', videoReviewId: revA.id, mediaAssetId: vidA.id, timestampSeconds: 10, comment: 'First note', thumbnailId: 'img-note-a1', createdAt: new Date().toISOString() });
     testDb._saveTable('timeline_notes', testDb.timelineNotes);
 
     // Seed thumbnails and note screenshots in IndexedDB mock if available
@@ -768,9 +778,9 @@ export async function runTests() {
         'crit-2': 2
       }
     });
-    testDb.videoTags.push({ videoId: vidB.id, tagId: 'tag-2' });
+    testDb.videoTags.push({ mediaAssetId: vidB.id, tagId: 'tag-2' });
     testDb._saveTable('video_tags', testDb.videoTags);
-    testDb.timelineNotes.push({ id: 'note-b1', videoReviewId: revB.id, timestampSeconds: 20, comment: 'Second note', thumbnailId: 'img-note-b1' });
+    testDb.timelineNotes.push({ id: 'note-b1', videoReviewId: revB.id, mediaAssetId: vidB.id, timestampSeconds: 20, comment: 'Second note', thumbnailId: 'img-note-b1', createdAt: new Date().toISOString() });
     testDb._saveTable('timeline_notes', testDb.timelineNotes);
 
     if (testDb.idbAvailable) {
@@ -801,8 +811,8 @@ export async function runTests() {
     assert(storedRatings.some(cr => cr.videoReviewId === revB.id) === true, 'Stored criterion ratings in localStorage for Review B must remain');
 
     // Assert tags and notes are cascaded
-    assert(testDb.videoTags.some(vt => vt.videoId === vidA.id) === false, 'Tag relations for Video A must be removed');
-    assert(testDb.videoTags.some(vt => vt.videoId === vidB.id) === true, 'Tag relations for Video B must remain');
+    assert(testDb.videoTags.some(vt => vt.mediaAssetId === vidA.id) === false, 'Tag relations for Video A must be removed');
+    assert(testDb.videoTags.some(vt => vt.mediaAssetId === vidB.id) === true, 'Tag relations for Video B must remain');
     assert(testDb.getTimelineNotes(vidA.id).length === 0, 'Timeline notes for Video A must be removed');
     assert(testDb.getTimelineNotes(vidB.id).length === 1, 'Timeline notes for Video B must remain');
 
@@ -886,8 +896,7 @@ export async function runTests() {
     const memoryStorage = new MemoryStorage();
     const testDb = new AppDatabase(memoryStorage, 'test_v7_title_');
     await testDb.initAsync();
-
-    const video = testDb.videos[0];
+    const video = testDb.getVideos()[0];
     assert(video !== undefined, 'Must have at least one sample video');
     
     // 2. Set custom display title
@@ -966,12 +975,33 @@ export async function runTests() {
     const customGenre = await testDb.addGenre('アクション');
     const newVideo = {
       id: 'vid-test-back',
-      title: 'バックアップテスト動画',
-      fileName: 'back.mp4',
+      contentHash: 'hash123',
+      hashAlgorithm: 'SHA-256',
+      quickHash: 'q123',
+      hashStatus: 'completed',
+      fileSize: 100,
+      duration: 10,
+      displayTitle: 'バックアップテスト動画',
       genreId: customGenre.id,
-      sourceType: 'local-file'
+      thumbnailId: '',
+      videoUrl: '',
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
     };
-    testDb.videos.push(newVideo);
+    testDb.mediaAssets.push(newVideo);
+    testDb.fileLocations.push({
+      id: 'loc-test-location-new',
+      mediaAssetId: 'vid-test-back',
+      directoryId: '',
+      relativePath: '',
+      fileName: 'back.mp4',
+      fileSize: 100,
+      lastModified: 0,
+      availabilityStatus: 'available',
+      lastVerifiedAt: new Date().toISOString(),
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    });
     await testDb.updateVideo(newVideo.id, {});
 
     // Save a review
@@ -984,7 +1014,8 @@ export async function runTests() {
     });
 
     const dbData = {
-      videos: testDb.videos,
+      media_assets: testDb.mediaAssets,
+      file_locations: testDb.fileLocations,
       rating_criteria: testDb.criteria,
       video_reviews: testDb.reviews,
       criterion_ratings: testDb.criterionRatings,
@@ -999,10 +1030,11 @@ export async function runTests() {
     const zip = new JSZip();
     const manifest = {
       application: "VideoReviewer",
-      schemaVersion: 1,
+      schemaVersion: 3,
       createdAt: new Date().toISOString(),
       counts: {
-        videos: testDb.videos.length,
+        media_assets: testDb.mediaAssets.length,
+        file_locations: testDb.fileLocations.length,
         reviews: testDb.reviews.length,
         images: 0
       }
@@ -1023,9 +1055,9 @@ export async function runTests() {
     const testDb2 = new AppDatabase(memoryStorage2, 'test_v7_restored_');
     await testDb2.initAsync();
 
-    assert(testDb2.videos.length !== testDb.videos.length, 'Fresh DB should not have the new video');
+    assert(testDb2.getVideos().length !== testDb.getVideos().length, 'Fresh DB should not have the new video');
 
-    assert(testDb2.videos.length !== testDb.videos.length, 'Fresh DB should not have the new video');
+    assert(testDb2.getVideos().length !== testDb.getVideos().length, 'Fresh DB should not have the new video');
 
     // Production validation and restore invocation
     const valRes = testDb2.validateBackupData(restoredDbData, manifest, []);
@@ -1048,12 +1080,12 @@ export async function runTests() {
 
     const validManifest = {
       application: 'VideoReviewer',
-      schemaVersion: 1,
+      schemaVersion: 3,
       createdAt: '2026-08-16T12:00:00.000Z',
-      counts: { videos: 0, reviews: 0, images: 0 }
+      counts: { media_assets: 0, file_locations: 0, reviews: 0, images: 0 }
     };
     const validDb = {
-      videos: [], rating_criteria: [], video_reviews: [], criterion_ratings: [],
+      media_assets: [], file_locations: [], rating_criteria: [], video_reviews: [], criterion_ratings: [],
       tags: [], video_tags: [], timeline_notes: [], directory_sources: [],
       genres: [], evaluation_templates: []
     };
@@ -1064,7 +1096,7 @@ export async function runTests() {
 
     // 2. Invalid schema version
     const res2 = testDb.validateBackupData(validDb, { ...validManifest, schemaVersion: 2 }, []);
-    assert(res2.isValid === false, 'Should be invalid for schemaVersion !== 1');
+    assert(res2.isValid === false, 'Should be invalid for schemaVersion !== 3');
     assert(res2.fatalErrors.some(e => e.includes('スキーマバージョン')), 'Rejected invalid schema version');
 
     // 3. Invalid createdAt (not valid ISO timestamp)
@@ -1080,7 +1112,7 @@ export async function runTests() {
     // 5. Negative counts in manifest
     const res5 = testDb.validateBackupData(validDb, {
       ...validManifest,
-      counts: { videos: -1, reviews: 0, images: 0 }
+      counts: { media_assets: -1, file_locations: 0, reviews: 0, images: 0 }
     }, []);
     assert(res5.isValid === false, 'Should be invalid for negative counts');
     assert(res5.fatalErrors.some(e => e.includes('非負の整数')), 'Rejected negative count');
@@ -1088,15 +1120,15 @@ export async function runTests() {
     // 6. manifest counts match database table counts (video count mismatch)
     const res6 = testDb.validateBackupData(validDb, {
       ...validManifest,
-      counts: { videos: 1, reviews: 0, images: 0 }
+      counts: { media_assets: 1, file_locations: 0, reviews: 0, images: 0 }
     }, []);
     assert(res6.isValid === false, 'Should be invalid for videos count mismatch');
-    assert(res6.fatalErrors.some(e => e.includes('動画の件数')), 'Rejected video count mismatch');
+    assert(res6.fatalErrors.some(e => e.includes('動画アセットの件数')), 'Rejected video count mismatch');
 
     // 7. manifest image count matches ZIP image entries (image count mismatch)
     const res7 = testDb.validateBackupData(validDb, {
       ...validManifest,
-      counts: { videos: 0, reviews: 0, images: 1 }
+      counts: { media_assets: 0, file_locations: 0, reviews: 0, images: 1 }
     }, []);
     assert(res7.isValid === false, 'Should be invalid for images count mismatch');
     assert(res7.fatalErrors.some(e => e.includes('画像の件数')), 'Rejected image count mismatch');
@@ -1104,20 +1136,23 @@ export async function runTests() {
     // 8. duplicate criterion rating ID
     const badCrDb = {
       ...validDb,
-      criterion_ratings: [{ id: 'rate-1', score: 3 }, { id: 'rate-1', score: 5 }]
+      criterion_ratings: [
+        { id: 'rate-test-rating-1', videoReviewId: 'rev-test-review-1', criterionId: 'crit-content', score: 3 },
+        { id: 'rate-test-rating-1', videoReviewId: 'rev-test-review-1', criterionId: 'crit-content', score: 5 }
+      ]
     };
     const res8 = testDb.validateBackupData(badCrDb, validManifest, []);
     assert(res8.isValid === false, 'Should be invalid for duplicate criterion rating ID');
-    assert(res8.fatalErrors.some(e => e.includes('重複する ID rate-1')), 'Rejected duplicate criterion rating ID');
+    assert(res8.fatalErrors.some(e => e.includes('重複する ID rate-test-rating-1')), 'Rejected duplicate criterion rating ID');
 
     // 9. missing video thumbnail
     const badVidDb = {
       ...validDb,
-      videos: [{ id: 'vid-1', title: 'Test', thumbnailId: 'img-nonexistent' }]
+      media_assets: [{ id: 'vid-test-video-1', displayTitle: 'Test', thumbnailId: 'img-nonexistent', contentHash: '', hashAlgorithm: 'SHA-256', quickHash: '', hashStatus: 'pending', fileSize: 0, duration: 0, genreId: 'genre-default', createdAt: '', updatedAt: '' }]
     };
     const res9 = testDb.validateBackupData(badVidDb, {
       ...validManifest,
-      counts: { videos: 1, reviews: 0, images: 0 }
+      counts: { media_assets: 1, file_locations: 0, reviews: 0, images: 0 }
     }, []);
     assert(res9.isValid === false, 'Should be invalid for missing video thumbnail');
     assert(res9.fatalErrors.some(e => e.includes('ZIP内に存在しません')), 'Rejected missing video thumbnail image');
@@ -1125,13 +1160,13 @@ export async function runTests() {
     // 10. missing timeline-note image
     const badNoteDb = {
       ...validDb,
-      timeline_notes: [{ id: 'note-1', text: 'note text', thumbnailId: 'img-nonexistent', videoReviewId: 'rev-1' }],
-      video_reviews: [{ id: 'rev-1', videoId: 'vid-1' }],
-      videos: [{ id: 'vid-1', title: 'Test' }]
+      timeline_notes: [{ id: 'note-test-note-1', comment: 'note text', thumbnailId: 'img-nonexistent', videoReviewId: 'rev-test-review-1', mediaAssetId: 'vid-test-video-1', timestampSeconds: 0, timestampLabel: '00:00', createdAt: '' }],
+      video_reviews: [{ id: 'rev-test-review-1', mediaAssetId: 'vid-test-video-1', createdAt: '', updatedAt: '' }],
+      media_assets: [{ id: 'vid-test-video-1', displayTitle: 'Test', contentHash: '', hashAlgorithm: 'SHA-256', quickHash: '', hashStatus: 'pending', fileSize: 0, duration: 0, genreId: 'genre-default', createdAt: '', updatedAt: '' }]
     };
     const res10 = testDb.validateBackupData(badNoteDb, {
       ...validManifest,
-      counts: { videos: 1, reviews: 1, images: 0 }
+      counts: { media_assets: 1, file_locations: 0, reviews: 1, images: 0 }
     }, []);
     assert(res10.isValid === false, 'Should be invalid for missing timeline-note image');
     assert(res10.fatalErrors.some(e => e.includes('ZIP内に存在しません')), 'Rejected missing note image');
@@ -1139,7 +1174,7 @@ export async function runTests() {
     // 11. duplicate ZIP image IDs
     const res11 = testDb.validateBackupData(validDb, {
       ...validManifest,
-      counts: { videos: 0, reviews: 0, images: 2 }
+      counts: { media_assets: 0, file_locations: 0, reviews: 0, images: 2 }
     }, ['img-1', 'img-1']);
     assert(res11.isValid === false, 'Should be invalid for duplicate ZIP image IDs');
     assert(res11.fatalErrors.some(e => e.includes('重複する画像ID')), 'Rejected duplicate ZIP image IDs');
@@ -1151,16 +1186,17 @@ export async function runTests() {
     await testDb.initAsync();
     
     // Seed initial database state with distinct objects in all collections
-    testDb.videos = [{ id: 'vid-original', title: 'Original' }];
-    testDb.criteria = [{ id: 'crit-original', name: 'Original' }];
-    testDb.reviews = [{ id: 'rev-original', videoId: 'vid-original' }];
+    testDb.mediaAssets = [{ id: 'vid-original', contentHash: 'hash-orig', hashAlgorithm: 'SHA-256', quickHash: 'qo', hashStatus: 'completed', fileSize: 100, duration: 10, displayTitle: 'Original', genreId: 'genre-original', thumbnailId: 'img-original', videoUrl: '', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }];
+    testDb.fileLocations = [{ id: 'loc-original', mediaAssetId: 'vid-original', directoryId: 'dir-original', relativePath: 'orig.mp4', fileName: 'orig.mp4', fileSize: 100, lastModified: 0, availabilityStatus: 'available', lastVerifiedAt: new Date().toISOString(), createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }];
+    testDb.criteria = [{ id: 'crit-original', name: 'Original', description: 'Original' }];
+    testDb.reviews = [{ id: 'rev-original', mediaAssetId: 'vid-original', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }];
     testDb.criterionRatings = [{ id: 'rate-original', videoReviewId: 'rev-original', criterionId: 'crit-original', score: 3 }];
     testDb.tags = [{ id: 'tag-original', name: 'Original' }];
-    testDb.videoTags = [{ videoId: 'vid-original', tagId: 'tag-original' }];
-    testDb.timelineNotes = [{ id: 'note-original', videoReviewId: 'rev-original', text: 'Original' }];
-    testDb.directorySources = [{ id: 'dir-original', name: 'Original' }];
-    testDb.genres = [{ id: 'genre-original', name: 'Original' }];
-    testDb.templates = [{ id: 'template-original', genreId: 'genre-original' }];
+    testDb.videoTags = [{ mediaAssetId: 'vid-original', tagId: 'tag-original' }];
+    testDb.timelineNotes = [{ id: 'note-original', videoReviewId: 'rev-original', mediaAssetId: 'vid-original', timestampSeconds: 0, timestampLabel: '00:00', comment: 'Original', createdAt: new Date().toISOString() }];
+    testDb.directorySources = [{ id: 'dir-original', name: 'Original', includeSubdirectories: true, permissionStatus: 'granted', handleKey: 'handle-orig', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }];
+    testDb.genres = [{ id: 'genre-original', name: 'Original', displayTitle: 'Original Genre', description: 'Original', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }];
+    testDb.templates = [{ id: 'template-original', genreId: 'genre-original', name: 'Original Template', criteriaIds: 'crit-original', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }];
     testDb._saveAll();
     
     // Mock IndexedDB
@@ -1202,16 +1238,17 @@ export async function runTests() {
 
     // Target restore values
     const restoredData = {
-      videos: [{ id: 'vid-new', title: 'New Video' }],
-      rating_criteria: [{ id: 'crit-new', name: 'New' }],
-      video_reviews: [{ id: 'rev-new', videoId: 'vid-new' }],
+      media_assets: [{ id: 'vid-new', contentHash: 'hash-new', hashAlgorithm: 'SHA-256', quickHash: 'qn', hashStatus: 'completed', fileSize: 200, duration: 20, displayTitle: 'New Video', genreId: 'genre-new', thumbnailId: 'img-new', videoUrl: '', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }],
+      file_locations: [{ id: 'loc-new', mediaAssetId: 'vid-new', directoryId: 'dir-new', relativePath: 'new.mp4', fileName: 'new.mp4', fileSize: 200, lastModified: 0, availabilityStatus: 'available', lastVerifiedAt: new Date().toISOString(), createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }],
+      rating_criteria: [{ id: 'crit-new', name: 'New', description: 'New Crit' }],
+      video_reviews: [{ id: 'rev-new', mediaAssetId: 'vid-new', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }],
       criterion_ratings: [{ id: 'rate-new', videoReviewId: 'rev-new', criterionId: 'crit-new', score: 5 }],
       tags: [{ id: 'tag-new', name: 'New' }],
-      video_tags: [{ videoId: 'vid-new', tagId: 'tag-new' }],
-      timeline_notes: [{ id: 'note-new', videoReviewId: 'rev-new', text: 'New' }],
-      directory_sources: [{ id: 'dir-new', name: 'New' }],
-      genres: [{ id: 'genre-new', name: 'New' }],
-      evaluation_templates: [{ id: 'template-new', genreId: 'genre-new' }]
+      video_tags: [{ mediaAssetId: 'vid-new', tagId: 'tag-new' }],
+      timeline_notes: [{ id: 'note-new', videoReviewId: 'rev-new', mediaAssetId: 'vid-new', timestampSeconds: 10, timestampLabel: '00:10', comment: 'New', createdAt: new Date().toISOString() }],
+      directory_sources: [{ id: 'dir-new', name: 'New', includeSubdirectories: true, permissionStatus: 'granted', handleKey: 'handle-new', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }],
+      genres: [{ id: 'genre-new', name: 'New', displayTitle: 'New Genre', description: 'New', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }],
+      evaluation_templates: [{ id: 'template-new', genreId: 'genre-new', name: 'New Template', criteriaIds: 'crit-new', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }]
     };
     const newImages = [{ id: 'img-new', data: new Blob(['new-img'], { type: 'image/jpeg' }) }];
 
@@ -1228,8 +1265,8 @@ export async function runTests() {
 
     assert(restoreSucceeded === false, 'Restore should have failed due to IndexedDB error');
     // Verify rollback integrity for every in-memory collection
-    assert(testDb.videos[0].id === 'vid-original', 'Original videos must be preserved');
-    assert(testDb.videos.some(v => v.id === 'vid-new') === false, 'New videos must not be present');
+    assert(testDb.getVideos()[0].id === 'vid-original', 'Original videos must be preserved');
+    assert(testDb.getVideos().some(v => v.id === 'vid-new') === false, 'New videos must not be present');
     assert(testDb.criteria[0].id === 'crit-original', 'Original criteria must be preserved');
     assert(testDb.reviews[0].id === 'rev-original', 'Original reviews must be preserved');
     assert(testDb.criterionRatings[0].id === 'rate-original', 'Original criterionRatings must be preserved');
@@ -1266,8 +1303,8 @@ export async function runTests() {
     assert(restoreSucceeded === false, 'Restore should have failed due to localStorage write error');
     
     // Verify rollback integrity for every in-memory collection on localStorage failure
-    assert(testDb.videos[0].id === 'vid-original', 'Original videos must be preserved on localStorage write error');
-    assert(testDb.videos.some(v => v.id === 'vid-new') === false, 'New videos must not be present on localStorage write error');
+    assert(testDb.getVideos()[0].id === 'vid-original', 'Original videos must be preserved on localStorage write error');
+    assert(testDb.getVideos().some(v => v.id === 'vid-new') === false, 'New videos must not be present on localStorage write error');
     assert(testDb.criteria[0].id === 'crit-original', 'Original criteria must be preserved on localStorage write error');
     assert(testDb.reviews[0].id === 'rev-original', 'Original reviews must be preserved on localStorage write error');
     assert(testDb.criterionRatings[0].id === 'rate-original', 'Original ratings must be preserved on localStorage write error');
@@ -1308,7 +1345,7 @@ export async function runTests() {
     };
 
     const restoredData = {
-      videos: [], rating_criteria: [], video_reviews: [], criterion_ratings: [],
+      media_assets: [], file_locations: [], rating_criteria: [], video_reviews: [], criterion_ratings: [],
       tags: [], video_tags: [], timeline_notes: [], directory_sources: [],
       genres: [], evaluation_templates: []
     };
@@ -1330,41 +1367,56 @@ export async function runTests() {
     await testDb.initAsync();
 
     // Seed base DB state
-    testDb.videos = [{ id: 'vid-1', title: 'Test Video' }];
-    testDb.reviews = [{ id: 'rev-1', videoId: 'vid-1' }];
+    testDb.mediaAssets = [{ id: 'vid-test-video-1', displayTitle: 'Test Video', contentHash: '', hashAlgorithm: 'SHA-256', quickHash: '', hashStatus: 'pending', fileSize: 0, duration: 0, genreId: 'genre-default', createdAt: '', updatedAt: '' }];
+    testDb.fileLocations = [];
+    testDb.reviews = [{ id: 'rev-test-review-1', mediaAssetId: 'vid-test-video-1', createdAt: '', updatedAt: '' }];
     testDb.timelineNotes = [];
     testDb._saveAll();
 
     const manifest = {
       application: 'VideoReviewer',
-      schemaVersion: 1,
+      schemaVersion: 3,
       createdAt: '2026-08-16T12:00:00.000Z',
-      counts: { videos: 1, reviews: 1, images: 2 }
+      counts: { media_assets: 1, file_locations: 0, reviews: 1, images: 2 }
     };
 
     const parsedDb = {
-      videos: [{ id: 'vid-1', title: 'Test Video' }],
+      media_assets: [{ id: 'vid-test-video-1', displayTitle: 'Test Video', contentHash: '', hashAlgorithm: 'SHA-256', quickHash: '', hashStatus: 'pending', fileSize: 0, duration: 0, genreId: 'genre-default', createdAt: '', updatedAt: '' }],
+      file_locations: [],
       rating_criteria: [],
-      video_reviews: [{ id: 'rev-1', videoId: 'vid-1' }],
+      video_reviews: [{ id: 'rev-test-review-1', mediaAssetId: 'vid-test-video-1', createdAt: '', updatedAt: '' }],
       criterion_ratings: [],
       tags: [],
       video_tags: [],
       timeline_notes: [
-        // 1. Repairable note (missing videoReviewId but has videoId and exactly one review)
-        { id: 'note-repairable', text: 'Repairable', videoId: 'vid-1', videoReviewId: 'nonexistent-rev', thumbnailId: 'img-valid' },
-        // 2. Irreparable note (missing review and videoId)
-        { id: 'note-irreparable', text: 'Irreparable', videoReviewId: 'nonexistent-rev-2', thumbnailId: 'img-orphan' }
+        // 1. Repairable note (missing videoReviewId but has mediaAssetId and exactly one review)
+        { id: 'note-repairable', comment: 'Repairable', mediaAssetId: 'vid-test-video-1', videoReviewId: 'nonexistent-rev', timestampSeconds: 0, timestampLabel: '00:00', createdAt: '', thumbnailId: 'img-valid' },
+        // 2. Irreparable note (missing review and mediaAssetId)
+        { id: 'note-irreparable', comment: 'Irreparable', videoReviewId: 'nonexistent-rev-2', timestampSeconds: 0, timestampLabel: '00:00', createdAt: '', thumbnailId: 'img-orphan' }
       ],
       directory_sources: [],
-      genres: [],
-      evaluation_templates: []
+      genres: [{
+        id: 'genre-default',
+        name: '一般',
+        displayTitle: '一般',
+        description: 'デフォルトのジャンル区分',
+        createdAt: '2026-08-16T12:00:00.000Z',
+        updatedAt: '2026-08-16T12:00:00.000Z'
+      }],
+      evaluation_templates: [{
+        id: 'temp-default',
+        genreId: 'genre-default',
+        name: 'デフォルトテンプレート',
+        criteriaIds: '',
+        createdAt: '2026-08-16T12:00:00.000Z',
+        updatedAt: '2026-08-16T12:00:00.000Z'
+      }]
     };
 
     const zipImageIds = ['img-valid', 'img-orphan'];
 
     // Validate
     const validationResult = testDb.validateBackupData(parsedDb, manifest, zipImageIds);
-
     // Assertions
     assert(validationResult.isValid === true, 'Validation is valid because warnings are not fatal');
     assert(validationResult.fatalErrors.length === 0, 'No fatal errors');
@@ -1375,7 +1427,7 @@ export async function runTests() {
     
     assert(repairableWarning !== undefined, 'Has warning for repairable note');
     assert(repairableWarning.repaired === true, 'Repairable note is marked repaired');
-    assert(repairableWarning.repairedToReviewId === 'rev-1', 'Repairable note is mapped to rev-1');
+    assert(repairableWarning.repairedToReviewId === 'rev-test-review-1', 'Repairable note is mapped to rev-test-review-1');
     
     assert(irreparableWarning !== undefined, 'Has warning for irreparable note');
     assert(irreparableWarning.repaired === false, 'Irreparable note is marked not repaired');
@@ -1384,7 +1436,7 @@ export async function runTests() {
     const repairedNotes = validationResult.repairedDb.timeline_notes;
     assert(repairedNotes.length === 1, 'Irreparable note must be excluded from active timeline_notes');
     assert(repairedNotes[0].id === 'note-repairable', 'Repairable note must be included');
-    assert(repairedNotes[0].videoReviewId === 'rev-1', 'Repairable note review ID must be updated');
+    assert(repairedNotes[0].videoReviewId === 'rev-test-review-1', 'Repairable note review ID must be updated');
 
     // Image exclusion check
     assert(validationResult.requiredImageIds.includes('img-valid') === true, 'img-valid must be included');
@@ -1393,7 +1445,7 @@ export async function runTests() {
     // Confirm that other broken references (e.g. broken review video reference) still reject the backup
     const fatalDb = {
       ...parsedDb,
-      video_reviews: [{ id: 'rev-1', videoId: 'nonexistent-video' }]
+      video_reviews: [{ id: 'rev-test-review-1', mediaAssetId: 'nonexistent-video', createdAt: '', updatedAt: '' }]
     };
     const fatalResult = testDb.validateBackupData(fatalDb, manifest, zipImageIds);
     assert(fatalResult.isValid === false, 'Broken review video reference must make validation invalid');
@@ -1406,12 +1458,14 @@ export async function runTests() {
     await testDb.initAsync();
 
     // Seed original DB state
-    testDb.videos = [{ id: 'vid-original', title: 'Original' }];
-    testDb.timelineNotes = [{ id: 'note-original', videoReviewId: 'rev-original', text: 'Original' }];
+    testDb.mediaAssets = [{ id: 'vid-original', displayTitle: 'Original', contentHash: '', hashAlgorithm: 'SHA-256', quickHash: '', hashStatus: 'pending', fileSize: 0, duration: 0, genreId: 'genre-default', createdAt: '', updatedAt: '' }];
+    testDb.fileLocations = [];
+    testDb.timelineNotes = [{ id: 'note-original', videoReviewId: 'rev-original', mediaAssetId: 'vid-original', timestampSeconds: 0, timestampLabel: '00:00', comment: 'Original', createdAt: '' }];
     testDb._saveAll();
 
     const parsedDb = {
-      videos: [{ id: 'vid-new', title: 'New' }],
+      media_assets: [{ id: 'vid-test-video-new', displayTitle: 'New', contentHash: '', hashAlgorithm: 'SHA-256', quickHash: '', hashStatus: 'pending', fileSize: 0, duration: 0, genreId: 'genre-default', createdAt: '', updatedAt: '' }],
+      file_locations: [],
       rating_criteria: [], video_reviews: [], criterion_ratings: [],
       tags: [], video_tags: [], timeline_notes: [], directory_sources: [],
       genres: [], evaluation_templates: []
@@ -1419,15 +1473,15 @@ export async function runTests() {
 
     const manifest = {
       application: 'VideoReviewer',
-      schemaVersion: 1,
+      schemaVersion: 3,
       createdAt: '2026-08-16T12:00:00.000Z',
-      counts: { videos: 1, reviews: 0, images: 0 }
+      counts: { media_assets: 1, file_locations: 0, reviews: 0, images: 0 }
     };
 
     // Preflight validation - changes nothing
     testDb.validateBackupData(parsedDb, manifest, []);
-    assert(testDb.videos[0].id === 'vid-original', 'In-memory state remains unchanged before confirmation');
-    assert(memoryStorage.getItem('test_v8_cancel_videos').includes('vid-original'), 'Storage state remains unchanged before confirmation');
+    assert(testDb.getVideos()[0].id === 'vid-original', 'In-memory state remains unchanged before confirmation');
+    assert(memoryStorage.getItem('test_v8_cancel_media_assets').includes('vid-original'), 'Storage state remains unchanged before confirmation');
   });
 
   await runTest('Check & Clean up orphan data action', async () => {
@@ -1455,13 +1509,14 @@ export async function runTests() {
     };
 
     // Seed database
-    testDb.videos = [{ id: 'vid-1', title: 'Video', thumbnailId: 'img-referenced' }];
-    testDb.reviews = [{ id: 'rev-1', videoId: 'vid-1' }];
+    testDb.mediaAssets = [{ id: 'vid-test-video-1', displayTitle: 'Video', thumbnailId: 'img-referenced', contentHash: '', hashAlgorithm: 'SHA-256', quickHash: '', hashStatus: 'pending', fileSize: 0, duration: 0, genreId: 'genre-default', createdAt: '', updatedAt: '' }];
+    testDb.fileLocations = [];
+    testDb.reviews = [{ id: 'rev-test-review-1', mediaAssetId: 'vid-test-video-1', createdAt: '', updatedAt: '' }];
     testDb.timelineNotes = [
       // Valid note
-      { id: 'note-valid', videoReviewId: 'rev-1', text: 'Valid', thumbnailId: 'img-referenced-by-note' },
+      { id: 'note-valid', videoReviewId: 'rev-test-review-1', mediaAssetId: 'vid-test-video-1', timestampSeconds: 0, timestampLabel: '00:00', comment: 'Valid', thumbnailId: 'img-referenced-by-note', createdAt: '' },
       // Irreparable orphan note
-      { id: 'note-orphan', videoReviewId: 'nonexistent-rev', text: 'Orphan', thumbnailId: 'img-orphan' }
+      { id: 'note-orphan', videoReviewId: 'nonexistent-rev', mediaAssetId: 'vid-test-video-1', timestampSeconds: 0, timestampLabel: '00:00', comment: 'Orphan', thumbnailId: 'img-orphan', createdAt: '' }
     ];
     testDb._saveAll();
 
@@ -1509,7 +1564,7 @@ export async function runTests() {
     };
 
     const restoredData = {
-      videos: [], rating_criteria: [], video_reviews: [], criterion_ratings: [],
+      media_assets: [], file_locations: [], rating_criteria: [], video_reviews: [], criterion_ratings: [],
       tags: [], video_tags: [], timeline_notes: [],
       directory_sources: [
         { id: 'src-1', name: 'real-dir', handleKey: 'handle-1', permissionStatus: 'prompt' }
@@ -1551,7 +1606,7 @@ export async function runTests() {
 
     // Restored data has src-1 pointing to handle-backup (different handleKey)
     const restoredData = {
-      videos: [], rating_criteria: [], video_reviews: [], criterion_ratings: [],
+      media_assets: [], file_locations: [], rating_criteria: [], video_reviews: [], criterion_ratings: [],
       tags: [], video_tags: [], timeline_notes: [],
       directory_sources: [
         { id: 'src-1', name: 'real-dir', handleKey: 'handle-backup', permissionStatus: 'prompt' }
@@ -1581,7 +1636,7 @@ export async function runTests() {
     };
 
     const restoredData = {
-      videos: [], rating_criteria: [], video_reviews: [], criterion_ratings: [],
+      media_assets: [], file_locations: [], rating_criteria: [], video_reviews: [], criterion_ratings: [],
       tags: [], video_tags: [], timeline_notes: [],
       directory_sources: [
         { id: 'src-1', name: 'missing-dir', handleKey: 'handle-missing', permissionStatus: 'granted' }
@@ -1611,7 +1666,7 @@ export async function runTests() {
     };
 
     const restoredData = {
-      videos: [], rating_criteria: [], video_reviews: [], criterion_ratings: [],
+      media_assets: [], file_locations: [], rating_criteria: [], video_reviews: [], criterion_ratings: [],
       tags: [], video_tags: [], timeline_notes: [],
       directory_sources: [
         { id: 'src-1', name: 'some-dir', handleKey: 'handle-some', permissionStatus: 'granted' }
@@ -1651,7 +1706,7 @@ export async function runTests() {
     };
 
     const restoredData = {
-      videos: [], rating_criteria: [], video_reviews: [], criterion_ratings: [],
+      media_assets: [], file_locations: [], rating_criteria: [], video_reviews: [], criterion_ratings: [],
       tags: [], video_tags: [], timeline_notes: [],
       directory_sources: [
         { id: 'src-1', name: 'real-dir', handleKey: 'handle-1', permissionStatus: 'prompt' }
@@ -1712,7 +1767,7 @@ export async function runTests() {
     };
 
     const restoredData = {
-      videos: [], rating_criteria: [], video_reviews: [], criterion_ratings: [],
+      media_assets: [], file_locations: [], rating_criteria: [], video_reviews: [], criterion_ratings: [],
       tags: [], video_tags: [], timeline_notes: [],
       directory_sources: [
         { id: 'src-new', name: 'new-dir', handleKey: 'handle-new', permissionStatus: 'granted' }
@@ -1774,10 +1829,10 @@ export async function runTests() {
     const videoId = video.id; // Correctly get the generated video ID
 
     // Add review, rating, tags, timeline notes referencing the actual generated videoId
-    testDb.reviews = [{ id: 'rev-1', videoId: videoId, overallGrade: 'A' }];
+    testDb.reviews = [{ id: 'rev-1', mediaAssetId: videoId, overallGrade: 'A', createdAt: '', updatedAt: '' }];
     testDb.criterionRatings = [{ id: 'rate-1', videoReviewId: 'rev-1', criterionId: 'crit-1', score: 4 }];
-    testDb.videoTags = [{ videoId: videoId, tagId: 'tag-1' }];
-    testDb.timelineNotes = [{ id: 'note-1', videoReviewId: 'rev-1', text: 'Note 1' }];
+    testDb.videoTags = [{ mediaAssetId: videoId, tagId: 'tag-1' }];
+    testDb.timelineNotes = [{ id: 'note-1', videoReviewId: 'rev-1', mediaAssetId: videoId, timestampSeconds: 0, timestampLabel: '00:00', comment: 'Note 1', createdAt: '' }];
     testDb._saveAll();
 
     // Reconnection via production DB method (Requirement 4)
@@ -1821,7 +1876,7 @@ export async function runTests() {
 
     // Verify evaluations are preserved
     assert(testDb.reviews.length === 1, 'Reviews are preserved');
-    assert(testDb.reviews[0].videoId === videoId, 'Review is still linked to video');
+    assert(testDb.reviews[0].mediaAssetId === videoId, 'Review is still linked to video');
     assert(testDb.criterionRatings.length === 1, 'Ratings are preserved');
     assert(testDb.videoTags.length === 1, 'Tags are preserved');
     assert(testDb.timelineNotes.length === 1, 'Timeline notes are preserved');

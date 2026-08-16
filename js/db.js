@@ -15,55 +15,100 @@ function generateUUID() {
 
 // Default Rating Criteria
 const DEFAULT_CRITERIA = [
-  { id: 'crit-content', name: '内容', displayOrder: 1, isActive: true, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() },
-  { id: 'crit-visuals', name: '映像', displayOrder: 2, isActive: true, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() },
-  { id: 'crit-audio', name: '音声', displayOrder: 3, isActive: true, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() },
-  { id: 'crit-pacing', name: 'テンポ', displayOrder: 4, isActive: true, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() },
-  { id: 'crit-originality', name: '独自性', displayOrder: 5, isActive: true, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() },
-  { id: 'crit-replayability', name: '再視聴性', displayOrder: 6, isActive: true, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }
+  { id: 'crit-content', name: '内容', description: 'ストーリーやテーマ性など構成要素の評価', displayOrder: 1, isActive: true, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() },
+  { id: 'crit-visuals', name: '映像', description: '画質、カメラワーク、演出手法の美しさ', displayOrder: 2, isActive: true, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() },
+  { id: 'crit-audio', name: '音声', description: '音響効果、BGM、声優・録音の明瞭度', displayOrder: 3, isActive: true, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() },
+  { id: 'crit-pacing', name: 'テンポ', description: '展開速度、無駄な引き伸ばしのなさ', displayOrder: 4, isActive: true, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() },
+  { id: 'crit-originality', name: '独自性', description: '企画力、構成、新規性、他にない特徴', displayOrder: 5, isActive: true, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() },
+  { id: 'crit-replayability', name: '再視聴性', description: '何度も見たくなる魅力、見返した時の発見', displayOrder: 6, isActive: true, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }
 ];
 
 // Sample Videos with sourceType: 'url'
-const SAMPLE_VIDEOS = [
+const SAMPLE_MEDIA_ASSETS = [
   {
     id: 'vid-sample-bunny',
-    title: 'Big Buck Bunny (Sample)',
-    fileName: 'big_buck_bunny.mp4',
+    contentHash: '',
+    hashAlgorithm: 'SHA-256',
+    quickHash: '',
+    hashStatus: 'pending',
     fileSize: 5510872,
-    videoUrl: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4',
     duration: 596,
-    thumbnailUrl: '',
+    displayTitle: 'Big Buck Bunny (Sample)',
+    genreId: 'genre-default',
     thumbnailId: '',
-    sourceType: 'url',
-    availabilityStatus: 'available',
+    videoUrl: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4',
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString()
   },
   {
     id: 'vid-sample-sintel',
-    title: 'Sintel Trailer (Sample)',
-    fileName: 'sintel.mp4',
+    contentHash: '',
+    hashAlgorithm: 'SHA-256',
+    quickHash: '',
+    hashStatus: 'pending',
     fileSize: 4238712,
-    videoUrl: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/Sintel.mp4',
     duration: 52,
-    thumbnailUrl: '',
+    displayTitle: 'Sintel Trailer (Sample)',
+    genreId: 'genre-default',
     thumbnailId: '',
-    sourceType: 'url',
-    availabilityStatus: 'available',
+    videoUrl: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/Sintel.mp4',
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString()
   },
   {
     id: 'vid-sample-tears',
-    title: 'Tears of Steel (Sample)',
+    contentHash: '',
+    hashAlgorithm: 'SHA-256',
+    quickHash: '',
+    hashStatus: 'pending',
+    fileSize: 6734123,
+    duration: 734,
+    displayTitle: 'Tears of Steel (Sample)',
+    genreId: 'genre-default',
+    thumbnailId: '',
+    videoUrl: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/TearsOfSteel.mp4',
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString()
+  }
+];
+
+const SAMPLE_FILE_LOCATIONS = [
+  {
+    id: 'loc-sample-bunny',
+    mediaAssetId: 'vid-sample-bunny',
+    directoryId: '',
+    relativePath: '',
+    fileName: 'big_buck_bunny.mp4',
+    fileSize: 5510872,
+    lastModified: 0,
+    availabilityStatus: 'available',
+    lastVerifiedAt: new Date().toISOString(),
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString()
+  },
+  {
+    id: 'loc-sample-sintel',
+    mediaAssetId: 'vid-sample-sintel',
+    directoryId: '',
+    relativePath: '',
+    fileName: 'sintel.mp4',
+    fileSize: 4238712,
+    lastModified: 0,
+    availabilityStatus: 'available',
+    lastVerifiedAt: new Date().toISOString(),
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString()
+  },
+  {
+    id: 'loc-sample-tears',
+    mediaAssetId: 'vid-sample-tears',
+    directoryId: '',
+    relativePath: '',
     fileName: 'tears_of_steel.mp4',
     fileSize: 6734123,
-    videoUrl: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/TearsOfSteel.mp4',
-    duration: 734,
-    thumbnailUrl: '',
-    thumbnailId: '',
-    sourceType: 'url',
+    lastModified: 0,
     availabilityStatus: 'available',
+    lastVerifiedAt: new Date().toISOString(),
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString()
   }
@@ -307,7 +352,8 @@ export class AppDatabase {
 
   // Load from storage or initialize with defaults
   initDatabase() {
-    this.videos = this._loadTable('videos', SAMPLE_VIDEOS);
+    this.mediaAssets = this._loadTable('media_assets', SAMPLE_MEDIA_ASSETS);
+    this.fileLocations = this._loadTable('file_locations', SAMPLE_FILE_LOCATIONS);
     this.criteria = this._loadTable('rating_criteria', DEFAULT_CRITERIA);
     this.reviews = this._loadTable('video_reviews', []);
     this.criterionRatings = this._loadTable('criterion_ratings', []);
@@ -328,32 +374,23 @@ export class AppDatabase {
     try {
       await this.idb.init();
       this.idbAvailable = true;
-      
-      // Perform base64 conversion migrations
-      await this._migrateSchema();
     } catch (e) {
       console.warn('IndexedDB initialization failed. Images/Handles will fall back:', e.message);
       this.idbAvailable = false;
     }
 
+    // Perform base64 conversion migrations (v2)
+    try {
+      await this._migrateSchema();
+    } catch (err) {
+      console.error('Schema v2 migration failed:', err);
+    }
+
     // Perform genre and template migrations
     this._migrateGenres();
 
-    // sourceType property backfilling for legacy items
-    let videosChanged = false;
-    this.videos.forEach(v => {
-      if (!v.sourceType) {
-        v.sourceType = v.videoUrl ? 'url' : 'local-file';
-        videosChanged = true;
-      }
-      if (!v.availabilityStatus) {
-        v.availabilityStatus = 'available';
-        videosChanged = true;
-      }
-    });
-    if (videosChanged) {
-      this._saveTable('videos', this.videos);
-    }
+    // Perform media assets & file locations migration (v3)
+    await this._migrateToV3MediaIdentity();
   }
 
   _loadTable(key, defaults) {
@@ -387,16 +424,19 @@ export class AppDatabase {
     const versionKey = `${this.prefix}schema_version`;
     const currentVersion = this.storage.getItem(versionKey);
 
-    if (currentVersion === '2') {
+    if (currentVersion === '2' || currentVersion === '3') {
       return;
     }
 
     console.log('Running IndexedDB image storage schema migration (v2)...');
     
     try {
+      const videos = this._loadTable('videos', []);
+      const timelineNotes = this._loadTable('timeline_notes', []);
+
       // 1. Migrate Videos thumbnails
       let videosChanged = false;
-      for (const video of this.videos) {
+      for (const video of videos) {
         if (video.thumbnailUrl && video.thumbnailUrl.startsWith('data:image/') && !video.thumbnailId) {
           const blob = base64ToBlob(video.thumbnailUrl);
           if (blob) {
@@ -410,7 +450,7 @@ export class AppDatabase {
 
       // 2. Migrate Timeline Notes screenshots
       let notesChanged = false;
-      for (const note of this.timelineNotes) {
+      for (const note of timelineNotes) {
         if (note.thumbnailUrl && note.thumbnailUrl.startsWith('data:image/') && !note.thumbnailId) {
           const blob = base64ToBlob(note.thumbnailUrl);
           if (blob) {
@@ -423,10 +463,10 @@ export class AppDatabase {
       }
 
       if (videosChanged) {
-        this._saveTable('videos', this.videos);
+        this._saveTable('videos', videos);
       }
       if (notesChanged) {
-        this._saveTable('timeline_notes', this.timelineNotes);
+        this._saveTable('timeline_notes', timelineNotes);
       }
 
       this.storage.setItem(versionKey, '2');
@@ -445,6 +485,8 @@ export class AppDatabase {
       defaultGenre = {
         id: 'genre-default',
         name: '一般',
+        displayTitle: '一般',
+        description: 'デフォルトのジャンル区分',
         displayOrder: 1,
         isActive: true,
         isDefault: true,
@@ -459,8 +501,10 @@ export class AppDatabase {
     let defaultTemplate = this.templates.find(t => t.genreId === defaultGenre.id);
     if (!defaultTemplate) {
       defaultTemplate = {
-        id: 'template-default',
+        id: 'temp-default',
         genreId: defaultGenre.id,
+        name: 'デフォルトテンプレート',
+        criteriaIds: 'crit-content,crit-visuals,crit-audio,crit-pacing,crit-originality,crit-replayability',
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString()
       };
@@ -480,38 +524,198 @@ export class AppDatabase {
       this._saveTable('rating_criteria', this.criteria);
     }
 
-    // 5. Update existing videos to reference default genre if they have no genreId
-    let videosChanged = false;
-    this.videos.forEach(v => {
-      if (!v.genreId) {
-        v.genreId = defaultGenre.id;
-        videosChanged = true;
+    const versionKey = `${this.prefix}schema_version`;
+    const currentVersion = this.storage.getItem(versionKey);
+
+    if (currentVersion === '3') {
+      let assetsChanged = false;
+      this.mediaAssets.forEach(a => {
+        if (!a.genreId) {
+          a.genreId = defaultGenre.id;
+          assetsChanged = true;
+        }
+      });
+      if (assetsChanged) {
+        this._saveTable('media_assets', this.mediaAssets);
       }
-    });
-    if (videosChanged) {
-      this._saveTable('videos', this.videos);
+
+      let ratingsChanged = false;
+      this.criterionRatings.forEach(cr => {
+        if (!cr.genreId || !cr.criterionName) {
+          const review = this.reviews.find(r => r.id === cr.videoReviewId);
+          const mediaAssetId = review ? review.mediaAssetId : null;
+          const asset = mediaAssetId ? this.mediaAssets.find(a => a.id === mediaAssetId) : null;
+          
+          const gId = asset ? (asset.genreId || defaultGenre.id) : defaultGenre.id;
+          const g = this.genres.find(genre => genre.id === gId) || defaultGenre;
+          const c = this.criteria.find(crit => crit.id === cr.criterionId);
+          
+          cr.genreId = g.id;
+          cr.genreName = g.name;
+          cr.criterionName = c ? c.name : (cr.criterionName || '不明な項目');
+          ratingsChanged = true;
+        }
+      });
+      if (ratingsChanged) {
+        this._saveTable('criterion_ratings', this.criterionRatings);
+      }
+    } else {
+      const videos = this._loadTable('videos', []);
+      let videosChanged = false;
+      videos.forEach(v => {
+        if (!v.genreId) {
+          v.genreId = defaultGenre.id;
+          videosChanged = true;
+        }
+      });
+      if (videosChanged) {
+        this._saveTable('videos', videos);
+      }
+
+      let ratingsChanged = false;
+      this.criterionRatings.forEach(cr => {
+        if (!cr.genreId || !cr.criterionName) {
+          const review = this.reviews.find(r => r.id === cr.videoReviewId);
+          const videoId = review ? review.videoId : null;
+          const video = videos.find(v => v.id === videoId);
+          
+          const gId = video ? (video.genreId || defaultGenre.id) : defaultGenre.id;
+          const g = this.genres.find(genre => genre.id === gId) || defaultGenre;
+          const c = this.criteria.find(crit => crit.id === cr.criterionId);
+          
+          cr.genreId = g.id;
+          cr.genreName = g.name;
+          cr.criterionName = c ? c.name : (cr.criterionName || '不明な項目');
+          ratingsChanged = true;
+        }
+      });
+      if (ratingsChanged) {
+        this._saveTable('criterion_ratings', this.criterionRatings);
+      }
+    }
+  }
+
+  async _migrateToV3MediaIdentity() {
+    if (!this.storage) return;
+    const versionKey = `${this.prefix}schema_version`;
+    const currentVersion = this.storage.getItem(versionKey);
+
+    if (currentVersion === '3') {
+      return;
     }
 
-    // 6. Backfill existing ratings in criterion_ratings with snapshot fields
-    let ratingsChanged = false;
-    this.criterionRatings.forEach(cr => {
-      if (!cr.genreId || !cr.criterionName) {
-        const review = this.reviews.find(r => r.id === cr.videoReviewId);
-        const videoId = review ? review.videoId : null;
-        const video = videoId ? this.getVideo(videoId) : null;
-        
-        const gId = video ? (video.genreId || defaultGenre.id) : defaultGenre.id;
-        const g = this.genres.find(genre => genre.id === gId) || defaultGenre;
-        const c = this.criteria.find(crit => crit.id === cr.criterionId);
-        
-        cr.genreId = g.id;
-        cr.genreName = g.name;
-        cr.criterionName = c ? c.name : (cr.criterionName || '不明な項目');
-        ratingsChanged = true;
+    const hasLegacyVideos = this.storage.getItem(`${this.prefix}videos`) !== null;
+    if (!hasLegacyVideos) {
+      this.storage.setItem(versionKey, '3');
+      this._saveAll();
+      console.log('Fresh install detected, skipping v3 migration and setting version to 3.');
+      return;
+    }
+
+    console.log('Running Content Hash Separation and Media Identity migration (v3)...');
+    
+    const originalVideos = this._loadTable('videos', []);
+    const originalReviews = this._loadTable('video_reviews', []);
+    const originalVideoTags = this._loadTable('video_tags', []);
+    const originalTimelineNotes = this._loadTable('timeline_notes', []);
+
+    if (originalVideos.length === 0) {
+      this.storage.removeItem(`${this.prefix}videos`);
+      this.storage.setItem(versionKey, '3');
+      this._saveAll();
+      console.log('No legacy videos found. Setting schema version to 3.');
+      return;
+    }
+
+    try {
+      const mediaAssets = [];
+      const fileLocations = [];
+
+      for (const v of originalVideos) {
+        const asset = {
+          id: v.id,
+          contentHash: v.contentHash || '',
+          hashAlgorithm: v.hashAlgorithm || 'SHA-256',
+          quickHash: v.quickHash || '',
+          hashStatus: v.hashStatus || 'pending',
+          fileSize: v.fileSize || 0,
+          duration: v.duration || 0,
+          displayTitle: v.displayTitle || v.title || v.fileName || '不明な動画',
+          genreId: v.genreId || 'genre-default',
+          thumbnailId: v.thumbnailId || '',
+          videoUrl: v.videoUrl || '',
+          createdAt: v.createdAt || new Date().toISOString(),
+          updatedAt: v.updatedAt || new Date().toISOString()
+        };
+        mediaAssets.push(asset);
+
+        const loc = {
+          id: 'loc-' + generateUUID(),
+          mediaAssetId: v.id,
+          directoryId: v.directoryId || '',
+          relativePath: v.relativePath || '',
+          fileName: v.fileName || '',
+          fileSize: v.fileSize || 0,
+          lastModified: v.lastModified || 0,
+          availabilityStatus: v.availabilityStatus || 'available',
+          lastVerifiedAt: new Date().toISOString(),
+          createdAt: v.createdAt || new Date().toISOString(),
+          updatedAt: v.updatedAt || new Date().toISOString()
+        };
+        fileLocations.push(loc);
       }
-    });
-    if (ratingsChanged) {
-      this._saveTable('criterion_ratings', this.criterionRatings);
+
+      const reviews = originalReviews.map(r => {
+        const newR = { ...r };
+        if (newR.videoId) {
+          newR.mediaAssetId = newR.videoId;
+          delete newR.videoId;
+        }
+        return newR;
+      });
+
+      const videoTags = originalVideoTags.map(vt => {
+        const newVT = { ...vt };
+        if (newVT.videoId) {
+          newVT.mediaAssetId = newVT.videoId;
+          delete newVT.videoId;
+        }
+        return newVT;
+      });
+
+      const timelineNotes = originalTimelineNotes.map(n => {
+        const newN = { ...n };
+        if (newN.videoId) {
+          newN.mediaAssetId = newN.videoId;
+          delete newN.videoId;
+        }
+        return newN;
+      });
+
+      this._saveTable('media_assets', mediaAssets);
+      this._saveTable('file_locations', fileLocations);
+      this._saveTable('video_reviews', reviews);
+      this._saveTable('video_tags', videoTags);
+      this._saveTable('timeline_notes', timelineNotes);
+
+      this.storage.removeItem(`${this.prefix}videos`);
+
+      this.mediaAssets = mediaAssets;
+      this.fileLocations = fileLocations;
+      this.reviews = reviews;
+      this.videoTags = videoTags;
+      this.timelineNotes = timelineNotes;
+      this.videos = undefined;
+
+      this.storage.setItem(versionKey, '3');
+      console.log('Migration to v3 (Persistent Media Identity) completed successfully.');
+    } catch (err) {
+      console.error('Migration to v3 failed. Rolling back changes...', err);
+      this._saveTable('videos', originalVideos);
+      this._saveTable('video_reviews', originalReviews);
+      this._saveTable('video_tags', originalVideoTags);
+      this._saveTable('timeline_notes', originalTimelineNotes);
+      throw err;
     }
   }
 
@@ -640,111 +844,288 @@ export class AppDatabase {
     this.directorySources = this.directorySources.filter(ds => ds.id !== id);
     this._saveTable('directory_sources', this.directorySources);
 
-    // 3. Mark matching videos as 'permission-required' or 'missing' (do NOT delete ratings)
-    this.videos.forEach(v => {
-      if (v.sourceType === 'directory' && v.directoryId === id) {
-        v.availabilityStatus = 'permission-required';
-        v.updatedAt = new Date().toISOString();
+    // 3. Mark matching physical locations as 'permission-required'
+    this.fileLocations.forEach(loc => {
+      if (loc.directoryId === id) {
+        loc.availabilityStatus = 'permission-required';
+        loc.updatedAt = new Date().toISOString();
       }
     });
-    this._saveTable('videos', this.videos);
+    this._saveTable('file_locations', this.fileLocations);
     return true;
   }
 
   async updateDirectoryVideosAvailability(directoryId, availabilityStatus) {
     let changed = false;
-    this.videos.forEach(v => {
-      if (v.sourceType === 'directory' && v.directoryId === directoryId) {
-        if (v.availabilityStatus !== availabilityStatus) {
-          v.availabilityStatus = availabilityStatus;
-          v.updatedAt = new Date().toISOString();
+    this.fileLocations.forEach(loc => {
+      if (loc.directoryId === directoryId) {
+        if (loc.availabilityStatus !== availabilityStatus) {
+          loc.availabilityStatus = availabilityStatus;
+          loc.updatedAt = new Date().toISOString();
           changed = true;
         }
       }
     });
     if (changed) {
-      this._saveTable('videos', this.videos);
+      this._saveTable('file_locations', this.fileLocations);
     }
   }
 
   // --- VIDEO OPERATIONS ---
 
+  get videos() {
+    return this.getVideos();
+  }
+
+  set videos(val) {
+    if (val === undefined || val === null) {
+      return;
+    }
+    if (Array.isArray(val)) {
+      this.mediaAssets = [];
+      this.fileLocations = [];
+      val.forEach(v => {
+        const asset = {
+          id: v.id || ('vid-' + generateUUID()),
+          contentHash: v.contentHash || '',
+          hashAlgorithm: v.hashAlgorithm || 'SHA-256',
+          quickHash: v.quickHash || '',
+          hashStatus: v.hashStatus || 'pending',
+          fileSize: v.fileSize || 0,
+          duration: v.duration || 0,
+          displayTitle: v.displayTitle || v.title || v.fileName || '不明な動画',
+          genreId: v.genreId || 'genre-default',
+          thumbnailId: v.thumbnailId || '',
+          videoUrl: v.videoUrl || '',
+          createdAt: v.createdAt || new Date().toISOString(),
+          updatedAt: v.updatedAt || new Date().toISOString()
+        };
+        this.mediaAssets.push(asset);
+
+        const loc = {
+          id: 'loc-' + (v.id ? v.id.replace('vid-', '') : generateUUID()),
+          mediaAssetId: asset.id,
+          directoryId: v.directoryId || '',
+          relativePath: v.relativePath || '',
+          fileName: v.fileName || '',
+          fileSize: v.fileSize || 0,
+          lastModified: v.lastModified || 0,
+          availabilityStatus: v.availabilityStatus || 'available',
+          lastVerifiedAt: new Date().toISOString(),
+          createdAt: v.createdAt || new Date().toISOString(),
+          updatedAt: v.updatedAt || new Date().toISOString()
+        };
+        this.fileLocations.push(loc);
+      });
+    }
+  }
+
+  _buildVirtualVideo(asset) {
+    if (!asset) return undefined;
+    const locations = this.fileLocations.filter(loc => loc.mediaAssetId === asset.id);
+    
+    let primary = locations.find(loc => loc.availabilityStatus === 'available') ||
+                  locations.find(loc => loc.availabilityStatus === 'permission-required') ||
+                  locations[0];
+                  
+    let logicalStatus = 'missing';
+    if (locations.some(loc => loc.availabilityStatus === 'available')) {
+      logicalStatus = 'available';
+    } else if (locations.some(loc => loc.availabilityStatus === 'permission-required')) {
+      logicalStatus = 'permission-required';
+    } else if (locations.some(loc => loc.availabilityStatus === 'scan-error')) {
+      logicalStatus = 'scan-error';
+    } else if (locations.some(loc => loc.availabilityStatus === 'unsupported')) {
+      logicalStatus = 'unsupported';
+    }
+
+    const firstLoc = primary || {
+      directoryId: '',
+      relativePath: '',
+      fileName: '',
+      fileSize: asset.fileSize || 0,
+      lastModified: 0
+    };
+
+    const displayTitle = asset.displayTitle;
+    const title = displayTitle || firstLoc.fileName || '不明な動画';
+    const isUrl = !firstLoc.directoryId && (asset.videoUrl || asset.id.includes('sample'));
+
+    return {
+      ...asset,
+      displayTitle,
+      title,
+      fileName: firstLoc.fileName,
+      fileSize: firstLoc.fileSize,
+      directoryId: firstLoc.directoryId,
+      relativePath: firstLoc.relativePath,
+      lastModified: firstLoc.lastModified,
+      availabilityStatus: logicalStatus,
+      sourceType: isUrl ? 'url' : 'directory',
+      videoUrl: asset.videoUrl || (isUrl ? `https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/${asset.id === 'vid-sample-bunny' ? 'BigBuckBunny' : asset.id === 'vid-sample-sintel' ? 'Sintel' : 'TearsOfSteel'}.mp4` : ''),
+      locations: locations
+    };
+  }
+
   getVideos() {
-    return this.videos;
+    return this.mediaAssets.map(asset => this._buildVirtualVideo(asset));
   }
 
   getVideo(id) {
-    return this.videos.find(v => v.id === id);
+    const asset = this.mediaAssets.find(a => a.id === id);
+    return this._buildVirtualVideo(asset);
   }
 
-  async addVideo({ title, fileName, fileSize, videoUrl, duration, thumbnailBlob, sourceType, directoryId, relativePath, lastModified }) {
-    const sType = sourceType || (videoUrl ? 'url' : 'local-file');
+  async addVideo({ title, fileName, fileSize, videoUrl, duration, thumbnailBlob, sourceType, directoryId, relativePath, lastModified, contentHash, quickHash, hashStatus }) {
+    const sType = sourceType || (videoUrl ? 'url' : 'directory');
     
-    // Prevent duplicates based on SourceType
-    let existing;
-    if (sType === 'directory') {
-      existing = this.videos.find(v => v.sourceType === 'directory' && v.directoryId === directoryId && v.relativePath === relativePath);
-    } else if (sType === 'url') {
-      existing = this.videos.find(v => v.sourceType === 'url' && v.videoUrl === videoUrl);
+    let existingAsset = null;
+    let existingLoc = null;
+
+    if (sType === 'url') {
+      existingAsset = this.mediaAssets.find(a => a.videoUrl === videoUrl);
     } else {
-      existing = this.videos.find(v => v.sourceType === 'local-file' && v.fileName === fileName && v.fileSize === fileSize);
+      existingLoc = this.fileLocations.find(l => l.directoryId === directoryId && l.relativePath === relativePath);
+      if (existingLoc) {
+        existingAsset = this.mediaAssets.find(a => a.id === existingLoc.mediaAssetId);
+      }
     }
 
-    if (existing) {
-      return existing;
+    if (existingAsset) {
+      return this._buildVirtualVideo(existingAsset);
     }
 
-    const id = 'vid-' + generateUUID();
-    const video = {
-      id,
-      title: title || fileName || 'Untitled Video',
+    const assetId = 'vid-' + generateUUID();
+    const locId = 'loc-' + generateUUID();
+
+    const asset = {
+      id: assetId,
+      contentHash: contentHash || '',
+      hashAlgorithm: 'SHA-256',
+      quickHash: quickHash || '',
+      hashStatus: hashStatus || 'pending',
+      fileSize: fileSize || 0,
+      duration: duration || 0,
+      displayTitle: title || fileName || 'Untitled Video',
+      genreId: 'genre-default',
+      thumbnailId: '',
+      videoUrl: videoUrl || '',
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    };
+
+    const loc = {
+      id: locId,
+      mediaAssetId: assetId,
+      directoryId: directoryId || '',
+      relativePath: relativePath || '',
       fileName: fileName || '',
       fileSize: fileSize || 0,
-      videoUrl: videoUrl || '',
-      duration: duration || 0,
-      thumbnailUrl: '',
-      thumbnailId: '',
-      sourceType: sType,
-      directoryId: directoryId || null,
-      relativePath: relativePath || null,
       lastModified: lastModified || 0,
       availabilityStatus: 'available',
+      lastVerifiedAt: new Date().toISOString(),
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString()
     };
 
     if (thumbnailBlob && this.idbAvailable) {
       try {
-        const imgId = `img-vid-${id}`;
+        const imgId = `img-vid-${assetId}`;
         await this.putImage(imgId, thumbnailBlob);
-        video.thumbnailId = imgId;
+        asset.thumbnailId = imgId;
       } catch (err) {
         console.error('Failed to save new video thumbnail to IndexedDB:', err);
       }
     }
 
-    this.videos.push(video);
-    this._saveTable('videos', this.videos);
-    return video;
+    this.mediaAssets.push(asset);
+    this.fileLocations.push(loc);
+
+    this._saveTable('media_assets', this.mediaAssets);
+    this._saveTable('file_locations', this.fileLocations);
+
+    return this._buildVirtualVideo(asset);
+  }
+
+  async addFileLocation(mediaAssetId, { directoryId, relativePath, fileName, fileSize, lastModified, availabilityStatus }) {
+    let loc = this.fileLocations.find(l => l.directoryId === directoryId && l.relativePath === relativePath);
+    if (loc) {
+      loc.mediaAssetId = mediaAssetId;
+      loc.fileSize = fileSize;
+      loc.lastModified = lastModified;
+      loc.availabilityStatus = availabilityStatus || 'available';
+      loc.lastVerifiedAt = new Date().toISOString();
+      loc.updatedAt = new Date().toISOString();
+    } else {
+      loc = {
+        id: 'loc-' + generateUUID(),
+        mediaAssetId,
+        directoryId,
+        relativePath,
+        fileName,
+        fileSize,
+        lastModified,
+        availabilityStatus: availabilityStatus || 'available',
+        lastVerifiedAt: new Date().toISOString(),
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      };
+      this.fileLocations.push(loc);
+    }
+    this._saveTable('file_locations', this.fileLocations);
+    return loc;
   }
 
   async updateVideo(id, updates) {
-    const idx = this.videos.findIndex(v => v.id === id);
-    if (idx !== -1) {
-      this.videos[idx] = {
-        ...this.videos[idx],
-        ...updates,
-        updatedAt: new Date().toISOString()
-      };
-      this._saveTable('videos', this.videos);
-      return this.videos[idx];
+    const asset = this.mediaAssets.find(a => a.id === id);
+    if (asset) {
+      const assetKeys = ['contentHash', 'hashAlgorithm', 'quickHash', 'hashStatus', 'fileSize', 'duration', 'displayTitle', 'genreId', 'thumbnailId', 'videoUrl'];
+      const locKeys = ['directoryId', 'relativePath', 'fileName', 'fileSize', 'lastModified', 'availabilityStatus'];
+      
+      const assetUpdates = {};
+      const locUpdates = {};
+      
+      for (const [k, v] of Object.entries(updates)) {
+        if (k === 'title') {
+          assetUpdates.displayTitle = v;
+        } else if (assetKeys.includes(k)) {
+          assetUpdates[k] = v;
+        }
+        
+        if (locKeys.includes(k)) {
+          locUpdates[k] = v;
+        }
+      }
+      
+      Object.assign(asset, assetUpdates);
+      asset.updatedAt = new Date().toISOString();
+      this._saveTable('media_assets', this.mediaAssets);
+
+      if (Object.keys(locUpdates).length > 0) {
+        let loc = this.fileLocations.find(l => l.mediaAssetId === id && 
+                    (updates.directoryId === undefined || l.directoryId === updates.directoryId) &&
+                    (updates.relativePath === undefined || l.relativePath === updates.relativePath));
+                    
+        if (!loc) {
+          loc = this.fileLocations.find(l => l.mediaAssetId === id);
+        }
+        
+        if (loc) {
+          Object.assign(loc, locUpdates);
+          loc.lastVerifiedAt = new Date().toISOString();
+          loc.updatedAt = new Date().toISOString();
+          this._saveTable('file_locations', this.fileLocations);
+        }
+      }
+      
+      return this._buildVirtualVideo(asset);
     }
     return null;
   }
 
   async updateVideoThumbnail(videoId, thumbnailBlob) {
-    const video = this.getVideo(videoId);
-    if (!video) throw new Error('Video not found');
+    const asset = this.mediaAssets.find(a => a.id === videoId);
+    if (!asset) throw new Error('Video not found');
 
     if (thumbnailBlob && this.idbAvailable) {
       const imgId = `img-vid-${videoId}`;
@@ -752,38 +1133,36 @@ export class AppDatabase {
       await this.updateVideo(videoId, { thumbnailId: imgId });
     }
   }
+
   async deleteVideoThumbnail(videoId) {
-    const video = this.getVideo(videoId);
-    if (!video) return;
-    if (video.thumbnailId && this.idbAvailable) {
+    const asset = this.mediaAssets.find(a => a.id === videoId);
+    if (!asset) return;
+    if (asset.thumbnailId && this.idbAvailable) {
       try {
-        await this.idb.delete(video.thumbnailId, 'images');
+        await this.idb.delete(asset.thumbnailId, 'images');
       } catch (err) {
         console.error('Failed to delete video thumbnail Blob:', err);
       }
     }
   }
 
-  async deleteVideoCascade(videoId) {
-    const video = this.getVideo(videoId);
-    if (!video) return false;
+  async deleteVideoCascade(mediaAssetId) {
+    const asset = this.mediaAssets.find(a => a.id === mediaAssetId);
+    if (!asset) return false;
 
-    const reviewsToDelete = this.reviews.filter(r => r.videoId === videoId);
+    const reviewsToDelete = this.reviews.filter(r => r.mediaAssetId === mediaAssetId);
     const reviewIds = reviewsToDelete.map(r => r.id);
 
-    // 1. Delete image Blobs from IndexedDB
     if (this.idbAvailable) {
-      // Delete Video Thumbnail
-      if (video.thumbnailId) {
+      if (asset.thumbnailId) {
         try {
-          await this.idb.delete(video.thumbnailId, 'images');
+          await this.idb.delete(asset.thumbnailId, 'images');
         } catch (err) {
           console.warn('Failed to delete video thumbnail image:', err);
         }
       }
 
-      // Delete Timeline Note Screenshots
-      const matchedNotes = this.timelineNotes.filter(n => n.videoId === videoId || reviewIds.includes(n.videoReviewId));
+      const matchedNotes = this.timelineNotes.filter(n => n.mediaAssetId === mediaAssetId || reviewIds.includes(n.videoReviewId));
       for (const note of matchedNotes) {
         if (note.thumbnailId) {
           try {
@@ -795,20 +1174,22 @@ export class AppDatabase {
       }
     }
 
-    // 2. Cascade delete records from tables
-    this.videos = this.videos.filter(v => v.id !== videoId);
-    this._saveTable('videos', this.videos);
+    this.mediaAssets = this.mediaAssets.filter(a => a.id !== mediaAssetId);
+    this._saveTable('media_assets', this.mediaAssets);
 
-    this.reviews = this.reviews.filter(r => r.videoId !== videoId);
+    this.fileLocations = this.fileLocations.filter(l => l.mediaAssetId !== mediaAssetId);
+    this._saveTable('file_locations', this.fileLocations);
+
+    this.reviews = this.reviews.filter(r => r.mediaAssetId !== mediaAssetId);
     this._saveTable('video_reviews', this.reviews);
 
     this.criterionRatings = this.criterionRatings.filter(cr => !reviewIds.includes(cr.videoReviewId));
     this._saveTable('criterion_ratings', this.criterionRatings);
 
-    this.videoTags = this.videoTags.filter(vt => vt.videoId !== videoId);
+    this.videoTags = this.videoTags.filter(vt => vt.mediaAssetId !== mediaAssetId);
     this._saveTable('video_tags', this.videoTags);
 
-    this.timelineNotes = this.timelineNotes.filter(n => n.videoId !== videoId && !reviewIds.includes(n.videoReviewId));
+    this.timelineNotes = this.timelineNotes.filter(n => n.mediaAssetId !== mediaAssetId && !reviewIds.includes(n.videoReviewId));
     this._saveTable('timeline_notes', this.timelineNotes);
 
     return true;
@@ -883,22 +1264,22 @@ export class AppDatabase {
 
   // --- REVIEW & RATING OPERATIONS ---
 
-  getReviewForVideo(videoId) {
-    return this.reviews.find(r => r.videoId === videoId);
+  getReviewForVideo(mediaAssetId) {
+    return this.reviews.find(r => r.mediaAssetId === mediaAssetId);
   }
 
   getCriterionRatingsForReview(reviewId) {
     return this.criterionRatings.filter(cr => cr.videoReviewId === reviewId);
   }
 
-  async saveReview(videoId, { overallGrade, comment, ratings }) {
-    let review = this.getReviewForVideo(videoId);
+  async saveReview(mediaAssetId, { overallGrade, comment, ratings }) {
+    let review = this.getReviewForVideo(mediaAssetId);
     const now = new Date().toISOString();
 
     if (!review) {
       review = {
         id: 'rev-' + generateUUID(),
-        videoId,
+        mediaAssetId,
         overallGrade: overallGrade || null,
         comment: comment || '',
         createdAt: now,
@@ -915,7 +1296,7 @@ export class AppDatabase {
 
     this.criterionRatings = this.criterionRatings.filter(cr => cr.videoReviewId !== review.id);
 
-    const video = this.getVideo(videoId);
+    const video = this.getVideo(mediaAssetId);
     const genreId = video ? (video.genreId || 'genre-default') : 'genre-default';
     const genre = this.genres.find(g => g.id === genreId);
     const genreName = genre ? genre.name : '一般';
@@ -942,7 +1323,7 @@ export class AppDatabase {
     }
 
     this._saveTable('criterion_ratings', this.criterionRatings);
-    await this.updateVideo(videoId, {});
+    await this.updateVideo(mediaAssetId, {});
 
     return review;
   }
@@ -953,14 +1334,14 @@ export class AppDatabase {
     return this.tags;
   }
 
-  getVideoTags(videoId) {
+  getVideoTags(mediaAssetId) {
     const associationIds = this.videoTags
-      .filter(vt => vt.videoId === videoId)
+      .filter(vt => vt.mediaAssetId === mediaAssetId)
       .map(vt => vt.tagId);
     return this.tags.filter(t => associationIds.includes(t.id));
   }
 
-  async addTagToVideo(videoId, tagName) {
+  async addTagToVideo(mediaAssetId, tagName) {
     const cleanedName = tagName.trim();
     if (!cleanedName) return null;
 
@@ -977,22 +1358,22 @@ export class AppDatabase {
       this._saveTable('tags', this.tags);
     }
 
-    const alreadyAssociated = this.videoTags.some(vt => vt.videoId === videoId && vt.tagId === tag.id);
+    const alreadyAssociated = this.videoTags.some(vt => vt.mediaAssetId === mediaAssetId && vt.tagId === tag.id);
     if (!alreadyAssociated) {
-      this.videoTags.push({ videoId, tagId: tag.id });
+      this.videoTags.push({ mediaAssetId, tagId: tag.id });
       this._saveTable('video_tags', this.videoTags);
-      await this.updateVideo(videoId, {});
+      await this.updateVideo(mediaAssetId, {});
     }
 
     return tag;
   }
 
-  async removeTagFromVideo(videoId, tagId) {
+  async removeTagFromVideo(mediaAssetId, tagId) {
     const initialLength = this.videoTags.length;
-    this.videoTags = this.videoTags.filter(vt => !(vt.videoId === videoId && vt.tagId === tagId));
+    this.videoTags = this.videoTags.filter(vt => !(vt.mediaAssetId === mediaAssetId && vt.tagId === tagId));
     if (this.videoTags.length !== initialLength) {
       this._saveTable('video_tags', this.videoTags);
-      await this.updateVideo(videoId, {});
+      await this.updateVideo(mediaAssetId, {});
       return true;
     }
     return false;
@@ -1000,8 +1381,8 @@ export class AppDatabase {
 
   // --- TIMELINE NOTES OPERATIONS ---
 
-  getTimelineNotes(videoId) {
-    const review = this.getReviewForVideo(videoId);
+  getTimelineNotes(mediaAssetId) {
+    const review = this.getReviewForVideo(mediaAssetId);
     if (!review) return [];
     
     return this.timelineNotes
@@ -1009,18 +1390,19 @@ export class AppDatabase {
       .sort((a, b) => a.timestampSeconds - b.timestampSeconds);
   }
 
-  async addTimelineNote(videoId, { timestampSeconds, timestampLabel, comment, thumbnailBlob }) {
-    let review = this.getReviewForVideo(videoId);
+  async addTimelineNote(mediaAssetId, { timestampSeconds, timestampLabel, comment, thumbnailBlob }) {
+    let review = this.getReviewForVideo(mediaAssetId);
     const now = new Date().toISOString();
     
     if (!review) {
-      review = await this.saveReview(videoId, { overallGrade: null, comment: '', ratings: {} });
+      review = await this.saveReview(mediaAssetId, { overallGrade: null, comment: '', ratings: {} });
     }
 
     const noteId = 'note-' + generateUUID();
     const note = {
       id: noteId,
       videoReviewId: review.id,
+      mediaAssetId,
       timestampSeconds: parseFloat(timestampSeconds),
       timestampLabel: timestampLabel || '00:00',
       comment: comment || '',
@@ -1038,7 +1420,7 @@ export class AppDatabase {
 
     this.timelineNotes.push(note);
     this._saveTable('timeline_notes', this.timelineNotes);
-    await this.updateVideo(videoId, {});
+    await this.updateVideo(mediaAssetId, {});
     return note;
   }
 
@@ -1054,7 +1436,7 @@ export class AppDatabase {
       
       const review = this.reviews.find(r => r.id === this.timelineNotes[idx].videoReviewId);
       if (review) {
-        await this.updateVideo(review.videoId, {});
+        await this.updateVideo(review.mediaAssetId, {});
       }
       return this.timelineNotes[idx];
     }
@@ -1078,7 +1460,7 @@ export class AppDatabase {
 
     const review = this.reviews.find(r => r.id === note.videoReviewId);
     if (review) {
-      await this.updateVideo(review.videoId, {});
+      await this.updateVideo(review.mediaAssetId, {});
     }
     return true;
   }
@@ -1101,7 +1483,8 @@ export class AppDatabase {
     const prevAllow = this._allowSaveDuringRestore;
     this._allowSaveDuringRestore = true;
     try {
-      this._saveTable('videos', this.videos);
+      this._saveTable('media_assets', this.mediaAssets);
+      this._saveTable('file_locations', this.fileLocations);
       this._saveTable('rating_criteria', this.criteria);
       this._saveTable('video_reviews', this.reviews);
       this._saveTable('criterion_ratings', this.criterionRatings);
@@ -1125,8 +1508,8 @@ export class AppDatabase {
     if (!manifest || typeof manifest !== 'object') {
       fatalErrors.push('マニフェストファイルがありません。');
     } else {
-      // 2. Verify schemaVersion is exactly a supported integer
-      if (!Number.isInteger(manifest.schemaVersion) || manifest.schemaVersion !== 1) {
+      // 2. Verify schemaVersion is exactly 3
+      if (!Number.isInteger(manifest.schemaVersion) || manifest.schemaVersion !== 3) {
         fatalErrors.push(`サポートされていないスキーマバージョンです: ${manifest.schemaVersion}`);
       }
 
@@ -1139,7 +1522,7 @@ export class AppDatabase {
       if (!manifest.counts || typeof manifest.counts !== 'object') {
         fatalErrors.push('マニフェストに counts が存在しません。');
       } else {
-        const reqCounts = ['videos', 'reviews', 'images'];
+        const reqCounts = ['media_assets', 'file_locations', 'reviews', 'images'];
         reqCounts.forEach(c => {
           const val = manifest.counts[c];
           if (typeof val !== 'number' || !Number.isInteger(val) || val < 0) {
@@ -1158,22 +1541,19 @@ export class AppDatabase {
       seenImages.add(imgId);
     });
 
-    // 6. Validate tables presence and types
-    const tables = [
-      'videos', 'rating_criteria', 'video_reviews', 'criterion_ratings',
-      'tags', 'video_tags', 'timeline_notes', 'directory_sources',
-      'genres', 'evaluation_templates'
-    ];
-    tables.forEach(t => {
-      if (!parsedDb || !Array.isArray(parsedDb[t])) {
-        fatalErrors.push(`データベーステーブル ${t} が見つからないか、フォーマットが不正です。`);
+    if (parsedDb && typeof parsedDb === 'object') {
+      if (manifest && manifest.schemaVersion) {
+        parsedDb.schemaVersion = parsedDb.schemaVersion || manifest.schemaVersion;
       }
-    });
+    }
 
-    if (fatalErrors.length === 0) {
+    if (fatalErrors.length === 0 && parsedDb && typeof parsedDb === 'object') {
       // 7. Match counts
-      if (manifest.counts.videos !== parsedDb.videos.length) {
-        fatalErrors.push('動画の件数がマニフェストのカウントと一致しません。');
+      if (manifest.counts.media_assets !== parsedDb.media_assets.length) {
+        fatalErrors.push('動画アセットの件数がマニフェストのカウントと一致しません。');
+      }
+      if (manifest.counts.file_locations !== parsedDb.file_locations.length) {
+        fatalErrors.push('ファイル所在地の件数がマニフェストのカウントと一致しません。');
       }
       if (manifest.counts.reviews !== parsedDb.video_reviews.length) {
         fatalErrors.push('レビューの件数がマニフェストのカウントと一致しません。');
@@ -1181,34 +1561,14 @@ export class AppDatabase {
       if (manifest.counts.images !== imageIds.length) {
         fatalErrors.push('画像の件数がマニフェストのカウントと一致しません。');
       }
-    }
 
-    if (parsedDb && typeof parsedDb === 'object') {
-      // 8. Validate structural existence in genres and templates
-      if (Array.isArray(parsedDb.genres)) {
-        parsedDb.genres.forEach(g => {
-          if (!g.id || !g.name) {
-            fatalErrors.push('ジャンルテーブル of レコードに不正なデータが含まれています。');
-          }
-        });
-      }
-      if (Array.isArray(parsedDb.evaluation_templates)) {
-        parsedDb.evaluation_templates.forEach(t => {
-          if (!t.id || !t.genreId) {
-            fatalErrors.push('評価テンプレートのレコードに不正なデータが含まれています。');
-          }
-        });
-      }
-
-      // 9. Validate duplicate IDs within each table
-      const tablesWithId = ['videos', 'rating_criteria', 'video_reviews', 'tags', 'timeline_notes', 'directory_sources', 'genres', 'evaluation_templates'];
+      // 8. Validate duplicate IDs within each table
+      const tablesWithId = ['media_assets', 'file_locations', 'rating_criteria', 'video_reviews', 'tags', 'timeline_notes', 'directory_sources', 'genres', 'evaluation_templates'];
       tablesWithId.forEach(t => {
         if (Array.isArray(parsedDb[t])) {
           const ids = new Set();
-          parsedDb[t].forEach(item => {
-            if (!item.id) {
-              fatalErrors.push(`テーブル ${t} にIDのないレコードが存在します。`);
-            } else {
+          parsedDb[t].forEach((item, idx) => {
+            if (item && item.id) {
               if (ids.has(item.id)) {
                 fatalErrors.push(`テーブル ${t} に重複するID ${item.id} が検出されました。`);
               }
@@ -1218,13 +1578,11 @@ export class AppDatabase {
         }
       });
 
-      // 10. Validate criterion_ratings IDs are present and unique
+      // 9. Validate duplicate IDs in criterion_ratings
       if (Array.isArray(parsedDb.criterion_ratings)) {
         const crIds = new Set();
         parsedDb.criterion_ratings.forEach(cr => {
-          if (!cr.id) {
-            fatalErrors.push('criterion_ratings のレコードに ID がありません。');
-          } else {
+          if (cr && cr.id) {
             if (crIds.has(cr.id)) {
               fatalErrors.push(`criterion_ratings に重複する ID ${cr.id} が検出されました。`);
             }
@@ -1242,14 +1600,17 @@ export class AppDatabase {
         if (hasDirectReview) {
           keptTimelineNotes.push(n);
         } else {
-          // Attempt safe repair
-          const matchingReviews = n.videoId ? parsedDb.video_reviews.filter(r => r.videoId === n.videoId) : [];
+          // Attempt safe repair (mediaAssetId / videoId match)
+          const targetAssetId = n.mediaAssetId || n.videoId;
+          const matchingReviews = targetAssetId ? parsedDb.video_reviews.filter(r => r.mediaAssetId === targetAssetId) : [];
           if (matchingReviews.length === 1) {
             const targetReview = matchingReviews[0];
             const repairedNote = {
               ...n,
+              mediaAssetId: targetReview.mediaAssetId,
               videoReviewId: targetReview.id
             };
+            delete repairedNote.videoId;
             keptTimelineNotes.push(repairedNote);
             warnings.push({
               noteId: n.id,
@@ -1270,10 +1631,23 @@ export class AppDatabase {
       });
     }
 
+    const repairedDb = {
+      ...parsedDb,
+      timeline_notes: keptTimelineNotes
+    };
+
+    // 6. Validate using JSON Schema v3 on the repaired/cleaned database
+    if (repairedDb && typeof repairedDb === 'object') {
+      const schemaErrors = validateDataByJsonSchema(repairedDb, BACKUP_SCHEMA);
+      if (schemaErrors && schemaErrors.length > 0) {
+        fatalErrors.push(...schemaErrors);
+      }
+    }
+
     // Recalculate required images set based only on kept/valid database objects
     const requiredImageIdsSet = new Set();
-    if (parsedDb && Array.isArray(parsedDb.videos)) {
-      parsedDb.videos.forEach(v => {
+    if (parsedDb && Array.isArray(parsedDb.media_assets)) {
+      parsedDb.media_assets.forEach(v => {
         if (v.thumbnailId) requiredImageIdsSet.add(v.thumbnailId);
       });
     }
@@ -1292,8 +1666,8 @@ export class AppDatabase {
     if (parsedDb && fatalErrors.length === 0) {
       if (Array.isArray(parsedDb.video_reviews)) {
         parsedDb.video_reviews.forEach(r => {
-          if (!parsedDb.videos.some(v => v.id === r.videoId)) {
-            fatalErrors.push(`レビュー ${r.id} が参照する動画 ${r.videoId} が存在しません。`);
+          if (!parsedDb.media_assets.some(v => v.id === r.mediaAssetId)) {
+            fatalErrors.push(`レビュー ${r.id} が参照する動画 ${r.mediaAssetId} が存在しません。`);
           }
         });
       }
@@ -1311,8 +1685,8 @@ export class AppDatabase {
 
       if (Array.isArray(parsedDb.video_tags)) {
         parsedDb.video_tags.forEach(vt => {
-          if (!parsedDb.videos.some(v => v.id === vt.videoId)) {
-            fatalErrors.push(`タグ関連情報が参照する動画 ${vt.videoId} が存在しません。`);
+          if (!parsedDb.media_assets.some(v => v.id === vt.mediaAssetId)) {
+            fatalErrors.push(`タグ関連情報が参照する動画 ${vt.mediaAssetId} が存在しません。`);
           }
           if (!parsedDb.tags.some(t => t.id === vt.tagId)) {
             fatalErrors.push(`タグ関連情報が参照するタグ ${vt.tagId} が存在しません。`);
@@ -1327,8 +1701,8 @@ export class AppDatabase {
         }
       });
 
-      if (Array.isArray(parsedDb.videos)) {
-        parsedDb.videos.forEach(v => {
+      if (Array.isArray(parsedDb.media_assets)) {
+        parsedDb.media_assets.forEach(v => {
           if (v.genreId && !parsedDb.genres.some(g => g.id === v.genreId)) {
             fatalErrors.push(`動画 ${v.id} が参照するジャンル ${v.genreId} が存在しません。`);
           }
@@ -1340,13 +1714,13 @@ export class AppDatabase {
           if (!parsedDb.genres.some(g => g.id === t.genreId)) {
             fatalErrors.push(`テンプレート ${t.id} が参照するジャンル ${t.genreId} が存在しません。`);
           }
-        });
-      }
-
-      if (Array.isArray(parsedDb.rating_criteria)) {
-        parsedDb.rating_criteria.forEach(c => {
-          if (!parsedDb.evaluation_templates.some(t => t.id === c.templateId)) {
-            fatalErrors.push(`評価項目 ${c.id} が参照するテンプレート ${c.templateId} が存在しません。`);
+          if (t.criteriaIds) {
+            const ids = t.criteriaIds.split(',').map(s => s.trim()).filter(Boolean);
+            ids.forEach(cid => {
+              if (!parsedDb.rating_criteria.some(c => c.id === cid)) {
+                fatalErrors.push(`テンプレート ${t.id} が参照する評価項目 ${cid} が存在しません。`);
+              }
+            });
           }
         });
       }
@@ -1368,22 +1742,23 @@ export class AppDatabase {
   async restoreWithRollback(parsedDb, images) {
     // 1. Snapshot in-memory collections (deep copy)
     const inMemorySnapshot = {
-      videos: JSON.parse(JSON.stringify(this.videos)),
-      criteria: JSON.parse(JSON.stringify(this.criteria)),
-      reviews: JSON.parse(JSON.stringify(this.reviews)),
-      criterionRatings: JSON.parse(JSON.stringify(this.criterionRatings)),
-      tags: JSON.parse(JSON.stringify(this.tags)),
-      videoTags: JSON.parse(JSON.stringify(this.videoTags)),
-      timelineNotes: JSON.parse(JSON.stringify(this.timelineNotes)),
-      directorySources: JSON.parse(JSON.stringify(this.directorySources)),
-      genres: JSON.parse(JSON.stringify(this.genres)),
-      templates: JSON.parse(JSON.stringify(this.templates))
+      mediaAssets: JSON.parse(JSON.stringify(this.mediaAssets || [])),
+      fileLocations: JSON.parse(JSON.stringify(this.fileLocations || [])),
+      criteria: JSON.parse(JSON.stringify(this.criteria || [])),
+      reviews: JSON.parse(JSON.stringify(this.reviews || [])),
+      criterionRatings: JSON.parse(JSON.stringify(this.criterionRatings || [])),
+      tags: JSON.parse(JSON.stringify(this.tags || [])),
+      videoTags: JSON.parse(JSON.stringify(this.videoTags || [])),
+      timelineNotes: JSON.parse(JSON.stringify(this.timelineNotes || [])),
+      directorySources: JSON.parse(JSON.stringify(this.directorySources || [])),
+      genres: JSON.parse(JSON.stringify(this.genres || [])),
+      templates: JSON.parse(JSON.stringify(this.templates || []))
     };
 
     // 2. Snapshot original localStorage entries
     const originalLocalData = {};
     const localKeys = [
-      'videos', 'rating_criteria', 'video_reviews', 'criterion_ratings',
+      'media_assets', 'file_locations', 'rating_criteria', 'video_reviews', 'criterion_ratings',
       'tags', 'video_tags', 'timeline_notes', 'directory_sources',
       'genres', 'evaluation_templates'
     ];
@@ -1416,13 +1791,14 @@ export class AppDatabase {
       }
 
       // 4b. Assign parsedDb values to in-memory collections
-      this.videos = parsedDb.videos;
-      this.criteria = parsedDb.rating_criteria;
-      this.reviews = parsedDb.video_reviews;
-      this.criterionRatings = parsedDb.criterion_ratings;
-      this.tags = parsedDb.tags;
-      this.videoTags = parsedDb.video_tags;
-      this.timelineNotes = parsedDb.timeline_notes;
+      this.mediaAssets = parsedDb.media_assets || [];
+      this.fileLocations = parsedDb.file_locations || [];
+      this.criteria = parsedDb.rating_criteria || [];
+      this.reviews = parsedDb.video_reviews || [];
+      this.criterionRatings = parsedDb.criterion_ratings || [];
+      this.tags = parsedDb.tags || [];
+      this.videoTags = parsedDb.video_tags || [];
+      this.timelineNotes = parsedDb.timeline_notes || [];
 
       // Reconcile directory sources with existing DirectoryHandles in IndexedDB
       const reconciledSources = [];
@@ -1485,8 +1861,8 @@ export class AppDatabase {
       }
       this.directorySources = reconciledSources;
 
-      this.genres = parsedDb.genres;
-      this.templates = parsedDb.evaluation_templates;
+      this.genres = parsedDb.genres || [];
+      this.templates = parsedDb.evaluation_templates || [];
 
       // 4c. Persist all tables to storage
       this._saveAll();
@@ -1498,7 +1874,8 @@ export class AppDatabase {
 
       // 5. Rollback everything
       // 5a. Rollback in-memory properties
-      this.videos = inMemorySnapshot.videos;
+      this.mediaAssets = inMemorySnapshot.mediaAssets;
+      this.fileLocations = inMemorySnapshot.fileLocations;
       this.criteria = inMemorySnapshot.criteria;
       this.reviews = inMemorySnapshot.reviews;
       this.criterionRatings = inMemorySnapshot.criterionRatings;
@@ -1565,6 +1942,8 @@ export class AppDatabase {
     const genre = {
       id: genreId,
       name: cleanName,
+      displayTitle: cleanName,
+      description: cleanName + 'のジャンル区分',
       displayOrder: maxOrder + 1,
       isActive: true,
       createdAt: new Date().toISOString(),
@@ -1573,10 +1952,12 @@ export class AppDatabase {
     this.genres.push(genre);
     this._saveTable('genres', this.genres);
 
-    const templateId = 'template-' + generateUUID();
+    const templateId = 'temp-' + generateUUID();
     const template = {
       id: templateId,
       genreId: genreId,
+      name: cleanName + 'のテンプレート',
+      criteriaIds: '',
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString()
     };
@@ -1684,8 +2065,8 @@ export class AppDatabase {
     this._saveTable('rating_criteria', this.criteria);
   }
 
-  getCriteriaForVideoReview(videoId) {
-    const video = this.getVideo(videoId);
+  getCriteriaForVideoReview(mediaAssetId) {
+    const video = this.getVideo(mediaAssetId);
     if (!video) return [];
     
     const genreId = video.genreId || 'genre-default';
@@ -1693,7 +2074,7 @@ export class AppDatabase {
     const templateId = template ? template.id : null;
     
     const active = this.criteria.filter(c => c.templateId === templateId && c.isActive);
-    const review = this.getReviewForVideo(videoId);
+    const review = this.getReviewForVideo(mediaAssetId);
     if (!review) {
       return active.sort((a, b) => a.displayOrder - b.displayOrder);
     }
@@ -1726,7 +2107,7 @@ export class AppDatabase {
     if (this.idbAvailable) {
       const allImages = await this.getAllImages();
       const referencedImageIds = new Set();
-      this.videos.forEach(v => {
+      this.mediaAssets.forEach(v => {
         if (v.thumbnailId) referencedImageIds.add(v.thumbnailId);
       });
       this.timelineNotes.forEach(n => {
@@ -1767,4 +2148,301 @@ export class AppDatabase {
       imagesCleanedCount: unreferencedImageIds.length
     };
   }
+}
+
+export const BACKUP_SCHEMA = {
+  "type": "object",
+  "required": [
+    "schemaVersion",
+    "media_assets",
+    "file_locations",
+    "rating_criteria",
+    "video_reviews",
+    "criterion_ratings",
+    "tags",
+    "video_tags",
+    "timeline_notes",
+    "directory_sources",
+    "genres",
+    "evaluation_templates"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "type": "integer",
+      "enum": [3]
+    },
+    "media_assets": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "contentHash",
+          "hashAlgorithm",
+          "quickHash",
+          "hashStatus",
+          "fileSize",
+          "duration",
+          "displayTitle",
+          "genreId",
+          "createdAt",
+          "updatedAt"
+        ],
+        "properties": {
+          "id": { "type": "string", "pattern": "^(vid-|ast-)[a-zA-Z0-9-]{8,64}$" },
+          "contentHash": { "type": "string" },
+          "hashAlgorithm": { "type": "string", "enum": ["SHA-256"] },
+          "quickHash": { "type": "string" },
+          "hashStatus": { "type": "string", "enum": ["pending", "calculating", "completed", "failed"] },
+          "fileSize": { "type": "integer", "minimum": 0 },
+          "duration": { "type": "number", "minimum": 0 },
+          "displayTitle": { "type": "string", "minLength": 1 },
+          "genreId": { "type": "string", "pattern": "^genre-[a-zA-Z0-9-]{1,64}$" },
+          "thumbnailId": { "type": "string" },
+          "createdAt": { "type": "string" },
+          "updatedAt": { "type": "string" }
+        }
+      }
+    },
+    "file_locations": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "mediaAssetId",
+          "relativePath",
+          "fileName",
+          "fileSize",
+          "lastModified",
+          "availabilityStatus",
+          "lastVerifiedAt",
+          "createdAt",
+          "updatedAt"
+        ],
+        "properties": {
+          "id": { "type": "string", "pattern": "^loc-[a-zA-Z0-9-]{8,64}$" },
+          "mediaAssetId": { "type": "string", "pattern": "^(vid-|ast-)[a-zA-Z0-9-]{8,64}$" },
+          "directoryId": { "type": "string" },
+          "relativePath": { "type": "string" },
+          "fileName": { "type": "string" },
+          "fileSize": { "type": "integer", "minimum": 0 },
+          "lastModified": { "type": "integer" },
+          "availabilityStatus": { "type": "string", "enum": ["available", "permission-required", "missing", "unsupported", "scan-error"] },
+          "lastVerifiedAt": { "type": "string" },
+          "createdAt": { "type": "string" },
+          "updatedAt": { "type": "string" }
+        }
+      }
+    },
+    "rating_criteria": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "name", "description"],
+        "properties": {
+          "id": { "type": "string", "pattern": "^crit-[a-zA-Z0-9-]{1,64}$" },
+          "name": { "type": "string", "minLength": 1 },
+          "description": { "type": "string" }
+        }
+      }
+    },
+    "video_reviews": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "mediaAssetId", "createdAt", "updatedAt"],
+        "properties": {
+          "id": { "type": "string", "pattern": "^rev-[a-zA-Z0-9-]{8,64}$" },
+          "mediaAssetId": { "type": "string", "pattern": "^(vid-|ast-)[a-zA-Z0-9-]{8,64}$" },
+          "overallGrade": { "type": ["string", "null"] },
+          "comment": { "type": "string" },
+          "createdAt": { "type": "string" },
+          "updatedAt": { "type": "string" }
+        }
+      }
+    },
+    "criterion_ratings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "videoReviewId", "criterionId", "score"],
+        "properties": {
+          "id": { "type": "string", "pattern": "^rate-[a-zA-Z0-9-]{8,64}$" },
+          "videoReviewId": { "type": "string", "pattern": "^rev-[a-zA-Z0-9-]{8,64}$" },
+          "criterionId": { "type": "string", "pattern": "^crit-[a-zA-Z0-9-]{1,64}$" },
+          "score": { "type": "integer", "minimum": 1, "maximum": 5 }
+        }
+      }
+    },
+    "tags": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "name"],
+        "properties": {
+          "id": { "type": "string", "pattern": "^tag-[a-zA-Z0-9-]{8,64}$" },
+          "name": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    "video_tags": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["mediaAssetId", "tagId"],
+        "properties": {
+          "mediaAssetId": { "type": "string", "pattern": "^(vid-|ast-)[a-zA-Z0-9-]{8,64}$" },
+          "tagId": { "type": "string", "pattern": "^tag-[a-zA-Z0-9-]{8,64}$" }
+        }
+      }
+    },
+    "timeline_notes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "videoReviewId", "mediaAssetId", "timestampSeconds", "timestampLabel", "comment", "createdAt"],
+        "properties": {
+          "id": { "type": "string", "pattern": "^note-[a-zA-Z0-9-]{8,64}$" },
+          "videoReviewId": { "type": "string", "pattern": "^rev-[a-zA-Z0-9-]{8,64}$" },
+          "mediaAssetId": { "type": "string", "pattern": "^(vid-|ast-)[a-zA-Z0-9-]{8,64}$" },
+          "timestampSeconds": { "type": "number", "minimum": 0 },
+          "timestampLabel": { "type": "string" },
+          "comment": { "type": "string" },
+          "thumbnailId": { "type": "string" },
+          "createdAt": { "type": "string" }
+        }
+      }
+    },
+    "directory_sources": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "name", "includeSubdirectories", "permissionStatus", "handleKey", "createdAt", "updatedAt"],
+        "properties": {
+          "id": { "type": "string", "pattern": "^dir-[a-zA-Z0-9-]{8,64}$" },
+          "name": { "type": "string", "minLength": 1 },
+          "includeSubdirectories": { "type": "boolean" },
+          "permissionStatus": { "type": "string", "enum": ["granted", "denied", "prompt", "disconnected"] },
+          "handleKey": { "type": "string" },
+          "createdAt": { "type": "string" },
+          "updatedAt": { "type": "string" }
+        }
+      }
+    },
+    "genres": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "name", "displayTitle", "description", "createdAt", "updatedAt"],
+        "properties": {
+          "id": { "type": "string", "pattern": "^genre-[a-zA-Z0-9-]{1,64}$" },
+          "name": { "type": "string", "minLength": 1 },
+          "displayTitle": { "type": "string", "minLength": 1 },
+          "description": { "type": "string" },
+          "createdAt": { "type": "string" },
+          "updatedAt": { "type": "string" }
+        }
+      }
+    },
+    "evaluation_templates": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "genreId", "name", "criteriaIds", "createdAt", "updatedAt"],
+        "properties": {
+          "id": { "type": "string", "pattern": "^temp-[a-zA-Z0-9-]{1,64}$" },
+          "genreId": { "type": "string", "pattern": "^genre-[a-zA-Z0-9-]{1,64}$" },
+          "name": { "type": "string", "minLength": 1 },
+          "criteriaIds": { "type": "string" },
+          "createdAt": { "type": "string" },
+          "updatedAt": { "type": "string" }
+        }
+      }
+    }
+  }
+};
+
+export function validateDataByJsonSchema(data, schema) {
+  const errors = [];
+  if (!schema || typeof schema !== 'object') {
+    errors.push('JSON Schema is invalid or not loaded.');
+    return errors;
+  }
+  if (schema.required) {
+    for (const reqField of schema.required) {
+      if (!(reqField in data)) {
+        errors.push("ルートオブジェクトに必須フィールド " + reqField + " が存在しません。");
+      }
+    }
+  }
+  if (schema.properties) {
+    for (const [key, propSchema] of Object.entries(schema.properties)) {
+      if (!(key in data)) continue;
+      const value = data[key];
+      if (propSchema.type === 'integer') {
+        if (!Number.isInteger(value)) {
+          errors.push("フィールド " + key + " は整数である必要があります。");
+        }
+      } else if (propSchema.type === 'array') {
+        if (!Array.isArray(value)) {
+          errors.push("フィールド " + key + " は配列である必要があります。");
+          continue;
+        }
+        const itemSchema = propSchema.items;
+        if (itemSchema && itemSchema.properties) {
+          const itemRequired = itemSchema.required || [];
+          const itemProps = itemSchema.properties;
+          value.forEach((item, idx) => {
+            if (typeof item !== 'object' || item === null) {
+              errors.push("配列 " + key + " のインデックス " + idx + " がオブジェクトではありません。");
+              return;
+            }
+            for (const reqProp of itemRequired) {
+              if (!(reqProp in item) || item[reqProp] === undefined || item[reqProp] === null) {
+                errors.push("テーブル " + key + " のレコード (index: " + idx + ") に必須プロパティ " + reqProp + " が存在しません。");
+              }
+            }
+            for (const [propName, rules] of Object.entries(itemProps)) {
+              if (!(propName in item) || item[propName] === undefined || item[propName] === null) {
+                continue;
+              }
+              const val = item[propName];
+              let typeMatch = false;
+              const allowedTypes = Array.isArray(rules.type) ? rules.type : [rules.type];
+              for (const t of allowedTypes) {
+                if (t === 'string' && typeof val === 'string') typeMatch = true;
+                if (t === 'number' && typeof val === 'number') typeMatch = true;
+                if (t === 'integer' && Number.isInteger(val)) typeMatch = true;
+                if (t === 'boolean' && typeof val === 'boolean') typeMatch = true;
+                if (t === 'null' && val === null) typeMatch = true;
+              }
+              if (!typeMatch) {
+                errors.push("テーブル " + key + " (index: " + idx + ") のプロパティ " + propName + " の値が期待される型 [" + allowedTypes.join(', ') + "] ではありません。");
+              }
+              if (rules.enum && !rules.enum.includes(val)) {
+                errors.push("テーブル " + key + " (index: " + idx + ") のプロパティ " + propName + " の値が許可された値 [" + rules.enum.join(', ') + "] ではありません。");
+              }
+              if (rules.pattern && typeof val === 'string') {
+                const regex = new RegExp(rules.pattern);
+                if (!regex.test(val)) {
+                  errors.push("テーブル " + key + " (index: " + idx + ") のプロパティ " + propName + " の形式がパターン \"" + rules.pattern + "\" にマッチしません (値: \"" + val + "\")。");
+                }
+              }
+              if (rules.minimum !== undefined && typeof val === 'number' && val < rules.minimum) {
+                errors.push("テーブル " + key + " (index: " + idx + ") のプロパティ " + propName + " は最小値 " + rules.minimum + " 以上である必要があります。");
+              }
+              if (rules.maximum !== undefined && typeof val === 'number' && val > rules.maximum) {
+                errors.push("テーブル " + key + " (index: " + idx + ") のプロパティ " + propName + " は最大値 " + rules.maximum + " 以下である必要があります。");
+              }
+              if (rules.minLength !== undefined && typeof val === 'string' && val.length < rules.minLength) {
+                errors.push("テーブル " + key + " (index: " + idx + ") のプロパティ " + propName + " は最小文字数 " + rules.minLength + " 以上である必要があります。");
+              }
+            }
+          });
+        }
+      }
+    }
+  }
+  return errors;
 }

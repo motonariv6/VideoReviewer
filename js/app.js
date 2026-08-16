@@ -2816,7 +2816,9 @@ function renderSettingsGenreControls() {
 // Helper to generate a ZIP Blob of the current database state
 async function generateLocalBackupZipBlob() {
   const dbData = {
-    videos: db.videos,
+    schemaVersion: 3,
+    media_assets: db.mediaAssets,
+    file_locations: db.fileLocations,
     rating_criteria: db.criteria,
     video_reviews: db.reviews,
     criterion_ratings: db.criterionRatings,
@@ -2838,15 +2840,13 @@ async function generateLocalBackupZipBlob() {
 
   const manifest = {
     application: "VideoReviewer",
-    schemaVersion: 1,
+    schemaVersion: 3,
     createdAt: new Date().toISOString(),
     appVersion: "1.0.0",
     counts: {
-      videos: db.videos.length,
+      media_assets: db.mediaAssets.length,
+      file_locations: db.fileLocations.length,
       reviews: db.reviews.length,
-      criterionRatings: db.criterionRatings.length,
-      tags: db.tags.length,
-      timelineNotes: db.timelineNotes.length,
       images: images.length
     }
   };
@@ -2952,7 +2952,7 @@ async function handleBackupRestore(e) {
 
     let confirmMsg = `バックアップデータを復元しますか？\n現在のデータは上書きされ、復元されたデータに置き換わります。\n\n` +
       `作成日時: ${new Date(manifest.createdAt).toLocaleString()}\n` +
-      `動画数: ${manifest.counts.videos}本\n` +
+      `動画数: ${manifest.counts.media_assets !== undefined ? manifest.counts.media_assets : manifest.counts.videos}本\n` +
       `レビュー数: ${manifest.counts.reviews}件\n` +
       `画像数: ${manifest.counts.images}枚\n\n`;
 
