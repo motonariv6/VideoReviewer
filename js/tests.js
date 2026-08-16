@@ -1024,9 +1024,12 @@ export async function runTests() {
 
     assert(testDb2.videos.length !== testDb.videos.length, 'Fresh DB should not have the new video');
 
+    assert(testDb2.videos.length !== testDb.videos.length, 'Fresh DB should not have the new video');
+
     // Production validation and restore invocation
-    testDb2.validateBackupData(restoredDbData, manifest, []);
-    await testDb2.restoreWithRollback(restoredDbData, []);
+    const valRes = testDb2.validateBackupData(restoredDbData, manifest, []);
+    assert(valRes.isValid === true, 'Restored data must pass validation');
+    await testDb2.restoreWithRollback(valRes.repairedDb, []);
 
     const restoredVideo = testDb2.getVideo(newVideo.id);
     assert(restoredVideo !== null, 'Restored database must contain our test video');
@@ -1055,91 +1058,68 @@ export async function runTests() {
     };
 
     // 1. Valid case
-    testDb.validateBackupData(validDb, validManifest, []);
+    const res1 = testDb.validateBackupData(validDb, validManifest, []);
+    assert(res1.isValid === true, 'Valid manifest is accepted');
 
     // 2. Invalid schema version
-    try {
-      testDb.validateBackupData(validDb, { ...validManifest, schemaVersion: 2 }, []);
-      assert(false, 'Should throw error for schemaVersion !== 1');
-    } catch (e) {
-      assert(e.message.includes('スキーマバージョン'), 'Rejected invalid schema version');
-    }
+    const res2 = testDb.validateBackupData(validDb, { ...validManifest, schemaVersion: 2 }, []);
+    assert(res2.isValid === false, 'Should be invalid for schemaVersion !== 1');
+    assert(res2.fatalErrors.some(e => e.includes('スキーマバージョン')), 'Rejected invalid schema version');
 
     // 3. Invalid createdAt (not valid ISO timestamp)
-    try {
-      testDb.validateBackupData(validDb, { ...validManifest, createdAt: 'invalid-date' }, []);
-      assert(false, 'Should throw error for invalid createdAt');
-    } catch (e) {
-      assert(e.message.includes('createdAt'), 'Rejected invalid createdAt');
-    }
+    const res3 = testDb.validateBackupData(validDb, { ...validManifest, createdAt: 'invalid-date' }, []);
+    assert(res3.isValid === false, 'Should be invalid for invalid createdAt');
+    assert(res3.fatalErrors.some(e => e.includes('createdAt')), 'Rejected invalid createdAt');
 
     // 4. Missing manifest counts
-    try {
-      testDb.validateBackupData(validDb, { ...validManifest, counts: undefined }, []);
-      assert(false, 'Should throw error for missing counts');
-    } catch (e) {
-      assert(e.message.includes('counts'), 'Rejected missing counts');
-    }
+    const res4 = testDb.validateBackupData(validDb, { ...validManifest, counts: undefined }, []);
+    assert(res4.isValid === false, 'Should be invalid for missing counts');
+    assert(res4.fatalErrors.some(e => e.includes('counts')), 'Rejected missing counts');
 
     // 5. Negative counts in manifest
-    try {
-      testDb.validateBackupData(validDb, {
-        ...validManifest,
-        counts: { videos: -1, reviews: 0, images: 0 }
-      }, []);
-      assert(false, 'Should throw error for negative counts');
-    } catch (e) {
-      assert(e.message.includes('非負の整数'), 'Rejected negative count');
-    }
+    const res5 = testDb.validateBackupData(validDb, {
+      ...validManifest,
+      counts: { videos: -1, reviews: 0, images: 0 }
+    }, []);
+    assert(res5.isValid === false, 'Should be invalid for negative counts');
+    assert(res5.fatalErrors.some(e => e.includes('非負の整数')), 'Rejected negative count');
 
     // 6. manifest counts match database table counts (video count mismatch)
-    try {
-      testDb.validateBackupData(validDb, {
-        ...validManifest,
-        counts: { videos: 1, reviews: 0, images: 0 }
-      }, []);
-      assert(false, 'Should throw error for videos count mismatch');
-    } catch (e) {
-      assert(e.message.includes('動画の件数'), 'Rejected video count mismatch');
-    }
+    const res6 = testDb.validateBackupData(validDb, {
+      ...validManifest,
+      counts: { videos: 1, reviews: 0, images: 0 }
+    }, []);
+    assert(res6.isValid === false, 'Should be invalid for videos count mismatch');
+    assert(res6.fatalErrors.some(e => e.includes('動画の件数')), 'Rejected video count mismatch');
 
     // 7. manifest image count matches ZIP image entries (image count mismatch)
-    try {
-      testDb.validateBackupData(validDb, {
-        ...validManifest,
-        counts: { videos: 0, reviews: 0, images: 1 }
-      }, []);
-      assert(false, 'Should throw error for images count mismatch');
-    } catch (e) {
-      assert(e.message.includes('画像の件数'), 'Rejected image count mismatch');
-    }
+    const res7 = testDb.validateBackupData(validDb, {
+      ...validManifest,
+      counts: { videos: 0, reviews: 0, images: 1 }
+    }, []);
+    assert(res7.isValid === false, 'Should be invalid for images count mismatch');
+    assert(res7.fatalErrors.some(e => e.includes('画像の件数')), 'Rejected image count mismatch');
 
     // 8. duplicate criterion rating ID
     const badCrDb = {
       ...validDb,
       criterion_ratings: [{ id: 'rate-1', score: 3 }, { id: 'rate-1', score: 5 }]
     };
-    try {
-      testDb.validateBackupData(badCrDb, validManifest, []);
-      assert(false, 'Should throw error for duplicate criterion rating ID');
-    } catch (e) {
-      assert(e.message.includes('重複する ID rate-1'), 'Rejected duplicate criterion rating ID');
-    }
+    const res8 = testDb.validateBackupData(badCrDb, validManifest, []);
+    assert(res8.isValid === false, 'Should be invalid for duplicate criterion rating ID');
+    assert(res8.fatalErrors.some(e => e.includes('重複する ID rate-1')), 'Rejected duplicate criterion rating ID');
 
     // 9. missing video thumbnail
     const badVidDb = {
       ...validDb,
       videos: [{ id: 'vid-1', title: 'Test', thumbnailId: 'img-nonexistent' }]
     };
-    try {
-      testDb.validateBackupData(badVidDb, {
-        ...validManifest,
-        counts: { videos: 1, reviews: 0, images: 0 }
-      }, []);
-      assert(false, 'Should throw error for missing video thumbnail');
-    } catch (e) {
-      assert(e.message.includes('ZIP内に存在しません'), 'Rejected missing video thumbnail image');
-    }
+    const res9 = testDb.validateBackupData(badVidDb, {
+      ...validManifest,
+      counts: { videos: 1, reviews: 0, images: 0 }
+    }, []);
+    assert(res9.isValid === false, 'Should be invalid for missing video thumbnail');
+    assert(res9.fatalErrors.some(e => e.includes('ZIP内に存在しません')), 'Rejected missing video thumbnail image');
 
     // 10. missing timeline-note image
     const badNoteDb = {
@@ -1148,26 +1128,20 @@ export async function runTests() {
       video_reviews: [{ id: 'rev-1', videoId: 'vid-1' }],
       videos: [{ id: 'vid-1', title: 'Test' }]
     };
-    try {
-      testDb.validateBackupData(badNoteDb, {
-        ...validManifest,
-        counts: { videos: 1, reviews: 1, images: 0 }
-      }, []);
-      assert(false, 'Should throw error for missing timeline-note image');
-    } catch (e) {
-      assert(e.message.includes('ZIP内に存在しません'), 'Rejected missing note image');
-    }
+    const res10 = testDb.validateBackupData(badNoteDb, {
+      ...validManifest,
+      counts: { videos: 1, reviews: 1, images: 0 }
+    }, []);
+    assert(res10.isValid === false, 'Should be invalid for missing timeline-note image');
+    assert(res10.fatalErrors.some(e => e.includes('ZIP内に存在しません')), 'Rejected missing note image');
 
     // 11. duplicate ZIP image IDs
-    try {
-      testDb.validateBackupData(validDb, {
-        ...validManifest,
-        counts: { videos: 0, reviews: 0, images: 2 }
-      }, ['img-1', 'img-1']);
-      assert(false, 'Should throw error for duplicate ZIP image IDs');
-    } catch (e) {
-      assert(e.message.includes('重複する画像ID'), 'Rejected duplicate ZIP image IDs');
-    }
+    const res11 = testDb.validateBackupData(validDb, {
+      ...validManifest,
+      counts: { videos: 0, reviews: 0, images: 2 }
+    }, ['img-1', 'img-1']);
+    assert(res11.isValid === false, 'Should be invalid for duplicate ZIP image IDs');
+    assert(res11.fatalErrors.some(e => e.includes('重複する画像ID')), 'Rejected duplicate ZIP image IDs');
   });
 
   await runTest('DB Restore atomic transaction rollback under image/write failures', async () => {
@@ -1346,6 +1320,169 @@ export async function runTests() {
     
     const lastOp = sequenceLog[sequenceLog.length - 1];
     assert(lastOp === 'clearHandles', 'Handles cleared at the very end only after successful writes');
+  });
+
+  console.group('Group 8: Legacy Orphan Note Recovery & Clean-up Tests');
+
+  await runTest('Legacy timeline note repair and orphan exclusion validation', async () => {
+    const memoryStorage = new MemoryStorage();
+    const testDb = new AppDatabase(memoryStorage, 'test_v8_legacy_');
+    await testDb.initAsync();
+
+    // Seed base DB state
+    testDb.videos = [{ id: 'vid-1', title: 'Test Video' }];
+    testDb.reviews = [{ id: 'rev-1', videoId: 'vid-1' }];
+    testDb.timelineNotes = [];
+    testDb._saveAll();
+
+    const manifest = {
+      application: 'VideoReviewer',
+      schemaVersion: 1,
+      createdAt: '2026-08-16T12:00:00.000Z',
+      counts: { videos: 1, reviews: 1, images: 2 }
+    };
+
+    const parsedDb = {
+      videos: [{ id: 'vid-1', title: 'Test Video' }],
+      rating_criteria: [],
+      video_reviews: [{ id: 'rev-1', videoId: 'vid-1' }],
+      criterion_ratings: [],
+      tags: [],
+      video_tags: [],
+      timeline_notes: [
+        // 1. Repairable note (missing videoReviewId but has videoId and exactly one review)
+        { id: 'note-repairable', text: 'Repairable', videoId: 'vid-1', videoReviewId: 'nonexistent-rev', thumbnailId: 'img-valid' },
+        // 2. Irreparable note (missing review and videoId)
+        { id: 'note-irreparable', text: 'Irreparable', videoReviewId: 'nonexistent-rev-2', thumbnailId: 'img-orphan' }
+      ],
+      directory_sources: [],
+      genres: [],
+      evaluation_templates: []
+    };
+
+    const zipImageIds = ['img-valid', 'img-orphan'];
+
+    // Validate
+    const validationResult = testDb.validateBackupData(parsedDb, manifest, zipImageIds);
+
+    // Assertions
+    assert(validationResult.isValid === true, 'Validation is valid because warnings are not fatal');
+    assert(validationResult.fatalErrors.length === 0, 'No fatal errors');
+    
+    // Warnings check
+    const repairableWarning = validationResult.warnings.find(w => w.noteId === 'note-repairable');
+    const irreparableWarning = validationResult.warnings.find(w => w.noteId === 'note-irreparable');
+    
+    assert(repairableWarning !== undefined, 'Has warning for repairable note');
+    assert(repairableWarning.repaired === true, 'Repairable note is marked repaired');
+    assert(repairableWarning.repairedToReviewId === 'rev-1', 'Repairable note is mapped to rev-1');
+    
+    assert(irreparableWarning !== undefined, 'Has warning for irreparable note');
+    assert(irreparableWarning.repaired === false, 'Irreparable note is marked not repaired');
+
+    // Repaired DB state check
+    const repairedNotes = validationResult.repairedDb.timeline_notes;
+    assert(repairedNotes.length === 1, 'Irreparable note must be excluded from active timeline_notes');
+    assert(repairedNotes[0].id === 'note-repairable', 'Repairable note must be included');
+    assert(repairedNotes[0].videoReviewId === 'rev-1', 'Repairable note review ID must be updated');
+
+    // Image exclusion check
+    assert(validationResult.requiredImageIds.includes('img-valid') === true, 'img-valid must be included');
+    assert(validationResult.requiredImageIds.includes('img-orphan') === false, 'img-orphan must be excluded');
+
+    // Confirm that other broken references (e.g. broken review video reference) still reject the backup
+    const fatalDb = {
+      ...parsedDb,
+      video_reviews: [{ id: 'rev-1', videoId: 'nonexistent-video' }]
+    };
+    const fatalResult = testDb.validateBackupData(fatalDb, manifest, zipImageIds);
+    assert(fatalResult.isValid === false, 'Broken review video reference must make validation invalid');
+    assert(fatalResult.fatalErrors.length > 0, 'Must contain fatal error messages');
+  });
+
+  await runTest('Legacy note rollback and cancellation safety', async () => {
+    const memoryStorage = new MemoryStorage();
+    const testDb = new AppDatabase(memoryStorage, 'test_v8_cancel_');
+    await testDb.initAsync();
+
+    // Seed original DB state
+    testDb.videos = [{ id: 'vid-original', title: 'Original' }];
+    testDb.timelineNotes = [{ id: 'note-original', videoReviewId: 'rev-original', text: 'Original' }];
+    testDb._saveAll();
+
+    const parsedDb = {
+      videos: [{ id: 'vid-new', title: 'New' }],
+      rating_criteria: [], video_reviews: [], criterion_ratings: [],
+      tags: [], video_tags: [], timeline_notes: [], directory_sources: [],
+      genres: [], evaluation_templates: []
+    };
+
+    const manifest = {
+      application: 'VideoReviewer',
+      schemaVersion: 1,
+      createdAt: '2026-08-16T12:00:00.000Z',
+      counts: { videos: 1, reviews: 0, images: 0 }
+    };
+
+    // Preflight validation - changes nothing
+    testDb.validateBackupData(parsedDb, manifest, []);
+    assert(testDb.videos[0].id === 'vid-original', 'In-memory state remains unchanged before confirmation');
+    assert(memoryStorage.getItem('test_v8_cancel_videos').includes('vid-original'), 'Storage state remains unchanged before confirmation');
+  });
+
+  await runTest('Check & Clean up orphan data action', async () => {
+    const memoryStorage = new MemoryStorage();
+    const testDb = new AppDatabase(memoryStorage, 'test_v8_cleanup_');
+    await testDb.initAsync();
+
+    // Mock IndexedDB
+    testDb.idbAvailable = true;
+    testDb.idb = {
+      store: {
+        'img-referenced': new Blob(['img-ref'], { type: 'image/jpeg' }),
+        'img-referenced-by-note': new Blob(['img-note'], { type: 'image/jpeg' }),
+        'img-orphan': new Blob(['img-orph'], { type: 'image/jpeg' })
+      },
+      getAll: async function(storeName) {
+        if (storeName === 'images') {
+          return Object.keys(this.store).map(id => ({ id, data: this.store[id] }));
+        }
+        return [];
+      },
+      delete: async function(id, storeName) {
+        if (storeName === 'images') delete this.store[id];
+      }
+    };
+
+    // Seed database
+    testDb.videos = [{ id: 'vid-1', title: 'Video', thumbnailId: 'img-referenced' }];
+    testDb.reviews = [{ id: 'rev-1', videoId: 'vid-1' }];
+    testDb.timelineNotes = [
+      // Valid note
+      { id: 'note-valid', videoReviewId: 'rev-1', text: 'Valid', thumbnailId: 'img-referenced-by-note' },
+      // Irreparable orphan note
+      { id: 'note-orphan', videoReviewId: 'nonexistent-rev', text: 'Orphan', thumbnailId: 'img-orphan' }
+    ];
+    testDb._saveAll();
+
+    // Check orphan data
+    const checkResult = await testDb.checkOrphanData();
+    assert(checkResult.orphanNotes.length === 1, 'Should detect exactly 1 orphan note');
+    assert(checkResult.orphanNotes[0].id === 'note-orphan', 'Detected orphan note id matches');
+    assert(checkResult.unreferencedImageIds.length === 1, 'Should detect exactly 1 unreferenced image');
+    assert(checkResult.unreferencedImageIds[0] === 'img-orphan', 'Detected unreferenced image id matches');
+
+    // Clean orphan data
+    const cleanResult = await testDb.cleanOrphanData();
+    assert(cleanResult.notesCleanedCount === 1, 'Cleans 1 note');
+    assert(cleanResult.imagesCleanedCount === 1, 'Cleans 1 image');
+
+    // Verify post-clean state
+    assert(testDb.timelineNotes.length === 1, 'Only 1 note left');
+    assert(testDb.timelineNotes[0].id === 'note-valid', 'Valid note remains');
+    assert(testDb.idb.store['img-referenced'] !== undefined, 'Referenced video image not removed');
+    assert(testDb.idb.store['img-referenced-by-note'] !== undefined, 'Referenced note image not removed');
+    assert(testDb.idb.store['img-orphan'] === undefined, 'Orphan image must be removed');
   });
 
   console.groupEnd();

@@ -1093,38 +1093,42 @@ export class AppDatabase {
 
   // Production Backup integrity validator
   validateBackupData(parsedDb, manifest, imageIds = []) {
+    const fatalErrors = [];
+    const warnings = [];
+
     // 1. Verify manifest exists
     if (!manifest || typeof manifest !== 'object') {
-      throw new Error('マニフェストファイルがありません。');
-    }
-
-    // 2. Verify schemaVersion is exactly a supported integer
-    if (!Number.isInteger(manifest.schemaVersion) || manifest.schemaVersion !== 1) {
-      throw new Error(`サポートされていないスキーマバージョンです: ${manifest.schemaVersion}`);
-    }
-
-    // 3. Verify manifest.createdAt is a valid ISO timestamp
-    if (typeof manifest.createdAt !== 'string' || isNaN(Date.parse(manifest.createdAt))) {
-      throw new Error('マニフェストの作成日時 (createdAt) が不正なフォーマットです。');
-    }
-
-    // 4. Verify counts object and required fields
-    if (!manifest.counts || typeof manifest.counts !== 'object') {
-      throw new Error('マニフェストに counts が存在しません。');
-    }
-    const reqCounts = ['videos', 'reviews', 'images'];
-    reqCounts.forEach(c => {
-      const val = manifest.counts[c];
-      if (typeof val !== 'number' || !Number.isInteger(val) || val < 0) {
-        throw new Error(`manifest.counts.${c} は非負の整数である必要があります。`);
+      fatalErrors.push('マニフェストファイルがありません。');
+    } else {
+      // 2. Verify schemaVersion is exactly a supported integer
+      if (!Number.isInteger(manifest.schemaVersion) || manifest.schemaVersion !== 1) {
+        fatalErrors.push(`サポートされていないスキーマバージョンです: ${manifest.schemaVersion}`);
       }
-    });
+
+      // 3. Verify manifest.createdAt is a valid ISO timestamp
+      if (typeof manifest.createdAt !== 'string' || isNaN(Date.parse(manifest.createdAt))) {
+        fatalErrors.push('マニフェストの作成日時 (createdAt) が不正なフォーマットです。');
+      }
+
+      // 4. Verify counts object and required fields
+      if (!manifest.counts || typeof manifest.counts !== 'object') {
+        fatalErrors.push('マニフェストに counts が存在しません。');
+      } else {
+        const reqCounts = ['videos', 'reviews', 'images'];
+        reqCounts.forEach(c => {
+          const val = manifest.counts[c];
+          if (typeof val !== 'number' || !Number.isInteger(val) || val < 0) {
+            fatalErrors.push(`manifest.counts.${c} は非負の整数である必要があります。`);
+          }
+        });
+      }
+    }
 
     // 5. Validate duplicate ZIP image IDs
     const seenImages = new Set();
     imageIds.forEach(imgId => {
       if (seenImages.has(imgId)) {
-        throw new Error(`ZIP内に重複する画像IDが検出されました: ${imgId}`);
+        fatalErrors.push(`ZIP内に重複する画像IDが検出されました: ${imgId}`);
       }
       seenImages.add(imgId);
     });
@@ -1137,124 +1141,202 @@ export class AppDatabase {
     ];
     tables.forEach(t => {
       if (!parsedDb || !Array.isArray(parsedDb[t])) {
-        throw new Error(`データベーステーブル ${t} が見つからないか、フォーマットが不正です。`);
+        fatalErrors.push(`データベーステーブル ${t} が見つからないか、フォーマットが不正です。`);
       }
     });
 
-    // 7. Match counts
-    if (manifest.counts.videos !== parsedDb.videos.length) {
-      throw new Error('動画の件数がマニフェストのカウントと一致しません。');
-    }
-    if (manifest.counts.reviews !== parsedDb.video_reviews.length) {
-      throw new Error('レビューの件数がマニフェストのカウントと一致しません。');
-    }
-    if (manifest.counts.images !== imageIds.length) {
-      throw new Error('画像の件数がマニフェストのカウントと一致しません。');
+    if (fatalErrors.length === 0) {
+      // 7. Match counts
+      if (manifest.counts.videos !== parsedDb.videos.length) {
+        fatalErrors.push('動画の件数がマニフェストのカウントと一致しません。');
+      }
+      if (manifest.counts.reviews !== parsedDb.video_reviews.length) {
+        fatalErrors.push('レビューの件数がマニフェストのカウントと一致しません。');
+      }
+      if (manifest.counts.images !== imageIds.length) {
+        fatalErrors.push('画像の件数がマニフェストのカウントと一致しません。');
+      }
     }
 
-    // 8. Validate structural existence in genres and templates
-    parsedDb.genres.forEach(g => {
-      if (!g.id || !g.name) {
-        throw new Error('ジャンルテーブルのレコードに不正なデータが含まれています。');
+    if (parsedDb && typeof parsedDb === 'object') {
+      // 8. Validate structural existence in genres and templates
+      if (Array.isArray(parsedDb.genres)) {
+        parsedDb.genres.forEach(g => {
+          if (!g.id || !g.name) {
+            fatalErrors.push('ジャンルテーブル of レコードに不正なデータが含まれています。');
+          }
+        });
       }
-    });
-    parsedDb.evaluation_templates.forEach(t => {
-      if (!t.id || !t.genreId) {
-        throw new Error('評価テンプレートのレコードに不正なデータが含まれています。');
+      if (Array.isArray(parsedDb.evaluation_templates)) {
+        parsedDb.evaluation_templates.forEach(t => {
+          if (!t.id || !t.genreId) {
+            fatalErrors.push('評価テンプレートのレコードに不正なデータが含まれています。');
+          }
+        });
       }
-    });
 
-    // 9. Validate duplicate IDs within each table
-    const tablesWithId = ['videos', 'rating_criteria', 'video_reviews', 'tags', 'timeline_notes', 'directory_sources', 'genres', 'evaluation_templates'];
-    tablesWithId.forEach(t => {
-      const ids = new Set();
-      parsedDb[t].forEach(item => {
-        if (!item.id) throw new Error(`テーブル ${t} にIDのないレコードが存在します。`);
-        if (ids.has(item.id)) throw new Error(`テーブル ${t} に重複するID ${item.id} が検出されました。`);
-        ids.add(item.id);
+      // 9. Validate duplicate IDs within each table
+      const tablesWithId = ['videos', 'rating_criteria', 'video_reviews', 'tags', 'timeline_notes', 'directory_sources', 'genres', 'evaluation_templates'];
+      tablesWithId.forEach(t => {
+        if (Array.isArray(parsedDb[t])) {
+          const ids = new Set();
+          parsedDb[t].forEach(item => {
+            if (!item.id) {
+              fatalErrors.push(`テーブル ${t} にIDのないレコードが存在します。`);
+            } else {
+              if (ids.has(item.id)) {
+                fatalErrors.push(`テーブル ${t} に重複するID ${item.id} が検出されました。`);
+              }
+              ids.add(item.id);
+            }
+          });
+        }
       });
-    });
 
-    // 10. Validate criterion_ratings IDs are present and unique
-    const crIds = new Set();
-    parsedDb.criterion_ratings.forEach(cr => {
-      if (!cr.id) {
-        throw new Error('criterion_ratings のレコードに ID がありません。');
+      // 10. Validate criterion_ratings IDs are present and unique
+      if (Array.isArray(parsedDb.criterion_ratings)) {
+        const crIds = new Set();
+        parsedDb.criterion_ratings.forEach(cr => {
+          if (!cr.id) {
+            fatalErrors.push('criterion_ratings のレコードに ID がありません。');
+          } else {
+            if (crIds.has(cr.id)) {
+              fatalErrors.push(`criterion_ratings に重複する ID ${cr.id} が検出されました。`);
+            }
+            crIds.add(cr.id);
+          }
+        });
       }
-      if (crIds.has(cr.id)) {
-        throw new Error(`criterion_ratings に重複する ID ${cr.id} が検出されました。`);
-      }
-      crIds.add(cr.id);
-    });
+    }
 
-    // 11. Validate every video.thumbnailId references an existing ZIP image
-    parsedDb.videos.forEach(v => {
-      if (v.thumbnailId) {
-        if (!imageIds.includes(v.thumbnailId)) {
-          throw new Error(`動画 ${v.id} が参照するサムネイル画像 ${v.thumbnailId} がZIP内に存在しません。`);
+    // Inspect timeline notes and perform legacy repair/exclusion
+    const keptTimelineNotes = [];
+    if (parsedDb && Array.isArray(parsedDb.timeline_notes) && Array.isArray(parsedDb.video_reviews)) {
+      parsedDb.timeline_notes.forEach(n => {
+        const hasDirectReview = parsedDb.video_reviews.some(r => r.id === n.videoReviewId);
+        if (hasDirectReview) {
+          keptTimelineNotes.push(n);
+        } else {
+          // Attempt safe repair
+          const matchingReviews = n.videoId ? parsedDb.video_reviews.filter(r => r.videoId === n.videoId) : [];
+          if (matchingReviews.length === 1) {
+            const targetReview = matchingReviews[0];
+            const repairedNote = {
+              ...n,
+              videoReviewId: targetReview.id
+            };
+            keptTimelineNotes.push(repairedNote);
+            warnings.push({
+              noteId: n.id,
+              repaired: true,
+              repairedToReviewId: targetReview.id,
+              thumbnailId: n.thumbnailId || null
+            });
+          } else {
+            // Irreparable orphan note
+            warnings.push({
+              noteId: n.id,
+              repaired: false,
+              repairedToReviewId: null,
+              thumbnailId: n.thumbnailId || null
+            });
+          }
         }
+      });
+    }
+
+    // Recalculate required images set based only on kept/valid database objects
+    const requiredImageIdsSet = new Set();
+    if (parsedDb && Array.isArray(parsedDb.videos)) {
+      parsedDb.videos.forEach(v => {
+        if (v.thumbnailId) requiredImageIdsSet.add(v.thumbnailId);
+      });
+    }
+    keptTimelineNotes.forEach(n => {
+      if (n.thumbnailId) requiredImageIdsSet.add(n.thumbnailId);
+    });
+
+    // Check that all required images are present in imageIds
+    requiredImageIdsSet.forEach(imgId => {
+      if (!imageIds.includes(imgId)) {
+        fatalErrors.push(`動画/メモが参照する画像 ${imgId} がZIP内に存在しません。`);
       }
     });
 
-    // 12. Validate every timeline note thumbnailId references an existing ZIP image
-    parsedDb.timeline_notes.forEach(n => {
-      if (n.thumbnailId) {
-        if (!imageIds.includes(n.thumbnailId)) {
-          throw new Error(`タイムラインメモ ${n.id} が参照する画像 ${n.thumbnailId} がZIP内に存在しません。`);
+    // Cross-table references (referential integrity check) on valid kept entries
+    if (parsedDb && fatalErrors.length === 0) {
+      if (Array.isArray(parsedDb.video_reviews)) {
+        parsedDb.video_reviews.forEach(r => {
+          if (!parsedDb.videos.some(v => v.id === r.videoId)) {
+            fatalErrors.push(`レビュー ${r.id} が参照する動画 ${r.videoId} が存在しません。`);
+          }
+        });
+      }
+
+      if (Array.isArray(parsedDb.criterion_ratings)) {
+        parsedDb.criterion_ratings.forEach(cr => {
+          if (!parsedDb.video_reviews.some(r => r.id === cr.videoReviewId)) {
+            fatalErrors.push(`評価スコア ${cr.id} が参照するレビュー ${cr.videoReviewId} が存在しません。`);
+          }
+          if (!parsedDb.rating_criteria.some(c => c.id === cr.criterionId)) {
+            fatalErrors.push(`評価スコア ${cr.id} が参照する評価項目 ${cr.criterionId} が存在しません。`);
+          }
+        });
+      }
+
+      if (Array.isArray(parsedDb.video_tags)) {
+        parsedDb.video_tags.forEach(vt => {
+          if (!parsedDb.videos.some(v => v.id === vt.videoId)) {
+            fatalErrors.push(`タグ関連情報が参照する動画 ${vt.videoId} が存在しません。`);
+          }
+          if (!parsedDb.tags.some(t => t.id === vt.tagId)) {
+            fatalErrors.push(`タグ関連情報が参照するタグ ${vt.tagId} が存在しません。`);
+          }
+        });
+      }
+
+      // Check referential integrity for kept notes
+      keptTimelineNotes.forEach(n => {
+        if (!parsedDb.video_reviews.some(r => r.id === n.videoReviewId)) {
+          fatalErrors.push(`タイムラインメモ ${n.id} が参照するレビュー ${n.videoReviewId} が存在しません。`);
         }
-      }
-    });
+      });
 
-    // 13. Validate cross-table references (referential integrity check)
-    parsedDb.video_reviews.forEach(r => {
-      if (!parsedDb.videos.some(v => v.id === r.videoId)) {
-        throw new Error(`レビュー ${r.id} が参照する動画 ${r.videoId} が存在しません。`);
+      if (Array.isArray(parsedDb.videos)) {
+        parsedDb.videos.forEach(v => {
+          if (v.genreId && !parsedDb.genres.some(g => g.id === v.genreId)) {
+            fatalErrors.push(`動画 ${v.id} が参照するジャンル ${v.genreId} が存在しません。`);
+          }
+        });
       }
-    });
 
-    parsedDb.criterion_ratings.forEach(cr => {
-      if (!parsedDb.video_reviews.some(r => r.id === cr.videoReviewId)) {
-        throw new Error(`評価スコア ${cr.id} が参照するレビュー ${cr.videoReviewId} が存在しません。`);
+      if (Array.isArray(parsedDb.evaluation_templates)) {
+        parsedDb.evaluation_templates.forEach(t => {
+          if (!parsedDb.genres.some(g => g.id === t.genreId)) {
+            fatalErrors.push(`テンプレート ${t.id} が参照するジャンル ${t.genreId} が存在しません。`);
+          }
+        });
       }
-      if (!parsedDb.rating_criteria.some(c => c.id === cr.criterionId)) {
-        throw new Error(`評価スコア ${cr.id} が参照する評価項目 ${cr.criterionId} が存在しません。`);
-      }
-    });
 
-    parsedDb.video_tags.forEach(vt => {
-      if (!parsedDb.videos.some(v => v.id === vt.videoId)) {
-        throw new Error(`タグ関連情報が参照する動画 ${vt.videoId} が存在しません。`);
+      if (Array.isArray(parsedDb.rating_criteria)) {
+        parsedDb.rating_criteria.forEach(c => {
+          if (!parsedDb.evaluation_templates.some(t => t.id === c.templateId)) {
+            fatalErrors.push(`評価項目 ${c.id} が参照するテンプレート ${c.templateId} が存在しません。`);
+          }
+        });
       }
-      if (!parsedDb.tags.some(t => t.id === vt.tagId)) {
-        throw new Error(`タグ関連情報が参照するタグ ${vt.tagId} が存在しません。`);
-      }
-    });
+    }
 
-    parsedDb.timeline_notes.forEach(n => {
-      if (!parsedDb.video_reviews.some(r => r.id === n.videoReviewId)) {
-        throw new Error(`タイムラインメモ ${n.id} が参照するレビュー ${n.videoReviewId} が存在しません。`);
-      }
-    });
-
-    parsedDb.videos.forEach(v => {
-      if (v.genreId && !parsedDb.genres.some(g => g.id === v.genreId)) {
-        throw new Error(`動画 ${v.id} が参照するジャンル ${v.genreId} が存在しません。`);
-      }
-    });
-
-    parsedDb.evaluation_templates.forEach(t => {
-      if (!parsedDb.genres.some(g => g.id === t.genreId)) {
-        throw new Error(`テンプレート ${t.id} が参照するジャンル ${t.genreId} が存在しません。`);
-      }
-    });
-
-    parsedDb.rating_criteria.forEach(c => {
-      if (!parsedDb.evaluation_templates.some(t => t.id === c.templateId)) {
-        throw new Error(`評価項目 ${c.id} が参照するテンプレート ${c.templateId} が存在しません。`);
-      }
-    });
-
-    return true;
+    return {
+      isValid: fatalErrors.length === 0,
+      fatalErrors,
+      warnings,
+      repairedDb: {
+        ...parsedDb,
+        timeline_notes: keptTimelineNotes
+      },
+      requiredImageIds: Array.from(requiredImageIdsSet)
+    };
   }
 
   // Production Restore execution method with full transaction rollback (memory, storage, IndexedDB)
@@ -1555,5 +1637,56 @@ export class AppDatabase {
     });
     
     return result.sort((a, b) => a.displayOrder - b.displayOrder);
+  }
+
+  async checkOrphanData() {
+    const orphanNotes = this.timelineNotes.filter(n => {
+      return !this.reviews.some(r => r.id === n.videoReviewId);
+    });
+
+    const unreferencedImageIds = [];
+    if (this.idbAvailable) {
+      const allImages = await this.getAllImages();
+      const referencedImageIds = new Set();
+      this.videos.forEach(v => {
+        if (v.thumbnailId) referencedImageIds.add(v.thumbnailId);
+      });
+      this.timelineNotes.forEach(n => {
+        const isOrphan = orphanNotes.some(on => on.id === n.id);
+        if (!isOrphan && n.thumbnailId) {
+          referencedImageIds.add(n.thumbnailId);
+        }
+      });
+
+      allImages.forEach(img => {
+        if (!referencedImageIds.has(img.id)) {
+          unreferencedImageIds.push(img.id);
+        }
+      });
+    }
+
+    return {
+      orphanNotes,
+      unreferencedImageIds
+    };
+  }
+
+  async cleanOrphanData() {
+    const { orphanNotes, unreferencedImageIds } = await this.checkOrphanData();
+
+    const orphanNoteIds = orphanNotes.map(n => n.id);
+    this.timelineNotes = this.timelineNotes.filter(n => !orphanNoteIds.includes(n.id));
+    this._saveTable('timeline_notes', this.timelineNotes);
+
+    if (this.idbAvailable) {
+      for (const imgId of unreferencedImageIds) {
+        await this.idb.delete(imgId, 'images');
+      }
+    }
+
+    return {
+      notesCleanedCount: orphanNotes.length,
+      imagesCleanedCount: unreferencedImageIds.length
+    };
   }
 }

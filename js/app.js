@@ -187,7 +187,8 @@ const els = {
   backupRestoreFile: document.getElementById('backup-restore-file'),
   modalBackupProgress: document.getElementById('modal-backup-progress'),
   backupProgressTitle: document.getElementById('backup-progress-title'),
-  backupProgressMsg: document.getElementById('backup-progress-msg')
+  backupProgressMsg: document.getElementById('backup-progress-msg'),
+  btnCleanOrphanData: document.getElementById('btn-clean-orphan-data')
 };
 
 // Initialize Application
@@ -486,6 +487,7 @@ function initEventListeners() {
     els.backupRestoreFile.click();
   });
   els.backupRestoreFile.addEventListener('change', handleBackupRestore);
+  els.btnCleanOrphanData.addEventListener('click', handleCleanOrphanData);
   
   // Directory Settings Buttons
   els.btnFolderSelect.addEventListener('click', handleFolderSelect);
@@ -2865,16 +2867,32 @@ async function handleBackupRestore(e) {
     }
 
     // Invoke production database validation before overwrite confirmation
-    db.validateBackupData(parsedDb, manifest, imageIds);
+    const validationResult = db.validateBackupData(parsedDb, manifest, imageIds);
+    if (!validationResult.isValid) {
+      throw new Error('検証エラーが発生しました:\n' + validationResult.fatalErrors.join('\n'));
+    }
 
     els.modalBackupProgress.classList.remove('open');
 
-    const confirmMsg = `バックアップデータを復元しますか？\n現在のデータは上書きされ、復元されたデータに置き換わります。\n\n` +
+    const irreparableWarnings = validationResult.warnings.filter(w => !w.repaired);
+    const repairedWarnings = validationResult.warnings.filter(w => w.repaired);
+
+    let confirmMsg = `バックアップデータを復元しますか？\n現在のデータは上書きされ、復元されたデータに置き換わります。\n\n` +
       `作成日時: ${new Date(manifest.createdAt).toLocaleString()}\n` +
       `動画数: ${manifest.counts.videos}本\n` +
       `レビュー数: ${manifest.counts.reviews}件\n` +
-      `画像数: ${manifest.counts.images}枚\n\n` +
-      `※ 復元前に現在のデータが自動でダウンロード退避されます。\n本当に復元しますか？`;
+      `画像数: ${manifest.counts.images}枚\n\n`;
+
+    if (repairedWarnings.length > 0) {
+      confirmMsg += `【自動修復】\n旧バージョンの孤立したタイムラインメモ ${repairedWarnings.length} 件を修復しました（レビューへの再紐付け）。\n\n`;
+    }
+
+    if (irreparableWarnings.length > 0) {
+      confirmMsg += `【警告：孤立データの除外】\n以下の修復不可能な孤立したタイムラインメモ ${irreparableWarnings.length} 件を除外して復元します。これらは復旧できません。\n` +
+        `対象ID: ${irreparableWarnings.map(w => w.noteId).join(', ')}\n\n`;
+    }
+
+    confirmMsg += `※ 復元前に現在のデータが自動でダウンロード退避されます。\n本当に復元しますか？`;
 
     if (!confirm(confirmMsg)) {
       els.backupRestoreFile.value = '';
@@ -2927,8 +2945,11 @@ async function handleBackupRestore(e) {
 
       await Promise.all(imagePromises);
 
-      // Invoke production DB restore routine (writes images, then tables, then clears handles, with full rollback on failure)
-      await db.restoreWithRollback(parsedDb, imageEntries);
+      // Exclude orphaned images by filtering based on requiredImageIds from validationResult
+      const filteredImageEntries = imageEntries.filter(img => validationResult.requiredImageIds.includes(img.id));
+
+      // Invoke production DB restore routine with repaired database and filtered images (rollback transaction on failure)
+      await db.restoreWithRollback(validationResult.repairedDb, filteredImageEntries);
 
       els.modalBackupProgress.classList.remove('open');
       showToast('データの復元が完了しました。自動再読み込みします。');
@@ -2947,5 +2968,34 @@ async function handleBackupRestore(e) {
   } finally {
     els.backupRestoreFile.value = '';
     els.modalBackupProgress.classList.remove('open');
+  }
+}
+
+// Clean up orphan timeline notes and unreferenced images
+async function handleCleanOrphanData() {
+  try {
+    const { orphanNotes, unreferencedImageIds } = await db.checkOrphanData();
+    
+    if (orphanNotes.length === 0 && unreferencedImageIds.length === 0) {
+      alert('クリーンアップが必要な孤立データ（メモ・画像）は見つかりませんでした。');
+      return;
+    }
+
+    let confirmMsg = 'データベース内の孤立データをクリーンアップしますか？\n\n' +
+      `孤立したタイムラインメモ: ${orphanNotes.length} 件\n` +
+      `参照されていない画像: ${unreferencedImageIds.length} 枚\n\n` +
+      '※ この操作は元に戻せません。本当に実行しますか？';
+
+    if (!confirm(confirmMsg)) {
+      return;
+    }
+
+    const { notesCleanedCount, imagesCleanedCount } = await db.cleanOrphanData();
+    
+    showToast(`クリーンアップを完了しました（タイムラインメモ: ${notesCleanedCount}件、画像: ${imagesCleanedCount}枚）。`);
+    renderLibrary();
+  } catch (err) {
+    console.error(err);
+    alert(`クリーンアップに失敗しました: ${err.message}`);
   }
 }
