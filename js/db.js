@@ -261,6 +261,36 @@ export class IndexedDBStore {
       }
     });
   }
+
+  clearImages() {
+    return new Promise((resolve, reject) => {
+      if (!this.db) return reject(new Error('Database not initialized'));
+      try {
+        const tx = this.db.transaction('images', 'readwrite');
+        const store = tx.objectStore('images');
+        const req = store.clear();
+        req.onsuccess = () => resolve();
+        req.onerror = (e) => reject(new Error('Failed to clear images: ' + e.target.error?.message));
+      } catch (err) {
+        reject(err);
+      }
+    });
+  }
+
+  clearHandles() {
+    return new Promise((resolve, reject) => {
+      if (!this.db) return reject(new Error('Database not initialized'));
+      try {
+        const tx = this.db.transaction('handles', 'readwrite');
+        const store = tx.objectStore('handles');
+        const req = store.clear();
+        req.onsuccess = () => resolve();
+        req.onerror = (e) => reject(new Error('Failed to clear handles: ' + e.target.error?.message));
+      } catch (err) {
+        reject(err);
+      }
+    });
+  }
 }
 
 // --- DATABASE LAYER ---
@@ -1032,6 +1062,160 @@ export class AppDatabase {
   async getAllImages() {
     if (!this.idbAvailable) return [];
     return await this.idb.getAll('images');
+  }
+
+  // --- DIRECTORY HANDLE BULK EXPORT OPERATION ---
+
+  async getAllDirectoryHandles() {
+    if (!this.idbAvailable) return [];
+    return await this.idb.getAll('handles');
+  }
+
+  _saveAll() {
+    this._saveTable('videos', this.videos);
+    this._saveTable('rating_criteria', this.criteria);
+    this._saveTable('video_reviews', this.reviews);
+    this._saveTable('criterion_ratings', this.criterionRatings);
+    this._saveTable('tags', this.tags);
+    this._saveTable('video_tags', this.videoTags);
+    this._saveTable('timeline_notes', this.timelineNotes);
+    this._saveTable('directory_sources', this.directorySources);
+    this._saveTable('genres', this.genres);
+    this._saveTable('evaluation_templates', this.templates);
+  }
+
+  // Production Backup integrity validator
+  validateBackupData(parsedDb, manifest) {
+    // 1. Verify schemaVersion is exactly a supported integer
+    if (!manifest || typeof manifest !== 'object') {
+      throw new Error('マニフェストファイルがありません。');
+    }
+    if (!Number.isInteger(manifest.schemaVersion) || manifest.schemaVersion !== 1) {
+      throw new Error(`サポートされていないスキーマバージョンです: ${manifest.schemaVersion}`);
+    }
+
+    // 2. Validate tables presence and types
+    const tables = [
+      'videos', 'rating_criteria', 'video_reviews', 'criterion_ratings',
+      'tags', 'video_tags', 'timeline_notes', 'directory_sources',
+      'genres', 'evaluation_templates'
+    ];
+    tables.forEach(t => {
+      if (!parsedDb || !Array.isArray(parsedDb[t])) {
+        throw new Error(`データベーステーブル ${t} が見つからないか、フォーマットが不正です。`);
+      }
+    });
+
+    // 3. Validate structural existence in genres and templates
+    parsedDb.genres.forEach(g => {
+      if (!g.id || !g.name) {
+        throw new Error('ジャンルテーブルのレコードに不正なデータが含まれています。');
+      }
+    });
+    parsedDb.evaluation_templates.forEach(t => {
+      if (!t.id || !t.genreId) {
+        throw new Error('評価テンプレートのレコードに不正なデータが含まれています。');
+      }
+    });
+
+    // 4. Validate duplicate IDs within each table
+    const tablesWithId = ['videos', 'rating_criteria', 'video_reviews', 'tags', 'timeline_notes', 'directory_sources', 'genres', 'evaluation_templates'];
+    tablesWithId.forEach(t => {
+      const ids = new Set();
+      parsedDb[t].forEach(item => {
+        if (!item.id) throw new Error(`テーブル ${t} にIDのないレコードが存在します。`);
+        if (ids.has(item.id)) throw new Error(`テーブル ${t} に重複するID ${item.id} が検出されました。`);
+        ids.add(item.id);
+      });
+    });
+
+    // 5. Validate cross-table references (referential integrity check)
+    parsedDb.video_reviews.forEach(r => {
+      if (!parsedDb.videos.some(v => v.id === r.videoId)) {
+        throw new Error(`レビュー ${r.id} が参照する動画 ${r.videoId} が存在しません。`);
+      }
+    });
+
+    parsedDb.criterion_ratings.forEach(cr => {
+      if (!parsedDb.video_reviews.some(r => r.id === cr.videoReviewId)) {
+        throw new Error(`評価スコア ${cr.id} が参照するレビュー ${cr.videoReviewId} が存在しません。`);
+      }
+      if (!parsedDb.rating_criteria.some(c => c.id === cr.criterionId)) {
+        throw new Error(`評価スコア ${cr.id} が参照する評価項目 ${cr.criterionId} が存在しません。`);
+      }
+    });
+
+    parsedDb.video_tags.forEach(vt => {
+      if (!parsedDb.videos.some(v => v.id === vt.videoId)) {
+        throw new Error(`タグ関連情報が参照する動画 ${vt.videoId} が存在しません。`);
+      }
+      if (!parsedDb.tags.some(t => t.id === vt.tagId)) {
+        throw new Error(`タグ関連情報が参照するタグ ${vt.tagId} が存在しません。`);
+      }
+    });
+
+    parsedDb.timeline_notes.forEach(n => {
+      if (!parsedDb.video_reviews.some(r => r.id === n.videoReviewId)) {
+        throw new Error(`タイムラインメモ ${n.id} が参照するレビュー ${n.videoReviewId} が存在しません。`);
+      }
+    });
+
+    parsedDb.videos.forEach(v => {
+      if (v.genreId && !parsedDb.genres.some(g => g.id === v.genreId)) {
+        throw new Error(`動画 ${v.id} が参照するジャンル ${v.genreId} が存在しません。`);
+      }
+    });
+
+    parsedDb.evaluation_templates.forEach(t => {
+      if (!parsedDb.genres.some(g => g.id === t.genreId)) {
+        throw new Error(`テンプレート ${t.id} が参照するジャンル ${t.genreId} が存在しません。`);
+      }
+    });
+
+    parsedDb.rating_criteria.forEach(c => {
+      if (!parsedDb.evaluation_templates.some(t => t.id === c.templateId)) {
+        throw new Error(`評価項目 ${c.id} が参照するテンプレート ${c.templateId} が存在しません。`);
+      }
+    });
+
+    return true;
+  }
+
+  // Production Restore execution method
+  async executeRestore(parsedDb, images) {
+    // 1. Import images first
+    if (this.idbAvailable) {
+      await this.idb.clearImages();
+      const promises = images.map(img => this.idb.put(img.id, img.data, 'images'));
+      await Promise.all(promises);
+    }
+
+    // 2. Save localStorage tables
+    this.videos = parsedDb.videos;
+    this.criteria = parsedDb.rating_criteria;
+    this.reviews = parsedDb.video_reviews;
+    this.criterionRatings = parsedDb.criterion_ratings;
+    this.tags = parsedDb.tags;
+    this.videoTags = parsedDb.video_tags;
+    this.timelineNotes = parsedDb.timeline_notes;
+    
+    // Disconnect folder sources (reset permissionStatus to prompt)
+    this.directorySources = (parsedDb.directory_sources || []).map(src => ({
+      ...src,
+      permissionStatus: 'prompt'
+    }));
+    
+    this.genres = parsedDb.genres;
+    this.templates = parsedDb.evaluation_templates;
+
+    this._saveAll();
+
+    // 3. Clear handles ONLY after all other writes succeed
+    if (this.idbAvailable) {
+      await this.idb.clearHandles();
+    }
+
+    return true;
   }
 
   // --- GENRE OPERATIONS ---

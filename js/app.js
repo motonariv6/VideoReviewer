@@ -2738,6 +2738,65 @@ function renderSettingsGenreControls() {
   els.settingsBtnGenreDown.disabled = (idx === -1 || idx === genres.length - 1);
 }
 
+// Helper to generate a ZIP Blob of the current database state
+async function generateLocalBackupZipBlob() {
+  const dbData = {
+    videos: db.videos,
+    rating_criteria: db.criteria,
+    video_reviews: db.reviews,
+    criterion_ratings: db.criterionRatings,
+    tags: db.tags,
+    video_tags: db.videoTags,
+    timeline_notes: db.timelineNotes,
+    directory_sources: db.directorySources,
+    genres: db.genres,
+    evaluation_templates: db.templates
+  };
+
+  // Strip DirectoryHandles and reset status to 'prompt'
+  dbData.directory_sources = dbData.directory_sources.map(src => ({
+    ...src,
+    permissionStatus: 'prompt'
+  }));
+
+  const images = await db.getAllImages();
+
+  const manifest = {
+    application: "VideoReviewer",
+    schemaVersion: 1,
+    createdAt: new Date().toISOString(),
+    appVersion: "1.0.0",
+    counts: {
+      videos: db.videos.length,
+      reviews: db.reviews.length,
+      criterionRatings: db.criterionRatings.length,
+      tags: db.tags.length,
+      timelineNotes: db.timelineNotes.length,
+      images: images.length
+    }
+  };
+
+  const zip = new JSZip();
+  zip.file('manifest.json', JSON.stringify(manifest, null, 2));
+  zip.file('database.json', JSON.stringify(dbData, null, 2));
+
+  const imgFolder = zip.folder('images');
+  const thumbFolder = imgFolder.folder('thumbnails');
+  const noteFolder = imgFolder.folder('timeline-notes');
+
+  images.forEach(image => {
+    if (image.id.startsWith('img-vid-')) {
+      thumbFolder.file(image.id, image.data);
+    } else if (image.id.startsWith('img-note-')) {
+      noteFolder.file(image.id, image.data);
+    } else {
+      thumbFolder.file(image.id, image.data);
+    }
+  });
+
+  return await zip.generateAsync({ type: 'blob' });
+}
+
 // DB Backup Zip Creator
 async function handleBackupCreate() {
   els.backupProgressTitle.textContent = 'バックアップを作成中...';
@@ -2745,61 +2804,7 @@ async function handleBackupCreate() {
   els.modalBackupProgress.classList.add('open');
 
   try {
-    const dbData = {
-      videos: db.videos,
-      rating_criteria: db.criteria,
-      video_reviews: db.reviews,
-      criterion_ratings: db.criterionRatings,
-      tags: db.tags,
-      video_tags: db.videoTags,
-      timeline_notes: db.timelineNotes,
-      directory_sources: db.directorySources,
-      genres: db.genres,
-      evaluation_templates: db.templates
-    };
-
-    // Strip DirectoryHandles and reset status to 'prompt'
-    dbData.directory_sources = dbData.directory_sources.map(src => ({
-      ...src,
-      permissionStatus: 'prompt'
-    }));
-
-    const images = await db.getAllImages();
-
-    const manifest = {
-      application: "VideoReviewer",
-      schemaVersion: 1,
-      createdAt: new Date().toISOString(),
-      appVersion: "1.0.0",
-      counts: {
-        videos: db.videos.length,
-        reviews: db.reviews.length,
-        criterionRatings: db.criterionRatings.length,
-        tags: db.tags.length,
-        timelineNotes: db.timelineNotes.length,
-        images: images.length
-      }
-    };
-
-    const zip = new JSZip();
-    zip.file('manifest.json', JSON.stringify(manifest, null, 2));
-    zip.file('database.json', JSON.stringify(dbData, null, 2));
-
-    const imgFolder = zip.folder('images');
-    const thumbFolder = imgFolder.folder('thumbnails');
-    const noteFolder = imgFolder.folder('timeline-notes');
-
-    images.forEach(image => {
-      if (image.id.startsWith('img-vid-')) {
-        thumbFolder.file(image.id, image.data);
-      } else if (image.id.startsWith('img-note-')) {
-        noteFolder.file(image.id, image.data);
-      } else {
-        thumbFolder.file(image.id, image.data);
-      }
-    });
-
-    const content = await zip.generateAsync({ type: 'blob' });
+    const content = await generateLocalBackupZipBlob();
 
     const link = document.createElement('a');
     link.href = URL.createObjectURL(content);
@@ -2841,17 +2846,11 @@ async function handleBackupRestore(e) {
     if (manifest.application !== 'VideoReviewer') {
       throw new Error('VideoReviewerのバックアップファイルではありません。');
     }
-    if (manifest.schemaVersion > 1) {
-      throw new Error('対応していない新しいスキーマバージョンです。アプリを更新してください。');
-    }
 
     const parsedDb = JSON.parse(await dbFile.async('string'));
-    const tables = ['videos', 'rating_criteria', 'video_reviews', 'criterion_ratings', 'tags', 'video_tags', 'timeline_notes', 'directory_sources'];
-    tables.forEach(t => {
-      if (!Array.isArray(parsedDb[t])) {
-        throw new Error(`データベーステーブル ${t} のフォーマットが不正です。`);
-      }
-    });
+
+    // Invoke production database validation before overwrite confirmation
+    db.validateBackupData(parsedDb, manifest);
 
     els.modalBackupProgress.classList.remove('open');
 
@@ -2860,18 +2859,29 @@ async function handleBackupRestore(e) {
       `動画数: ${manifest.counts.videos}本\n` +
       `レビュー数: ${manifest.counts.reviews}件\n` +
       `画像数: ${manifest.counts.images}枚\n\n` +
-      `※ 復元後は再度動画フォルダとの接続設定が必要です。\n本当に復元しますか？`;
+      `※ 復元前に現在のデータが自動でダウンロード退避されます。\n本当に復元しますか？`;
 
     if (!confirm(confirmMsg)) {
       els.backupRestoreFile.value = '';
       return;
     }
 
-    els.backupProgressTitle.textContent = 'データを復元中...';
-    els.backupProgressMsg.textContent = 'データベースの上書き処理を実行しています。';
+    // Phase 1: Generate safety download ZIP of current state before restore starts
+    els.backupProgressTitle.textContent = '現在のデータを退避中...';
+    els.backupProgressMsg.textContent = '上書き前のデータを安全にZIPへ書き出しています。';
     els.modalBackupProgress.classList.add('open');
 
-    // 1. In-memory backup of current LocalStorage and IndexedDB images for atomic rollback
+    const safetyZipBlob = await generateLocalBackupZipBlob();
+    const safetyLink = document.createElement('a');
+    safetyLink.href = URL.createObjectURL(safetyZipBlob);
+    const safetyTimestamp = new Date().toISOString().replace(/[:T]/g, '-').slice(0, 19);
+    safetyLink.download = `VideoReviewer-safety-backup-before-restore-${safetyTimestamp}.zip`;
+    safetyLink.click();
+
+    // Phase 2: Capture current state in memory for atomic rollback. Failures abort before writing anything.
+    els.backupProgressTitle.textContent = '復元を初期化中...';
+    els.backupProgressMsg.textContent = '現在のバックアップイメージを作成しています。';
+
     const originalTables = {};
     const localKeys = [
       'videos', 'rating_criteria', 'video_reviews', 'criterion_ratings',
@@ -2882,30 +2892,27 @@ async function handleBackupRestore(e) {
       originalTables[k] = localStorage.getItem(`vreview_${k}`);
     });
 
-    let originalImages = [];
-    try {
-      originalImages = await db.getAllImages();
-    } catch (err) {
-      console.warn('Failed to retrieve original images for rollback backup:', err.message);
-    }
+    const originalImages = await db.getAllImages();
+    const originalHandles = await db.getAllDirectoryHandles();
 
-    // 2. Perform write operations inside nested try block to catch failures and trigger rollback
-    try {
-      // Clear current IndexedDB images and directory handles
-      await db.idb.clear();
+    els.backupProgressTitle.textContent = 'データを復元中...';
+    els.backupProgressMsg.textContent = 'データベースの上書き処理を実行しています。';
 
-      // Extract images from ZIP and write them to IndexedDB
+    // Phase 3: Execute write sequence inside try-catch to trigger rollback on failures
+    try {
+      // Extract images from ZIP
       const thumbnailsFolder = zip.folder('images/thumbnails');
       const notesFolder = zip.folder('images/timeline-notes');
       
-      const promises = [];
+      const imageEntries = [];
+      const imagePromises = [];
       
       if (thumbnailsFolder) {
         thumbnailsFolder.forEach((relativePath, zipEntry) => {
           if (!zipEntry.dir) {
-            promises.push(
+            imagePromises.push(
               zipEntry.async('blob').then(blob => {
-                return db.putImage(relativePath, blob);
+                imageEntries.push({ id: relativePath, data: blob });
               })
             );
           }
@@ -2915,37 +2922,19 @@ async function handleBackupRestore(e) {
       if (notesFolder) {
         notesFolder.forEach((relativePath, zipEntry) => {
           if (!zipEntry.dir) {
-            promises.push(
+            imagePromises.push(
               zipEntry.async('blob').then(blob => {
-                return db.putImage(relativePath, blob);
+                imageEntries.push({ id: relativePath, data: blob });
               })
             );
           }
         });
       }
 
-      await Promise.all(promises);
+      await Promise.all(imagePromises);
 
-      // Overwrite local storage tables
-      const backupGenres = parsedDb.genres || [];
-      const backupTemplates = parsedDb.evaluation_templates || [];
-
-      localStorage.setItem('vreview_videos', JSON.stringify(parsedDb.videos));
-      localStorage.setItem('vreview_rating_criteria', JSON.stringify(parsedDb.rating_criteria));
-      localStorage.setItem('vreview_video_reviews', JSON.stringify(parsedDb.video_reviews));
-      localStorage.setItem('vreview_criterion_ratings', JSON.stringify(parsedDb.criterion_ratings));
-      localStorage.setItem('vreview_tags', JSON.stringify(parsedDb.tags));
-      localStorage.setItem('vreview_video_tags', JSON.stringify(parsedDb.video_tags));
-      localStorage.setItem('vreview_timeline_notes', JSON.stringify(parsedDb.timeline_notes));
-      
-      const disconnectedSources = (parsedDb.directory_sources || []).map(src => ({
-        ...src,
-        permissionStatus: 'prompt'
-      }));
-      localStorage.setItem('vreview_directory_sources', JSON.stringify(disconnectedSources));
-      
-      localStorage.setItem('vreview_genres', JSON.stringify(backupGenres));
-      localStorage.setItem('vreview_evaluation_templates', JSON.stringify(backupTemplates));
+      // Invoke production DB restore routine (writes images, then tables, then clears handles)
+      await db.executeRestore(parsedDb, imageEntries);
 
       els.modalBackupProgress.classList.remove('open');
       showToast('データの復元が完了しました。自動再読み込みします。');
@@ -2956,10 +2945,17 @@ async function handleBackupRestore(e) {
     } catch (innerErr) {
       console.error('Error during write phase, triggering rollback:', innerErr);
       
-      // Rollback IndexedDB images
-      await db.idb.clear();
-      const rollbackPromises = originalImages.map(img => db.putImage(img.id, img.data));
-      await Promise.all(rollbackPromises);
+      // Rollback IndexedDB images and handles
+      if (db.idbAvailable) {
+        await db.idb.clearImages();
+        await db.idb.clearHandles();
+
+        const rollbackImgPromises = originalImages.map(img => db.putImage(img.id, img.data));
+        await Promise.all(rollbackImgPromises);
+
+        const rollbackHandlePromises = originalHandles.map(h => db.putDirectoryHandle(h.id, h.data));
+        await Promise.all(rollbackHandlePromises);
+      }
       
       // Rollback LocalStorage tables
       localKeys.forEach(k => {
