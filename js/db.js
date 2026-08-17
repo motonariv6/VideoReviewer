@@ -1213,6 +1213,14 @@ export class AppDatabase {
     const snapVideoTags = JSON.parse(JSON.stringify(this.videoTags));
     const snapNotes = JSON.parse(JSON.stringify(this.timelineNotes));
 
+    const keys = ['media_assets', 'file_locations', 'video_reviews', 'criterion_ratings', 'video_tags', 'timeline_notes'];
+    const storageSnap = {};
+    if (this.storage) {
+      keys.forEach(k => {
+        storageSnap[k] = this.storage.getItem(`${this.prefix}${k}`);
+      });
+    }
+
     try {
       const target = this.mediaAssets.find(a => a.id === canonicalTargetId);
       const source = this.mediaAssets.find(a => a.id === canonicalSourceId);
@@ -1282,6 +1290,17 @@ export class AppDatabase {
       this.criterionRatings = snapRatings;
       this.videoTags = snapVideoTags;
       this.timelineNotes = snapNotes;
+
+      if (this.storage) {
+        keys.forEach(k => {
+          const val = storageSnap[k];
+          if (val === null) {
+            this.storage.removeItem(`${this.prefix}${k}`);
+          } else {
+            this.storage.setItem(`${this.prefix}${k}`, val);
+          }
+        });
+      }
       throw err;
     }
   }
@@ -1294,43 +1313,130 @@ export class AppDatabase {
       return { merged: false, conflict: false };
     }
 
-    const existingAsset = this.mediaAssets.find(a => a.contentHash === contentHash && a.id !== video.id);
+    const snapAssets = JSON.parse(JSON.stringify(this.mediaAssets));
+    const storageSnap = this.storage ? this.storage.getItem(`${this.prefix}media_assets`) : null;
 
-    if (existingAsset) {
-      const mergeResult = await this.mergeMediaAssets(existingAsset.id, video.id);
-      if (mergeResult.merged) {
-        return { merged: true, conflict: false, targetAssetId: mergeResult.targetAssetId, sourceAssetId: mergeResult.sourceAssetId };
-      } else if (mergeResult.conflict) {
-        const conflictGroupId = existingAsset.identityConflictGroupId || ('conflict-' + generateUUID());
-        
-        existingAsset.identityStatus = 'conflict';
-        existingAsset.identityConflictGroupId = conflictGroupId;
-        existingAsset.updatedAt = new Date().toISOString();
+    try {
+      const existingAsset = this.mediaAssets.find(a => a.contentHash === contentHash && a.id !== video.id);
 
-        const currentAsset = this.mediaAssets.find(a => a.id === video.id);
-        if (currentAsset) {
-          currentAsset.contentHash = contentHash;
-          currentAsset.hashStatus = 'completed';
-          currentAsset.identityStatus = 'conflict';
-          currentAsset.identityConflictGroupId = conflictGroupId;
-          currentAsset.updatedAt = new Date().toISOString();
+      if (existingAsset) {
+        const mergeResult = await this.mergeMediaAssets(existingAsset.id, video.id);
+        if (mergeResult.merged) {
+          return { merged: true, conflict: false, targetAssetId: mergeResult.targetAssetId, sourceAssetId: mergeResult.sourceAssetId };
+        } else if (mergeResult.conflict) {
+          const conflictGroupId = existingAsset.identityConflictGroupId || ('conflict-' + generateUUID());
+          
+          existingAsset.identityStatus = 'conflict';
+          existingAsset.identityConflictGroupId = conflictGroupId;
+          existingAsset.updatedAt = new Date().toISOString();
+
+          const currentAsset = this.mediaAssets.find(a => a.id === video.id);
+          if (currentAsset) {
+            currentAsset.contentHash = contentHash;
+            currentAsset.hashStatus = 'completed';
+            currentAsset.identityStatus = 'conflict';
+            currentAsset.identityConflictGroupId = conflictGroupId;
+            currentAsset.updatedAt = new Date().toISOString();
+          }
+
+          this._saveTable('media_assets', this.mediaAssets);
+          return { merged: false, conflict: true, conflictGroupId, targetAssetId: existingAsset.id, sourceAssetId: video.id, reason: mergeResult.reason };
+        }
+      }
+
+      const currentAsset = this.mediaAssets.find(a => a.id === video.id);
+      if (currentAsset) {
+        currentAsset.contentHash = contentHash;
+        currentAsset.hashStatus = 'completed';
+        currentAsset.identityStatus = 'normal';
+        currentAsset.identityConflictGroupId = null;
+        currentAsset.updatedAt = new Date().toISOString();
+        this._saveTable('media_assets', this.mediaAssets);
+      }
+      return { merged: false, conflict: false };
+    } catch (err) {
+      this.mediaAssets = snapAssets;
+      if (this.storage) {
+        if (storageSnap === null) {
+          this.storage.removeItem(`${this.prefix}media_assets`);
+        } else {
+          this.storage.setItem(`${this.prefix}media_assets`, storageSnap);
+        }
+      }
+      throw err;
+    }
+  }
+
+  async performVerifiedVideoHashing(videoId, resolveFileObjFn, computeHashFn) {
+    const video = this.getVideo(videoId);
+    if (!video) {
+      throw new Error('Video not found: ' + videoId);
+    }
+
+    const locations = this.fileLocations.filter(loc => loc.mediaAssetId === video.id);
+    if (locations.length === 0) {
+      await this.updateVideo(video.id, { hashStatus: 'failed' });
+      return { status: 'failed', reason: 'no-locations' };
+    }
+
+    const sortedLocations = [...locations].sort((a, b) => {
+      if (a.availabilityStatus === 'available' && b.availabilityStatus !== 'available') return -1;
+      if (a.availabilityStatus !== 'available' && b.availabilityStatus === 'available') return 1;
+      return 0;
+    });
+
+    let file = null;
+    let successfulLoc = null;
+
+    for (const loc of sortedLocations) {
+      try {
+        const fileObj = await resolveFileObjFn(loc);
+        if (!fileObj) continue;
+
+        if (fileObj.size !== loc.fileSize || fileObj.lastModified !== loc.lastModified) {
+          console.warn(`File properties changed before hashing. Expected size: ${loc.fileSize}, got: ${fileObj.size}. Expected modified: ${loc.lastModified}, got: ${fileObj.lastModified}`);
+          continue;
         }
 
-        this._saveTable('media_assets', this.mediaAssets);
-        return { merged: false, conflict: true, conflictGroupId, targetAssetId: existingAsset.id, sourceAssetId: video.id };
+        file = fileObj;
+        successfulLoc = loc;
+        break;
+      } catch (err) {
+        console.warn(`Failed to resolve location ${loc.id}:`, err);
       }
     }
 
-    const currentAsset = this.mediaAssets.find(a => a.id === video.id);
-    if (currentAsset) {
-      currentAsset.contentHash = contentHash;
-      currentAsset.hashStatus = 'completed';
-      currentAsset.identityStatus = 'normal';
-      currentAsset.identityConflictGroupId = null;
-      currentAsset.updatedAt = new Date().toISOString();
-      this._saveTable('media_assets', this.mediaAssets);
+    if (!file || !successfulLoc) {
+      await this.updateVideo(video.id, { hashStatus: 'failed' });
+      return { status: 'failed', reason: 'all-locations-failed' };
     }
-    return { merged: false, conflict: false };
+
+    await this.updateVideo(video.id, { hashStatus: 'calculating' });
+
+    let hash;
+    try {
+      hash = await computeHashFn(file);
+    } catch (err) {
+      console.error(`Hashing failed during calculation for video ${video.id}:`, err);
+      await this.updateVideo(video.id, { hashStatus: 'failed' });
+      return { status: 'failed', reason: 'hash-error', error: err };
+    }
+
+    try {
+      const freshFile = await resolveFileObjFn(successfulLoc);
+      if (!freshFile || freshFile.size !== file.size || freshFile.lastModified !== file.lastModified) {
+        console.warn(`File properties changed during hashing! Discarding result.`);
+        await this.updateVideo(video.id, { hashStatus: 'pending' });
+        return { status: 'discarded', reason: 'metadata-changed' };
+      }
+    } catch (err) {
+      console.warn(`Failed to verify file properties after hashing:`, err);
+      await this.updateVideo(video.id, { hashStatus: 'pending' });
+      return { status: 'discarded', reason: 'post-verify-failed', error: err };
+    }
+
+    const result = await this.completeVideoHashing(video.id, hash);
+    return { status: 'success', hash, ...result };
   }
 
   async updateVideo(id, updates) {
@@ -1760,13 +1866,43 @@ export class AppDatabase {
     }
   }
 
+  normalizeBackupData(inputDb) {
+    if (!inputDb || typeof inputDb !== 'object') {
+      return {};
+    }
+    const rawDb = JSON.parse(JSON.stringify(inputDb));
+
+    if (Array.isArray(rawDb.media_assets)) {
+      rawDb.media_assets.forEach(a => {
+        if (a.displayTitle === undefined) {
+          a.displayTitle = null;
+        } else {
+          a.displayTitle = normalizeDisplayTitle(a.displayTitle);
+        }
+        if (a.identityStatus === undefined) {
+          a.identityStatus = 'normal';
+        }
+        if (a.identityConflictGroupId === undefined) {
+          a.identityConflictGroupId = null;
+        }
+      });
+    }
+
+    if (Array.isArray(rawDb.file_locations)) {
+      rawDb.file_locations.forEach(loc => {
+        loc.relativePath = normalizePath(loc.relativePath);
+      });
+    }
+
+    return rawDb;
+  }
+
   // Production Backup integrity validator
   validateBackupData(parsedDb, manifest, imageIds = []) {
     const fatalErrors = [];
     const warnings = [];
 
-    // Clone the input parsedDb to avoid mutating the original object
-    const rawDb = JSON.parse(JSON.stringify(parsedDb || {}));
+    const rawDb = this.normalizeBackupData(parsedDb);
 
     // 1. Verify manifest exists
     if (!manifest || typeof manifest !== 'object') {
@@ -1808,21 +1944,6 @@ export class AppDatabase {
     if (rawDb && typeof rawDb === 'object') {
       if (manifest && manifest.schemaVersion) {
         rawDb.schemaVersion = rawDb.schemaVersion || manifest.schemaVersion;
-      }
-      if (Array.isArray(rawDb.media_assets)) {
-        rawDb.media_assets.forEach(a => {
-          if (a.identityStatus === undefined) {
-            a.identityStatus = 'normal';
-          }
-          if (a.identityConflictGroupId === undefined) {
-            a.identityConflictGroupId = null;
-          }
-        });
-      }
-      if (Array.isArray(rawDb.file_locations)) {
-        rawDb.file_locations.forEach(loc => {
-          loc.relativePath = normalizePath(loc.relativePath);
-        });
       }
     }
 
@@ -2074,6 +2195,8 @@ export class AppDatabase {
 
   // Production Restore execution method with full transaction rollback (memory, storage, IndexedDB)
   async restoreWithRollback(parsedDb, images) {
+    const normalizedDb = this.normalizeBackupData(parsedDb);
+
     // 1. Snapshot in-memory collections (deep copy)
     const inMemorySnapshot = {
       mediaAssets: JSON.parse(JSON.stringify(this.mediaAssets || [])),
@@ -2124,20 +2247,20 @@ export class AppDatabase {
         await Promise.all(promises);
       }
 
-      // 4b. Assign parsedDb values to in-memory collections
-      this.mediaAssets = parsedDb.media_assets || [];
-      this.fileLocations = parsedDb.file_locations || [];
-      this.criteria = parsedDb.rating_criteria || [];
-      this.reviews = parsedDb.video_reviews || [];
-      this.criterionRatings = parsedDb.criterion_ratings || [];
-      this.tags = parsedDb.tags || [];
-      this.videoTags = parsedDb.video_tags || [];
-      this.timelineNotes = parsedDb.timeline_notes || [];
+      // 4b. Assign normalizedDb values to in-memory collections
+      this.mediaAssets = normalizedDb.media_assets || [];
+      this.fileLocations = normalizedDb.file_locations || [];
+      this.criteria = normalizedDb.rating_criteria || [];
+      this.reviews = normalizedDb.video_reviews || [];
+      this.criterionRatings = normalizedDb.criterion_ratings || [];
+      this.tags = normalizedDb.tags || [];
+      this.videoTags = normalizedDb.video_tags || [];
+      this.timelineNotes = normalizedDb.timeline_notes || [];
 
       // Reconcile directory sources with existing DirectoryHandles in IndexedDB
       const reconciledSources = [];
-      if (Array.isArray(parsedDb.directory_sources)) {
-        for (const src of parsedDb.directory_sources) {
+      if (Array.isArray(normalizedDb.directory_sources)) {
+        for (const src of normalizedDb.directory_sources) {
           let matchedHandleKey = null;
 
           // Priority 1: Restored src.id matches origSrc.id and origSrc has a handle in IndexedDB
@@ -2195,8 +2318,8 @@ export class AppDatabase {
       }
       this.directorySources = reconciledSources;
 
-      this.genres = parsedDb.genres || [];
-      this.templates = parsedDb.evaluation_templates || [];
+      this.genres = normalizedDb.genres || [];
+      this.templates = normalizedDb.evaluation_templates || [];
 
       // 4c. Persist all tables to storage
       this._saveAll();

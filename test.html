@@ -130,6 +130,24 @@
     window.__TEST_ENV__ = true;
     const isAutomated = new URLSearchParams(window.location.search).get('automated') === 'true';
     if (isAutomated) {
+      window.onerror = function(message, source, lineno, colno, error) {
+        const errorMsg = error ? error.stack : message;
+        fetch('/api/test-fatal', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ reason: 'window.onerror', error: errorMsg })
+        }).catch(err => console.error('Failed to notify node of error:', err));
+      };
+
+      window.addEventListener('unhandledrejection', function(event) {
+        const errorMsg = event.reason ? (event.reason.stack || event.reason.message || event.reason) : 'Unhandled promise rejection';
+        fetch('/api/test-fatal', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ reason: 'unhandledrejection', error: errorMsg })
+        }).catch(err => console.error('Failed to notify node of unhandled rejection:', err));
+      });
+
       window.__onTestResult__ = (res) => {
         fetch('/api/test-progress', {
           method: 'POST',
@@ -164,23 +182,24 @@
     import { runTests } from './js/tests.js';
 
     async function executeTestSuite() {
-      const listEl = document.getElementById('test-results-list');
-      listEl.innerHTML = '<div style="text-align:center; padding: 40px; color: var(--color-text-muted)">テスト実行中...</div>';
+      try {
+        const listEl = document.getElementById('test-results-list');
+        listEl.innerHTML = '<div style="text-align:center; padding: 40px; color: var(--color-text-muted)">テスト実行中...</div>';
 
-      // Reset summaries
-      document.getElementById('summary-total').textContent = '0';
-      document.getElementById('summary-passed').textContent = '0';
-      document.getElementById('summary-failed').textContent = '0';
+        // Reset summaries
+        document.getElementById('summary-total').textContent = '0';
+        document.getElementById('summary-passed').textContent = '0';
+        document.getElementById('summary-failed').textContent = '0';
 
-      const results = await runTests();
-      
-      if (isAutomated) {
-        fetch('/api/report-results', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(results.map(r => ({ name: r.name, passed: r.passed, error: r.error })))
-        }).catch(err => console.error('Final report failed:', err));
-      }
+        const results = await runTests();
+        
+        if (isAutomated) {
+          fetch('/api/report-results', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(results.map(r => ({ name: r.name, passed: r.passed, error: r.error })))
+          }).catch(err => console.error('Final report failed:', err));
+        }
 
       listEl.innerHTML = '';
       let passedCount = 0;
@@ -220,6 +239,16 @@
       document.getElementById('summary-total').textContent = results.length.toString();
       document.getElementById('summary-passed').textContent = passedCount.toString();
       document.getElementById('summary-failed').textContent = failedCount.toString();
+      } catch (err) {
+        if (isAutomated) {
+          fetch('/api/test-fatal', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ reason: 'executeTestSuite execution error', error: err.stack || err.message })
+          }).catch(e => console.error('Failed to notify node of executeTestSuite error:', e));
+        }
+        throw err;
+      }
     }
 
     document.getElementById('btn-re-run').addEventListener('click', executeTestSuite);

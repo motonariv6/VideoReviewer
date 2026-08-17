@@ -766,85 +766,35 @@ async function processBackgroundHashingQueue() {
         const currentVideo = db.getVideo(video.id);
         if (!currentVideo || currentVideo.hashStatus !== 'pending') return;
 
-        const locations = db.fileLocations.filter(loc => loc.mediaAssetId === video.id);
-        if (locations.length === 0) {
-          await db.updateVideo(video.id, { hashStatus: 'failed' });
-          return;
-        }
-
-        const sortedLocations = [...locations].sort((a, b) => {
-          if (a.availabilityStatus === 'available' && b.availabilityStatus !== 'available') return -1;
-          if (a.availabilityStatus !== 'available' && b.availabilityStatus === 'available') return 1;
-          return 0;
-        });
-
-        let file = null;
-        let successfulLoc = null;
-
-        for (const loc of sortedLocations) {
-          try {
+        const result = await db.performVerifiedVideoHashing(
+          video.id,
+          async (loc) => {
             const source = sources.find(s => s.id === loc.directoryId);
-            if (!source) continue;
-
+            if (!source) return null;
             const handle = await db.getDirectoryHandle(source.handleKey);
-            if (!handle) continue;
-
+            if (!handle) return null;
             const perm = await handle.queryPermission({ mode: 'read' });
-            if (perm !== 'granted') continue;
-
+            if (perm !== 'granted') return null;
             const fileHandle = await getFileHandleFromRelativePath(handle, loc.relativePath);
-            const fileObj = await fileHandle.getFile();
-            
-            if (fileObj.size !== loc.fileSize || fileObj.lastModified !== loc.lastModified) {
-              console.warn(`File properties changed before hashing. Expected size: ${loc.fileSize}, got: ${fileObj.size}. Expected modified: ${loc.lastModified}, got: ${fileObj.lastModified}`);
-              continue;
-            }
+            return await fileHandle.getFile();
+          },
+          computeFileSHA256
+        );
 
-            file = fileObj;
-            successfulLoc = loc;
-            break;
-          } catch (locErr) {
-            console.warn(`Failed to resolve location ${loc.id}:`, locErr);
+        if (result.status === 'success') {
+          if (result.merged) {
+            console.log(`Merged duplicate asset in background: ${video.id} -> ${result.targetAssetId}`);
+          } else if (result.conflict) {
+            console.log(`Conflict detected for contentHash ${result.hash}. Group ID: ${result.conflictGroupId}`);
+          } else {
+            console.log(`Successfully hashed video ${video.id} -> ${result.hash}`);
           }
-        }
-
-        if (!file || !successfulLoc) {
-          await db.updateVideo(video.id, { hashStatus: 'failed' });
-          return;
-        }
-
-        await db.updateVideo(video.id, { hashStatus: 'calculating' });
-
-        const hash = await computeFileSHA256(file);
-
-        try {
-          const source = sources.find(s => s.id === successfulLoc.directoryId);
-          const handle = await db.getDirectoryHandle(source.handleKey);
-          const fileHandle = await getFileHandleFromRelativePath(handle, successfulLoc.relativePath);
-          const freshFile = await fileHandle.getFile();
-          if (freshFile.size !== file.size || freshFile.lastModified !== file.lastModified) {
-            console.warn(`File properties changed during hashing! Discarding result.`);
-            await db.updateVideo(video.id, { hashStatus: 'pending' });
-            return;
-          }
-        } catch (freshErr) {
-          console.warn(`Failed to verify file properties after hashing:`, freshErr);
-          await db.updateVideo(video.id, { hashStatus: 'pending' });
-          return;
-        }
-
-        const result = await db.completeVideoHashing(video.id, hash);
-        if (result.merged) {
-          console.log(`Merged duplicate asset in background: ${video.id} -> ${result.targetAssetId}`);
-        } else if (result.conflict) {
-          console.log(`Conflict detected for contentHash ${hash}. Group ID: ${result.conflictGroupId}`);
         } else {
-          console.log(`Successfully hashed video ${video.id} -> ${hash}`);
+          console.warn(`Background hashing finished with status: ${result.status}, reason: ${result.reason}`);
         }
         renderLibrary();
       } catch (err) {
         console.error(`Failed background hashing for video ${video.id}:`, err);
-        await db.updateVideo(video.id, { hashStatus: 'failed' });
       }
     }).catch(err => {
       console.error(`Queue error for video ${video.id}:`, err);
