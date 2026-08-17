@@ -229,21 +229,21 @@ export function classifyScanResults({ existingVideos, scannedFiles, failedFiles,
  */
 export async function applyScanDifferentials({ db, directoryId, scanResult, recursive = true }) {
   const { scannedFiles, failedFiles, failedDirectories, completed, aborted } = scanResult;
-  const existingVideos = db.getVideos().filter(v => v.sourceType === 'directory' && v.directoryId === directoryId);
+  const existingLocations = db.fileLocations.filter(loc => loc.directoryId === directoryId);
   
   const isRootFailed = failedDirectories.some(fd => fd.relativePath === '');
 
   // If root walk failed, abort diff additions and set all to scan-error status
   if (aborted || !completed || isRootFailed) {
-    for (const ev of existingVideos) {
-      await db.updateVideo(ev.id, { availabilityStatus: 'scan-error' });
+    for (const loc of existingLocations) {
+      await db.updateLocationInfo(loc.id, { availabilityStatus: 'scan-error' });
     }
     return { 
       added: 0, 
       updated: 0, 
       unchanged: 0, 
       missing: 0, 
-      pending: existingVideos.length, 
+      pending: existingLocations.length, 
       error: failedFiles.length + failedDirectories.length 
     };
   }
@@ -259,8 +259,8 @@ export async function applyScanDifferentials({ db, directoryId, scanResult, recu
 
   // 1. Process successfully scanned files
   for (const sf of scannedFiles) {
-    const matched = existingVideos.find(ev => ev.relativePath === sf.relativePath);
-    if (!matched) {
+    const matchedLoc = db.fileLocations.find(loc => loc.directoryId === directoryId && normalizePath(loc.relativePath) === normalizePath(sf.relativePath));
+    if (!matchedLoc) {
       try {
         await db.addVideo({
           title: sf.fileName,
@@ -280,44 +280,48 @@ export async function applyScanDifferentials({ db, directoryId, scanResult, recu
         errorCount++;
       }
     } else {
-      const isModified = matched.fileSize !== sf.fileSize || matched.lastModified !== sf.lastModified;
+      const isModified = matchedLoc.fileSize !== sf.fileSize || matchedLoc.lastModified !== sf.lastModified;
       if (isModified) {
         try {
-          await db.updateVideo(matched.id, {
+          await db.updateLocationInfo(matchedLoc.id, {
             fileSize: sf.fileSize,
             lastModified: sf.lastModified,
             availabilityStatus: 'available'
           });
+          
+          // Reset hashStatus to pending so it gets re-hashed
+          const matchedAsset = db.mediaAssets.find(a => a.id === matchedLoc.mediaAssetId);
+          if (matchedAsset) {
+            await db.updateVideo(matchedAsset.id, { hashStatus: 'pending', contentHash: '' });
+          }
           updated++;
         } catch (err) {
           errorCount++;
         }
       } else {
-        await db.updateVideo(matched.id, { availabilityStatus: 'available' });
+        await db.updateLocationInfo(matchedLoc.id, { availabilityStatus: 'available' });
         unchanged++;
       }
     }
   }
 
-  // 2. Process missing/failed files
-  for (const ev of existingVideos) {
-    if (scannedPaths.has(ev.relativePath)) {
+  // 2. Process missing/failed locations
+  for (const loc of existingLocations) {
+    if (scannedPaths.has(loc.relativePath)) {
       continue;
     }
 
-    const isFailedFile = failedFiles.some(ff => ff.relativePath === ev.relativePath);
-    const isFailedDir = isPathCoveredByFailedDirectory(ev.relativePath, failedDirectories);
-    const inScope = isPathInScope(ev.relativePath, recursive);
+    const isFailedFile = failedFiles.some(ff => ff.relativePath === loc.relativePath);
+    const isFailedDir = isPathCoveredByFailedDirectory(loc.relativePath, failedDirectories);
+    const inScope = isPathInScope(loc.relativePath, recursive);
 
     if (inScope && !isFailedFile && !isFailedDir) {
-      await db.updateVideo(ev.id, { availabilityStatus: 'missing' });
+      await db.updateLocationInfo(loc.id, { availabilityStatus: 'missing' });
       missing++;
     } else if (isFailedFile || isFailedDir) {
-      // Mark as scan-error to avoid false-positive missing
-      await db.updateVideo(ev.id, { availabilityStatus: 'scan-error' });
+      await db.updateLocationInfo(loc.id, { availabilityStatus: 'scan-error' });
       pending++;
     } else {
-      // Out of scope (not scanned in this mode)
       pending++;
     }
   }

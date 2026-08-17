@@ -953,15 +953,55 @@ export class AppDatabase {
   _buildVirtualVideo(asset) {
     if (!asset) return undefined;
     const locations = this.fileLocations.filter(loc => loc.mediaAssetId === asset.id);
-    
-    let primary = locations.find(loc => loc.availabilityStatus === 'available') ||
-                  locations.find(loc => loc.availabilityStatus === 'permission-required') ||
-                  locations[0];
-                  
+
+    const scoredLocations = locations.map(loc => {
+      const ds = this.directorySources.find(source => source.id === loc.directoryId);
+      let status = 'missing';
+      let score = 0;
+
+      if (loc.availabilityStatus === 'available') {
+        if (ds && ds.handleKey && ds.permissionStatus !== 'disconnected') {
+          if (ds.permissionStatus === 'granted') {
+            status = 'available';
+            score = 3;
+          } else {
+            status = 'permission-required';
+            score = 2;
+          }
+        } else {
+          status = 'missing';
+          score = 0;
+        }
+      } else if (loc.availabilityStatus === 'permission-required') {
+        if (ds && ds.handleKey && ds.permissionStatus !== 'disconnected') {
+          status = 'permission-required';
+          score = 1;
+        } else {
+          status = 'missing';
+          score = 0;
+        }
+      } else {
+        status = loc.availabilityStatus || 'missing';
+        score = 0;
+      }
+      return { loc, status, score, lastVerifiedAt: loc.lastVerifiedAt || '' };
+    });
+
+    // Sort by score descending, then lastVerifiedAt descending safely
+    scoredLocations.sort((a, b) => {
+      if (b.score !== a.score) return b.score - a.score;
+      const timeA = a.lastVerifiedAt ? new Date(a.lastVerifiedAt).getTime() : 0;
+      const timeB = b.lastVerifiedAt ? new Date(b.lastVerifiedAt).getTime() : 0;
+      return timeB - timeA;
+    });
+
+    const primaryWrapper = scoredLocations[0];
+    const primary = primaryWrapper ? primaryWrapper.loc : null;
+
     let logicalStatus = 'missing';
-    if (locations.some(loc => loc.availabilityStatus === 'available')) {
+    if (scoredLocations.some(w => w.status === 'available')) {
       logicalStatus = 'available';
-    } else if (locations.some(loc => loc.availabilityStatus === 'permission-required')) {
+    } else if (scoredLocations.some(w => w.status === 'permission-required')) {
       logicalStatus = 'permission-required';
     } else if (locations.some(loc => loc.availabilityStatus === 'scan-error')) {
       logicalStatus = 'scan-error';
@@ -993,7 +1033,7 @@ export class AppDatabase {
       availabilityStatus: logicalStatus,
       sourceType: isUrl ? 'url' : 'directory',
       videoUrl: asset.videoUrl || (isUrl ? `https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/${asset.id === 'vid-sample-bunny' ? 'BigBuckBunny' : asset.id === 'vid-sample-sintel' ? 'Sintel' : 'TearsOfSteel'}.mp4` : ''),
-      locations: locations
+      locations: scoredLocations.map(w => w.loc)
     };
   }
 
@@ -1041,12 +1081,20 @@ export class AppDatabase {
             this._saveTable('media_assets', this.mediaAssets);
           }
           if (existingLoc.availabilityStatus !== 'available' || (fileSize && existingLoc.fileSize !== fileSize)) {
+            const isSizeChanged = fileSize && existingLoc.fileSize !== fileSize;
             existingLoc.availabilityStatus = 'available';
             if (fileSize) existingLoc.fileSize = fileSize;
             if (lastModified) existingLoc.lastModified = lastModified;
             existingLoc.lastVerifiedAt = new Date().toISOString();
             existingLoc.updatedAt = new Date().toISOString();
             this._saveTable('file_locations', this.fileLocations);
+
+            if (isSizeChanged) {
+              existingAsset.contentHash = '';
+              existingAsset.hashStatus = 'pending';
+              existingAsset.updatedAt = new Date().toISOString();
+              this._saveTable('media_assets', this.mediaAssets);
+            }
           }
           return this._buildVirtualVideo(existingAsset);
         }
@@ -1437,6 +1485,23 @@ export class AppDatabase {
 
     const result = await this.completeVideoHashing(video.id, hash);
     return { status: 'success', hash, ...result };
+  }
+
+  async updateLocationLastVerified(locId) {
+    const loc = this.fileLocations.find(l => l.id === locId);
+    if (loc) {
+      loc.lastVerifiedAt = new Date().toISOString();
+      this._saveTable('file_locations', this.fileLocations);
+    }
+  }
+
+  async updateLocationInfo(locId, updates) {
+    const loc = this.fileLocations.find(l => l.id === locId);
+    if (loc) {
+      Object.assign(loc, updates);
+      loc.updatedAt = new Date().toISOString();
+      this._saveTable('file_locations', this.fileLocations);
+    }
   }
 
   async updateVideo(id, updates) {

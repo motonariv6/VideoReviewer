@@ -3368,6 +3368,532 @@ export async function runTests() {
     assert(mergedAsset2.thumbnailId === 'img-target', 'Preserved target thumbnail');
   });
 
+  // --- GROUP 11: HASH-BASED RECONNECTION & PLAYBACK RESOLUTION TESTS (11-1 to 11-10) ---
+  console.group('Group 11: Hash-Based Reconnection & Playback Resolution');
+
+  await runTest('11-1. Same folder reconnect resolves existing videos', async () => {
+    const memory = new MemoryStorage();
+    const testDb = new AppDatabase(memory, 'test_vreview_g11_1_', 'TestVideoDB_G11_1');
+    await testDb.initAsync();
+    testDb.mediaAssets = [];
+    testDb.fileLocations = [];
+
+    // Create a directory source and add a video
+    const source = await testDb.addDirectorySource({ name: 'FolderA' });
+    const handle = new MockFileSystemDirectoryHandle('FolderA', {
+      'movie.mp4': new MockFileSystemFileHandle('movie.mp4', 100, 200)
+    });
+    await testDb.putDirectoryHandle(source.handleKey, handle);
+
+    const video = await testDb.addVideo({
+      title: 'movie.mp4',
+      fileName: 'movie.mp4',
+      fileSize: 100,
+      sourceType: 'directory',
+      directoryId: source.id,
+      relativePath: 'movie.mp4',
+      lastModified: 200
+    });
+
+    // Disconnect the source
+    await testDb.updateDirectorySource(source.id, { handleKey: '', permissionStatus: 'disconnected' });
+    let virtual = testDb._buildVirtualVideo(testDb.mediaAssets[0]);
+    assert(virtual.availabilityStatus === 'missing' || virtual.availabilityStatus === 'permission-required', 'Should be missing/permission-required on disconnect');
+
+    // Reconnect the source
+    await testDb.reconnectDirectorySource(source.id, handle);
+    
+    // Simulate scan
+    const scanResult = {
+      scannedFiles: [{ fileName: 'movie.mp4', relativePath: 'movie.mp4', fileSize: 100, lastModified: 200 }],
+      failedFiles: [],
+      failedDirectories: [],
+      completed: true,
+      aborted: false
+    };
+    await applyScanDifferentials({ db: testDb, directoryId: source.id, scanResult });
+
+    virtual = testDb._buildVirtualVideo(testDb.mediaAssets[0]);
+    assert(virtual.availabilityStatus === 'available', 'Should be available after reconnect and scan');
+  });
+
+  await runTest('11-2. Lost handleKey recovery restores playback', async () => {
+    const memory = new MemoryStorage();
+    const testDb = new AppDatabase(memory, 'test_vreview_g11_2_', 'TestVideoDB_G11_2');
+    await testDb.initAsync();
+    testDb.mediaAssets = [];
+    testDb.fileLocations = [];
+
+    const source = await testDb.addDirectorySource({ name: 'FolderA' });
+    const video = await testDb.addVideo({
+      title: 'movie.mp4',
+      fileName: 'movie.mp4',
+      fileSize: 100,
+      sourceType: 'directory',
+      directoryId: source.id,
+      relativePath: 'movie.mp4',
+      lastModified: 200
+    });
+
+    // Delete the handleKey from IndexedDB to simulate a lost handle
+    await testDb.deleteDirectoryHandle(source.handleKey);
+
+    let virtual = testDb._buildVirtualVideo(testDb.mediaAssets[0]);
+    await testDb.updateDirectorySource(source.id, { permissionStatus: 'disconnected' });
+    virtual = testDb._buildVirtualVideo(testDb.mediaAssets[0]);
+    assert(virtual.availabilityStatus === 'missing', 'Video status should be missing when source is disconnected');
+
+    // Reconnect with a new handle
+    const newHandle = new MockFileSystemDirectoryHandle('FolderA', {
+      'movie.mp4': new MockFileSystemFileHandle('movie.mp4', 100, 200)
+    });
+    await testDb.reconnectDirectorySource(source.id, newHandle);
+
+    virtual = testDb._buildVirtualVideo(testDb.mediaAssets[0]);
+    assert(virtual.availabilityStatus === 'available', 'Video should be available after reconnection');
+  });
+
+  await runTest('11-3. Different directoryId mapping with same hash', async () => {
+    const memory = new MemoryStorage();
+    const testDb = new AppDatabase(memory, 'test_vreview_g11_3_', 'TestVideoDB_G11_3');
+    await testDb.initAsync();
+    testDb.mediaAssets = [];
+    testDb.fileLocations = [];
+
+    const source1 = await testDb.addDirectorySource({ name: 'FolderA' });
+    const video1 = await testDb.addVideo({
+      title: 'movie.mp4',
+      fileName: 'movie.mp4',
+      fileSize: 100,
+      sourceType: 'directory',
+      directoryId: source1.id,
+      relativePath: 'movie.mp4',
+      lastModified: 200,
+      contentHash: VALID_HASH_A,
+      hashStatus: 'completed'
+    });
+
+    // Delete folder 1 (disconnect)
+    await testDb.deleteDirectorySource(source1.id);
+
+    // Add folder 2 (different ID)
+    const source2 = await testDb.addDirectorySource({ name: 'FolderB' });
+    
+    // Add the same file under folder 2 (as provisional asset)
+    const video2 = await testDb.addVideo({
+      title: 'movie.mp4',
+      fileName: 'movie.mp4',
+      fileSize: 100,
+      sourceType: 'directory',
+      directoryId: source2.id,
+      relativePath: 'movie.mp4',
+      lastModified: 200,
+      hashStatus: 'pending'
+    });
+
+    // Hashing completes and resolves same hash
+    const mergeRes = await testDb.completeVideoHashing(video2.id, VALID_HASH_A);
+    assert(mergeRes.merged, 'Should merge video2 into video1');
+
+    // Verify existing asset has two locations
+    const locations = testDb.fileLocations.filter(loc => loc.mediaAssetId === video1.id);
+    assert(locations.length === 2, 'Should keep both locations pointing to video1');
+    assert(locations.some(loc => loc.directoryId === source1.id), 'Should contain source1 location');
+    assert(locations.some(loc => loc.directoryId === source2.id), 'Should contain source2 location');
+  });
+
+  await runTest('11-4. Moved relativePath preserves reviews, tags, and notes on hashing merge', async () => {
+    const memory = new MemoryStorage();
+    const testDb = new AppDatabase(memory, 'test_vreview_g11_4_', 'TestVideoDB_G11_4');
+    await testDb.initAsync();
+    testDb.mediaAssets = [];
+    testDb.fileLocations = [];
+    testDb.reviews = [];
+    testDb.videoTags = [];
+    testDb.timelineNotes = [];
+
+    const source = await testDb.addDirectorySource({ name: 'FolderA' });
+    const video1 = await testDb.addVideo({
+      title: 'movie.mp4',
+      fileName: 'movie.mp4',
+      fileSize: 100,
+      sourceType: 'directory',
+      directoryId: source.id,
+      relativePath: 'movie.mp4',
+      lastModified: 200,
+      contentHash: VALID_HASH_A,
+      hashStatus: 'completed'
+    });
+
+    // Add review, tag, and note
+    await testDb.saveReview(video1.id, { overallGrade: 'A', comment: 'Loved it' });
+    await testDb.addTagToVideo(video1.id, 'tag-1');
+    testDb.timelineNotes.push({
+      id: 'note-1',
+      videoReviewId: testDb.reviews[0].id,
+      mediaAssetId: video1.id,
+      timestampSeconds: 10,
+      timestampLabel: '0:10',
+      comment: 'Key frame',
+      createdAt: new Date().toISOString()
+    });
+
+    // Move file: scan differential marks old loc as missing and registers new loc
+    const scanResult = {
+      scannedFiles: [{ fileName: 'movie.mp4', relativePath: 'sub/movie.mp4', fileSize: 100, lastModified: 200 }],
+      failedFiles: [],
+      failedDirectories: [],
+      completed: true,
+      aborted: false
+    };
+    await applyScanDifferentials({ db: testDb, directoryId: source.id, scanResult });
+
+    const video2 = testDb.getVideos().find(v => v.relativePath === 'sub/movie.mp4');
+    assert(video2 !== undefined, 'Should detect new video at sub/movie.mp4');
+
+    // Complete hashing for sub/movie.mp4
+    const mergeRes = await testDb.completeVideoHashing(video2.id, VALID_HASH_A);
+    assert(mergeRes.merged, 'Should merge');
+
+    // Verify reviews, tags, notes are preserved on the original mediaAsset (video1.id)
+    assert(testDb.reviews.length === 1 && testDb.reviews[0].mediaAssetId === video1.id, 'Review preserved');
+    assert(testDb.videoTags.length === 1 && testDb.videoTags[0].mediaAssetId === video1.id, 'Tag preserved');
+    assert(testDb.timelineNotes.length === 1 && testDb.timelineNotes[0].mediaAssetId === video1.id, 'Note preserved');
+  });
+
+  await runTest('11-5. Playback falls back to second location if first is missing', async () => {
+    const memory = new MemoryStorage();
+    const testDb = new AppDatabase(memory, 'test_vreview_g11_5_', 'TestVideoDB_G11_5');
+    await testDb.initAsync();
+    testDb.mediaAssets = [];
+    testDb.fileLocations = [];
+
+    const source1 = await testDb.addDirectorySource({ name: 'FolderA' });
+    const source2 = await testDb.addDirectorySource({ name: 'FolderB' });
+    await testDb.updateDirectorySource(source1.id, { permissionStatus: 'granted' });
+    await testDb.updateDirectorySource(source2.id, { permissionStatus: 'granted' });
+
+    // A single video with two locations
+    const assetId = 'vid-test-video-12345678';
+    testDb.mediaAssets.push({
+      id: assetId,
+      contentHash: VALID_HASH_A,
+      hashAlgorithm: 'SHA-256',
+      quickHash: 'qh1',
+      hashStatus: 'completed',
+      fileSize: 100,
+      duration: 0,
+      displayTitle: 'Dual Locations',
+      genreId: 'genre-default',
+      identityStatus: 'normal',
+      identityConflictGroupId: null,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    });
+
+    // Location 1: missing
+    testDb.fileLocations.push({
+      id: 'loc-location11111111',
+      mediaAssetId: assetId,
+      directoryId: source1.id,
+      relativePath: 'movie.mp4',
+      fileName: 'movie.mp4',
+      fileSize: 100,
+      lastModified: 200,
+      availabilityStatus: 'missing',
+      lastVerifiedAt: '',
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    });
+
+    // Location 2: available
+    testDb.fileLocations.push({
+      id: 'loc-location22222222',
+      mediaAssetId: assetId,
+      directoryId: source2.id,
+      relativePath: 'movie.mp4',
+      fileName: 'movie.mp4',
+      fileSize: 100,
+      lastModified: 200,
+      availabilityStatus: 'available',
+      lastVerifiedAt: '',
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    });
+
+    const virtual = testDb._buildVirtualVideo(testDb.mediaAssets[0]);
+    assert(virtual.availabilityStatus === 'available', 'Should be available overall');
+    assert(virtual.directoryId === source2.id, 'Should resolve to source2 (available) as primary location');
+  });
+
+  await runTest('11-6. Playback falls back to second location if first needs permission', async () => {
+    const memory = new MemoryStorage();
+    const testDb = new AppDatabase(memory, 'test_vreview_g11_6_', 'TestVideoDB_G11_6');
+    await testDb.initAsync();
+    testDb.mediaAssets = [];
+    testDb.fileLocations = [];
+
+    const source1 = await testDb.addDirectorySource({ name: 'FolderA' });
+    const source2 = await testDb.addDirectorySource({ name: 'FolderB' });
+
+    // Set source1 as prompt, source2 as granted
+    await testDb.updateDirectorySource(source1.id, { permissionStatus: 'prompt' });
+    await testDb.updateDirectorySource(source2.id, { permissionStatus: 'granted' });
+
+    const assetId = 'vid-test-video-12345678';
+    testDb.mediaAssets.push({
+      id: assetId,
+      contentHash: VALID_HASH_A,
+      hashAlgorithm: 'SHA-256',
+      quickHash: 'qh1',
+      hashStatus: 'completed',
+      fileSize: 100,
+      duration: 0,
+      displayTitle: 'Dual Locations',
+      genreId: 'genre-default',
+      identityStatus: 'normal',
+      identityConflictGroupId: null,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    });
+
+    testDb.fileLocations.push({
+      id: 'loc-location11111111',
+      mediaAssetId: assetId,
+      directoryId: source1.id,
+      relativePath: 'movie.mp4',
+      fileName: 'movie.mp4',
+      fileSize: 100,
+      lastModified: 200,
+      availabilityStatus: 'permission-required',
+      lastVerifiedAt: '',
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    });
+
+    testDb.fileLocations.push({
+      id: 'loc-location22222222',
+      mediaAssetId: assetId,
+      directoryId: source2.id,
+      relativePath: 'movie.mp4',
+      fileName: 'movie.mp4',
+      fileSize: 100,
+      lastModified: 200,
+      availabilityStatus: 'available',
+      lastVerifiedAt: '',
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    });
+
+    const virtual = testDb._buildVirtualVideo(testDb.mediaAssets[0]);
+    assert(virtual.availabilityStatus === 'available', 'Should be available because loc-2 is granted');
+    assert(virtual.directoryId === source2.id, 'Should resolve to source2 (granted/available) as primary');
+  });
+
+  await runTest('11-7. Distinct files with same name/size but different contentHash are not merged', async () => {
+    const memory = new MemoryStorage();
+    const testDb = new AppDatabase(memory, 'test_vreview_g11_7_', 'TestVideoDB_G11_7');
+    await testDb.initAsync();
+    testDb.mediaAssets = [];
+    testDb.fileLocations = [];
+
+    const source = await testDb.addDirectorySource({ name: 'FolderA' });
+    const video1 = await testDb.addVideo({
+      title: 'movie.mp4',
+      fileName: 'movie.mp4',
+      fileSize: 100,
+      sourceType: 'directory',
+      directoryId: source.id,
+      relativePath: 'movie.mp4',
+      lastModified: 200,
+      contentHash: VALID_HASH_A,
+      hashStatus: 'completed'
+    });
+
+    const video2 = await testDb.addVideo({
+      title: 'movie.mp4',
+      fileName: 'movie.mp4',
+      fileSize: 100,
+      sourceType: 'directory',
+      directoryId: source.id,
+      relativePath: 'subdir/movie.mp4',
+      lastModified: 200,
+      hashStatus: 'pending'
+    });
+
+    // Hash is calculated as VALID_HASH_B (different!)
+    const mergeRes = await testDb.completeVideoHashing(video2.id, VALID_HASH_B);
+    assert(!mergeRes.merged, 'Should not merge');
+    assert(testDb.mediaAssets.length === 2, 'Should keep both mediaAssets');
+  });
+
+  await runTest('11-8. Reconnection recovery does not delete evaluations, tags, and notes', async () => {
+    const memory = new MemoryStorage();
+    const testDb = new AppDatabase(memory, 'test_vreview_g11_8_', 'TestVideoDB_G11_8');
+    await testDb.initAsync();
+    testDb.mediaAssets = [];
+    testDb.fileLocations = [];
+    testDb.reviews = [];
+    testDb.videoTags = [];
+    testDb.timelineNotes = [];
+
+    const source = await testDb.addDirectorySource({ name: 'FolderA' });
+    const video = await testDb.addVideo({
+      title: 'movie.mp4',
+      fileName: 'movie.mp4',
+      fileSize: 100,
+      sourceType: 'directory',
+      directoryId: source.id,
+      relativePath: 'movie.mp4',
+      lastModified: 200,
+      contentHash: VALID_HASH_A,
+      hashStatus: 'completed'
+    });
+
+    await testDb.saveReview(video.id, { overallGrade: 'B', comment: 'Fine' });
+    await testDb.addTagToVideo(video.id, 'tag-2');
+    testDb.timelineNotes.push({
+      id: 'note-2',
+      videoReviewId: testDb.reviews[0].id,
+      mediaAssetId: video.id,
+      timestampSeconds: 5,
+      timestampLabel: '0:05',
+      comment: 'Nice',
+      createdAt: new Date().toISOString()
+    });
+
+    // Disconnect and reconnect
+    await testDb.updateDirectorySource(source.id, { handleKey: '', permissionStatus: 'disconnected' });
+    const handle = new MockFileSystemDirectoryHandle('FolderA', {
+      'movie.mp4': new MockFileSystemFileHandle('movie.mp4', 100, 200)
+    });
+    await testDb.reconnectDirectorySource(source.id, handle);
+
+    // Verify all evaluation records are completely intact
+    assert(testDb.mediaAssets.length === 1, 'mediaAsset exists');
+    assert(testDb.reviews.length === 1, 'Review exists');
+    assert(testDb.videoTags.length === 1, 'Tag exists');
+    assert(testDb.timelineNotes.length === 1, 'Note exists');
+  });
+
+  await runTest('11-9. Separator differences (backslashes vs forward slashes) are normalized', async () => {
+    const memory = new MemoryStorage();
+    const testDb = new AppDatabase(memory, 'test_vreview_g11_9_', 'TestVideoDB_G11_9');
+    await testDb.initAsync();
+    testDb.mediaAssets = [];
+    testDb.fileLocations = [];
+
+    const source = await testDb.addDirectorySource({ name: 'FolderA' });
+    
+    // Add location with Windows path separator
+    await testDb.addVideo({
+      title: 'movie.mp4',
+      fileName: 'movie.mp4',
+      fileSize: 100,
+      sourceType: 'directory',
+      directoryId: source.id,
+      relativePath: 'subfolder\\movie.mp4',
+      lastModified: 200
+    });
+
+    // Scan with Unix path separator
+    const scanResult = {
+      scannedFiles: [{ fileName: 'movie.mp4', relativePath: 'subfolder/movie.mp4', fileSize: 100, lastModified: 200 }],
+      failedFiles: [],
+      failedDirectories: [],
+      completed: true,
+      aborted: false
+    };
+    await applyScanDifferentials({ db: testDb, directoryId: source.id, scanResult });
+
+    // Should match and not add a new file
+    assert(testDb.fileLocations.length === 1, 'Should resolve to the same location record');
+    assert(normalizePath(testDb.fileLocations[0].relativePath) === 'subfolder/movie.mp4', 'Path normalized');
+  });
+
+  await runTest('11-10. Backup and restore correctly maps reconnected files', async () => {
+    const memory = new MemoryStorage();
+    const testDb = new AppDatabase(memory, 'test_vreview_g11_10_', 'TestVideoDB_G11_10');
+    await testDb.initAsync();
+    testDb.mediaAssets = [];
+    testDb.fileLocations = [];
+
+    const source = await testDb.addDirectorySource({ name: 'FolderA' });
+
+    const sampleBackup = {
+      schemaVersion: 3,
+      media_assets: [
+        {
+          id: 'ast-asset12345678',
+          contentHash: VALID_HASH_A,
+          hashAlgorithm: 'SHA-256',
+          quickHash: 'qh1',
+          hashStatus: 'completed',
+          fileSize: 100,
+          duration: 10,
+          displayTitle: 'Imported Video',
+          genreId: 'genre-default',
+          thumbnailId: '',
+          identityStatus: 'normal',
+          identityConflictGroupId: null,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString()
+        }
+      ],
+      file_locations: [
+        {
+          id: 'loc-location12345678',
+          mediaAssetId: 'ast-asset12345678',
+          directoryId: source.id,
+          relativePath: 'movie.mp4',
+          fileName: 'movie.mp4',
+          fileSize: 100,
+          lastModified: 200,
+          availabilityStatus: 'permission-required',
+          lastVerifiedAt: '',
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString()
+        }
+      ],
+      rating_criteria: [],
+      video_reviews: [],
+      criterion_ratings: [],
+      tags: [],
+      video_tags: [],
+      timeline_notes: [],
+      directory_sources: [
+        {
+          id: source.id,
+          name: 'FolderA',
+          includeSubdirectories: true,
+          permissionStatus: 'prompt',
+          handleKey: source.handleKey,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString()
+        }
+      ],
+      genres: [{ id: 'genre-default', name: 'default', displayTitle: 'Default', description: '', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }],
+      evaluation_templates: []
+    };
+
+    const manifest = {
+      schemaVersion: 3,
+      createdAt: new Date().toISOString(),
+      counts: { media_assets: 1, file_locations: 1, reviews: 0, images: 0 }
+    };
+
+    await testDb.restoreWithRollback(sampleBackup, []);
+
+    // Reconnect source
+    const handle = new MockFileSystemDirectoryHandle('FolderA', {
+      'movie.mp4': new MockFileSystemFileHandle('movie.mp4', 100, 200)
+    });
+    await testDb.reconnectDirectorySource(source.id, handle);
+
+    const virtual = testDb._buildVirtualVideo(testDb.mediaAssets[0]);
+    assert(virtual.availabilityStatus === 'available', 'Should resolve to available after backup restore and reconnect');
+  });
+
   console.groupEnd();
 
   console.groupEnd();

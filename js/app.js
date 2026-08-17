@@ -1453,34 +1453,69 @@ async function loadVideoMediaSource(video) {
   revokeActiveBlobUrl();
 
   if (video.sourceType === 'directory') {
-    const source = db.getDirectorySource(video.directoryId);
-    if (!source) {
+    const locations = video.locations || [];
+    if (locations.length === 0) {
       showFolderErrorOnPlayer('接続フォルダ設定が削除されています。');
       return;
     }
-    
-    try {
-      const handle = await db.getDirectoryHandle(source.handleKey);
-      if (!handle) {
-        els.playerFolderPermissionButton.textContent = 'フォルダを再接続する';
-        showFolderErrorOnPlayer('フォルダの継続参照ハンドルが見つかりません。再接続してください。', 'permission');
-        return;
+
+    let resolvedFile = null;
+    let resolvedLoc = null;
+    let resolvedSource = null;
+    let hasPermissionError = false;
+    let permissionErrorSource = null;
+    let hasMissingHandleError = false;
+    let missingHandleSource = null;
+
+    for (const loc of locations) {
+      const source = db.getDirectorySource(loc.directoryId);
+      if (!source) continue;
+
+      const isDisconnected = !source.handleKey || source.permissionStatus === 'disconnected';
+      if (isDisconnected) {
+        if (!hasMissingHandleError) {
+          hasMissingHandleError = true;
+          missingHandleSource = source;
+        }
+        continue;
       }
 
-      // Query active permissions
-      const perm = await handle.queryPermission({ mode: 'read' });
-      if (perm !== 'granted') {
-        els.playerFolderPermissionButton.textContent = 'フォルダのアクセスを許可する';
-        showFolderErrorOnPlayer(`動画フォルダ「${source.name}」へのアクセス権限が必要です。`, 'permission');
-        return;
+      try {
+        const handle = await db.getDirectoryHandle(source.handleKey);
+        if (!handle) {
+          if (!hasMissingHandleError) {
+            hasMissingHandleError = true;
+            missingHandleSource = source;
+          }
+          continue;
+        }
+
+        const perm = await handle.queryPermission({ mode: 'read' });
+        if (perm !== 'granted') {
+          if (!hasPermissionError) {
+            hasPermissionError = true;
+            permissionErrorSource = source;
+          }
+          continue;
+        }
+
+        const fileHandle = await getFileHandleFromRelativePath(handle, loc.relativePath);
+        const file = await fileHandle.getFile();
+        resolvedFile = file;
+        resolvedLoc = loc;
+        resolvedSource = source;
+        break;
+      } catch (err) {
+        console.warn(`Failed to resolve location ${loc.id}:`, err);
       }
+    }
 
-      // Traverse path to resolve File
-      const fileHandle = await getFileHandleFromRelativePath(handle, video.relativePath);
-      const file = await fileHandle.getFile();
-      state.activeVideoFile = file;
+    if (resolvedFile) {
+      // Record this successful playback location as preferred
+      await db.updateLocationLastVerified(resolvedLoc.id);
 
-      const objectUrl = URL.createObjectURL(file);
+      state.activeVideoFile = resolvedFile;
+      const objectUrl = URL.createObjectURL(resolvedFile);
       state.activeBlobUrl = objectUrl;
       els.video.src = objectUrl;
       els.video.load();
@@ -1499,14 +1534,18 @@ async function loadVideoMediaSource(video) {
           els.video.removeEventListener('loadeddata', grabFirstFrame);
         }, { once: true });
       }
-    } catch (err) {
-      if (err.name === 'NotFoundError') {
-        showFolderErrorOnPlayer(`ファイルが見つかりません: ${video.relativePath}`);
-        await db.updateVideo(video.id, { availabilityStatus: 'missing' });
-        renderLibrary();
-      } else {
-        showFolderErrorOnPlayer(`ファイル読み込み失敗: ${err.message}`);
-      }
+    } else if (hasPermissionError) {
+      els.playerFolderPermissionButton.textContent = 'フォルダのアクセスを許可する';
+      showFolderErrorOnPlayer(`動画フォルダ「${permissionErrorSource.name}」へのアクセス権限が必要です。`, 'permission');
+    } else if (hasMissingHandleError) {
+      els.playerFolderPermissionButton.textContent = 'フォルダを再接続する';
+      showFolderErrorOnPlayer(`動画フォルダ「${missingHandleSource.name}」の接続ハンドルが見つかりません。再接続してください。`, 'permission');
+    } else {
+      // No location worked, mark the primary (first) location as missing
+      const primaryLoc = locations[0] || {};
+      showFolderErrorOnPlayer(`ファイルが見つかりません: ${primaryLoc.relativePath || '不明なパス'}`);
+      await db.updateVideo(video.id, { availabilityStatus: 'missing', directoryId: primaryLoc.directoryId, relativePath: primaryLoc.relativePath });
+      renderLibrary();
     }
   } else if (video.sourceType === 'url') {
     els.video.src = video.videoUrl;
