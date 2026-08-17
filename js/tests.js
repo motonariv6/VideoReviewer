@@ -1,8 +1,13 @@
 import { AppDatabase } from './db.js';
-import { generateFileSignature, formatTime, parseTime, validateVideoUrl } from './video-helper.js';
+import { generateFileSignature, formatTime, parseTime, validateVideoUrl, normalizePath, filterVideosByTag } from './video-helper.js';
 import { isSupportedVideoFile, isPathCoveredByFailedDirectory, scanDirectory, classifyScanResults, applyScanDifferentials } from './directory-scanner.js';
 import { RadarChart } from './radar.js';
 import { db, setDbForTesting, handleFolderSelect, handleFolderRequestPermission } from './app.js';
+import { computeSHA256, computeQuickHash, computeFileSHA256 } from './hash-helper.js';
+
+export const VALID_HASH_A = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+export const VALID_HASH_B = 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
+export const INVALID_HASH = 'not-a-sha256';
 
 // In-Memory Storage Driver for 100% isolated tests
 export class MemoryStorage {
@@ -26,23 +31,22 @@ export class MemoryStorage {
 // --- FILE SYSTEM ACCESS API MOCKS FOR TESTS ---
 
 export class MockFileSystemFileHandle {
-  constructor(name, size = 12345, lastModified = 99999) {
+  constructor(name, size = 12345, lastModified = 99999, content = null) {
     this.kind = 'file';
     this.name = name;
     this._size = size;
     this._lastModified = lastModified;
     this._shouldFail = false;
+    this._content = content || new Uint8Array(size);
   }
   async getFile() {
     if (this._shouldFail) {
       throw new Error('Mock read error');
     }
-    return {
-      name: this.name,
-      size: this._size,
-      lastModified: this._lastModified,
-      type: 'video/mp4'
-    };
+    const blob = new Blob([this._content], { type: 'video/mp4' });
+    blob.name = this.name;
+    blob.lastModified = this._lastModified;
+    return blob;
   }
 }
 
@@ -106,9 +110,17 @@ export async function runTests() {
   const runTest = async (name, fn) => {
     try {
       await fn();
-      results.push({ name, passed: true, error: null });
+      const res = { name, passed: true, error: null };
+      results.push(res);
+      if (typeof window !== 'undefined' && typeof window.__onTestResult__ === 'function') {
+        window.__onTestResult__(res);
+      }
     } catch (e) {
-      results.push({ name, passed: false, error: e.message });
+      const res = { name, passed: false, error: e.message };
+      results.push(res);
+      if (typeof window !== 'undefined' && typeof window.__onTestResult__ === 'function') {
+        window.__onTestResult__(res);
+      }
     }
   };
 
@@ -718,8 +730,10 @@ export async function runTests() {
     const memory = new MemoryStorage();
     const testDb = new AppDatabase(memory, 'test_vreview_del_', 'TestVideoDB_CascadeDelete');
     await testDb.initAsync();
-    testDb.videos = [];
-    testDb._saveTable('videos', []);
+    testDb.mediaAssets = [];
+    testDb.fileLocations = [];
+    testDb._saveTable('media_assets', []);
+    testDb._saveTable('file_locations', []);
 
     // 1. Setup Video A (to be deleted cascade) and Video B (to be kept)
     const vidA = await testDb.addVideo({
@@ -747,11 +761,11 @@ export async function runTests() {
     });
 
     // Add tags association
-    testDb.videoTags.push({ videoId: vidA.id, tagId: 'tag-1' });
+    testDb.videoTags.push({ mediaAssetId: vidA.id, tagId: 'tag-1' });
     testDb._saveTable('video_tags', testDb.videoTags);
 
     // Add timeline notes
-    testDb.timelineNotes.push({ id: 'note-a1', videoReviewId: revA.id, timestampSeconds: 10, comment: 'First note', thumbnailId: 'img-note-a1' });
+    testDb.timelineNotes.push({ id: 'note-a1', videoReviewId: revA.id, mediaAssetId: vidA.id, timestampSeconds: 10, comment: 'First note', thumbnailId: 'img-note-a1', createdAt: new Date().toISOString() });
     testDb._saveTable('timeline_notes', testDb.timelineNotes);
 
     // Seed thumbnails and note screenshots in IndexedDB mock if available
@@ -768,9 +782,9 @@ export async function runTests() {
         'crit-2': 2
       }
     });
-    testDb.videoTags.push({ videoId: vidB.id, tagId: 'tag-2' });
+    testDb.videoTags.push({ mediaAssetId: vidB.id, tagId: 'tag-2' });
     testDb._saveTable('video_tags', testDb.videoTags);
-    testDb.timelineNotes.push({ id: 'note-b1', videoReviewId: revB.id, timestampSeconds: 20, comment: 'Second note', thumbnailId: 'img-note-b1' });
+    testDb.timelineNotes.push({ id: 'note-b1', videoReviewId: revB.id, mediaAssetId: vidB.id, timestampSeconds: 20, comment: 'Second note', thumbnailId: 'img-note-b1', createdAt: new Date().toISOString() });
     testDb._saveTable('timeline_notes', testDb.timelineNotes);
 
     if (testDb.idbAvailable) {
@@ -801,8 +815,8 @@ export async function runTests() {
     assert(storedRatings.some(cr => cr.videoReviewId === revB.id) === true, 'Stored criterion ratings in localStorage for Review B must remain');
 
     // Assert tags and notes are cascaded
-    assert(testDb.videoTags.some(vt => vt.videoId === vidA.id) === false, 'Tag relations for Video A must be removed');
-    assert(testDb.videoTags.some(vt => vt.videoId === vidB.id) === true, 'Tag relations for Video B must remain');
+    assert(testDb.videoTags.some(vt => vt.mediaAssetId === vidA.id) === false, 'Tag relations for Video A must be removed');
+    assert(testDb.videoTags.some(vt => vt.mediaAssetId === vidB.id) === true, 'Tag relations for Video B must remain');
     assert(testDb.getTimelineNotes(vidA.id).length === 0, 'Timeline notes for Video A must be removed');
     assert(testDb.getTimelineNotes(vidB.id).length === 1, 'Timeline notes for Video B must remain');
 
@@ -886,8 +900,7 @@ export async function runTests() {
     const memoryStorage = new MemoryStorage();
     const testDb = new AppDatabase(memoryStorage, 'test_v7_title_');
     await testDb.initAsync();
-
-    const video = testDb.videos[0];
+    const video = testDb.getVideos()[0];
     assert(video !== undefined, 'Must have at least one sample video');
     
     // 2. Set custom display title
@@ -966,12 +979,33 @@ export async function runTests() {
     const customGenre = await testDb.addGenre('アクション');
     const newVideo = {
       id: 'vid-test-back',
-      title: 'バックアップテスト動画',
-      fileName: 'back.mp4',
+      contentHash: 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855',
+      hashAlgorithm: 'SHA-256',
+      quickHash: 'q123',
+      hashStatus: 'completed',
+      fileSize: 100,
+      duration: 10,
+      displayTitle: 'バックアップテスト動画',
       genreId: customGenre.id,
-      sourceType: 'local-file'
+      thumbnailId: '',
+      videoUrl: '',
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
     };
-    testDb.videos.push(newVideo);
+    testDb.mediaAssets.push(newVideo);
+    testDb.fileLocations.push({
+      id: 'loc-test-location-new',
+      mediaAssetId: 'vid-test-back',
+      directoryId: '',
+      relativePath: '',
+      fileName: 'back.mp4',
+      fileSize: 100,
+      lastModified: 0,
+      availabilityStatus: 'available',
+      lastVerifiedAt: new Date().toISOString(),
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    });
     await testDb.updateVideo(newVideo.id, {});
 
     // Save a review
@@ -984,7 +1018,8 @@ export async function runTests() {
     });
 
     const dbData = {
-      videos: testDb.videos,
+      media_assets: testDb.mediaAssets,
+      file_locations: testDb.fileLocations,
       rating_criteria: testDb.criteria,
       video_reviews: testDb.reviews,
       criterion_ratings: testDb.criterionRatings,
@@ -999,10 +1034,11 @@ export async function runTests() {
     const zip = new JSZip();
     const manifest = {
       application: "VideoReviewer",
-      schemaVersion: 1,
+      schemaVersion: 3,
       createdAt: new Date().toISOString(),
       counts: {
-        videos: testDb.videos.length,
+        media_assets: testDb.mediaAssets.length,
+        file_locations: testDb.fileLocations.length,
         reviews: testDb.reviews.length,
         images: 0
       }
@@ -1023,13 +1059,16 @@ export async function runTests() {
     const testDb2 = new AppDatabase(memoryStorage2, 'test_v7_restored_');
     await testDb2.initAsync();
 
-    assert(testDb2.videos.length !== testDb.videos.length, 'Fresh DB should not have the new video');
+    assert(testDb2.getVideos().length !== testDb.getVideos().length, 'Fresh DB should not have the new video');
 
-    assert(testDb2.videos.length !== testDb.videos.length, 'Fresh DB should not have the new video');
+    assert(testDb2.getVideos().length !== testDb.getVideos().length, 'Fresh DB should not have the new video');
 
     // Production validation and restore invocation
     const valRes = testDb2.validateBackupData(restoredDbData, manifest, []);
-    assert(valRes.isValid === true, 'Restored data must pass validation');
+    if (!valRes.isValid) {
+      console.error('Validation errors:', valRes.fatalErrors);
+    }
+    assert(valRes.isValid === true, 'Restored data must pass validation: ' + (valRes.fatalErrors ? valRes.fatalErrors.join(', ') : ''));
     await testDb2.restoreWithRollback(valRes.repairedDb, []);
 
     const restoredVideo = testDb2.getVideo(newVideo.id);
@@ -1048,12 +1087,12 @@ export async function runTests() {
 
     const validManifest = {
       application: 'VideoReviewer',
-      schemaVersion: 1,
+      schemaVersion: 3,
       createdAt: '2026-08-16T12:00:00.000Z',
-      counts: { videos: 0, reviews: 0, images: 0 }
+      counts: { media_assets: 0, file_locations: 0, reviews: 0, images: 0 }
     };
     const validDb = {
-      videos: [], rating_criteria: [], video_reviews: [], criterion_ratings: [],
+      media_assets: [], file_locations: [], rating_criteria: [], video_reviews: [], criterion_ratings: [],
       tags: [], video_tags: [], timeline_notes: [], directory_sources: [],
       genres: [], evaluation_templates: []
     };
@@ -1064,7 +1103,7 @@ export async function runTests() {
 
     // 2. Invalid schema version
     const res2 = testDb.validateBackupData(validDb, { ...validManifest, schemaVersion: 2 }, []);
-    assert(res2.isValid === false, 'Should be invalid for schemaVersion !== 1');
+    assert(res2.isValid === false, 'Should be invalid for schemaVersion !== 3');
     assert(res2.fatalErrors.some(e => e.includes('スキーマバージョン')), 'Rejected invalid schema version');
 
     // 3. Invalid createdAt (not valid ISO timestamp)
@@ -1080,7 +1119,7 @@ export async function runTests() {
     // 5. Negative counts in manifest
     const res5 = testDb.validateBackupData(validDb, {
       ...validManifest,
-      counts: { videos: -1, reviews: 0, images: 0 }
+      counts: { media_assets: -1, file_locations: 0, reviews: 0, images: 0 }
     }, []);
     assert(res5.isValid === false, 'Should be invalid for negative counts');
     assert(res5.fatalErrors.some(e => e.includes('非負の整数')), 'Rejected negative count');
@@ -1088,15 +1127,15 @@ export async function runTests() {
     // 6. manifest counts match database table counts (video count mismatch)
     const res6 = testDb.validateBackupData(validDb, {
       ...validManifest,
-      counts: { videos: 1, reviews: 0, images: 0 }
+      counts: { media_assets: 1, file_locations: 0, reviews: 0, images: 0 }
     }, []);
     assert(res6.isValid === false, 'Should be invalid for videos count mismatch');
-    assert(res6.fatalErrors.some(e => e.includes('動画の件数')), 'Rejected video count mismatch');
+    assert(res6.fatalErrors.some(e => e.includes('動画アセットの件数')), 'Rejected video count mismatch');
 
     // 7. manifest image count matches ZIP image entries (image count mismatch)
     const res7 = testDb.validateBackupData(validDb, {
       ...validManifest,
-      counts: { videos: 0, reviews: 0, images: 1 }
+      counts: { media_assets: 0, file_locations: 0, reviews: 0, images: 1 }
     }, []);
     assert(res7.isValid === false, 'Should be invalid for images count mismatch');
     assert(res7.fatalErrors.some(e => e.includes('画像の件数')), 'Rejected image count mismatch');
@@ -1104,20 +1143,23 @@ export async function runTests() {
     // 8. duplicate criterion rating ID
     const badCrDb = {
       ...validDb,
-      criterion_ratings: [{ id: 'rate-1', score: 3 }, { id: 'rate-1', score: 5 }]
+      criterion_ratings: [
+        { id: 'rate-test-rating-1', videoReviewId: 'rev-test-review-1', criterionId: 'crit-content', score: 3 },
+        { id: 'rate-test-rating-1', videoReviewId: 'rev-test-review-1', criterionId: 'crit-content', score: 5 }
+      ]
     };
     const res8 = testDb.validateBackupData(badCrDb, validManifest, []);
     assert(res8.isValid === false, 'Should be invalid for duplicate criterion rating ID');
-    assert(res8.fatalErrors.some(e => e.includes('重複する ID rate-1')), 'Rejected duplicate criterion rating ID');
+    assert(res8.fatalErrors.some(e => e.includes('重複する ID rate-test-rating-1')), 'Rejected duplicate criterion rating ID');
 
     // 9. missing video thumbnail
     const badVidDb = {
       ...validDb,
-      videos: [{ id: 'vid-1', title: 'Test', thumbnailId: 'img-nonexistent' }]
+      media_assets: [{ id: 'vid-test-video-1', displayTitle: 'Test', thumbnailId: 'img-nonexistent', contentHash: '', hashAlgorithm: 'SHA-256', quickHash: '', hashStatus: 'pending', fileSize: 0, duration: 0, genreId: 'genre-default', createdAt: '', updatedAt: '' }]
     };
     const res9 = testDb.validateBackupData(badVidDb, {
       ...validManifest,
-      counts: { videos: 1, reviews: 0, images: 0 }
+      counts: { media_assets: 1, file_locations: 0, reviews: 0, images: 0 }
     }, []);
     assert(res9.isValid === false, 'Should be invalid for missing video thumbnail');
     assert(res9.fatalErrors.some(e => e.includes('ZIP内に存在しません')), 'Rejected missing video thumbnail image');
@@ -1125,13 +1167,13 @@ export async function runTests() {
     // 10. missing timeline-note image
     const badNoteDb = {
       ...validDb,
-      timeline_notes: [{ id: 'note-1', text: 'note text', thumbnailId: 'img-nonexistent', videoReviewId: 'rev-1' }],
-      video_reviews: [{ id: 'rev-1', videoId: 'vid-1' }],
-      videos: [{ id: 'vid-1', title: 'Test' }]
+      timeline_notes: [{ id: 'note-test-note-1', comment: 'note text', thumbnailId: 'img-nonexistent', videoReviewId: 'rev-test-review-1', mediaAssetId: 'vid-test-video-1', timestampSeconds: 0, timestampLabel: '00:00', createdAt: '' }],
+      video_reviews: [{ id: 'rev-test-review-1', mediaAssetId: 'vid-test-video-1', createdAt: '', updatedAt: '' }],
+      media_assets: [{ id: 'vid-test-video-1', displayTitle: 'Test', contentHash: '', hashAlgorithm: 'SHA-256', quickHash: '', hashStatus: 'pending', fileSize: 0, duration: 0, genreId: 'genre-default', createdAt: '', updatedAt: '' }]
     };
     const res10 = testDb.validateBackupData(badNoteDb, {
       ...validManifest,
-      counts: { videos: 1, reviews: 1, images: 0 }
+      counts: { media_assets: 1, file_locations: 0, reviews: 1, images: 0 }
     }, []);
     assert(res10.isValid === false, 'Should be invalid for missing timeline-note image');
     assert(res10.fatalErrors.some(e => e.includes('ZIP内に存在しません')), 'Rejected missing note image');
@@ -1139,7 +1181,7 @@ export async function runTests() {
     // 11. duplicate ZIP image IDs
     const res11 = testDb.validateBackupData(validDb, {
       ...validManifest,
-      counts: { videos: 0, reviews: 0, images: 2 }
+      counts: { media_assets: 0, file_locations: 0, reviews: 0, images: 2 }
     }, ['img-1', 'img-1']);
     assert(res11.isValid === false, 'Should be invalid for duplicate ZIP image IDs');
     assert(res11.fatalErrors.some(e => e.includes('重複する画像ID')), 'Rejected duplicate ZIP image IDs');
@@ -1151,16 +1193,17 @@ export async function runTests() {
     await testDb.initAsync();
     
     // Seed initial database state with distinct objects in all collections
-    testDb.videos = [{ id: 'vid-original', title: 'Original' }];
-    testDb.criteria = [{ id: 'crit-original', name: 'Original' }];
-    testDb.reviews = [{ id: 'rev-original', videoId: 'vid-original' }];
+    testDb.mediaAssets = [{ id: 'vid-original', contentHash: 'hash-orig', hashAlgorithm: 'SHA-256', quickHash: 'qo', hashStatus: 'completed', fileSize: 100, duration: 10, displayTitle: 'Original', genreId: 'genre-original', thumbnailId: 'img-original', videoUrl: '', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }];
+    testDb.fileLocations = [{ id: 'loc-original', mediaAssetId: 'vid-original', directoryId: 'dir-original', relativePath: 'orig.mp4', fileName: 'orig.mp4', fileSize: 100, lastModified: 0, availabilityStatus: 'available', lastVerifiedAt: new Date().toISOString(), createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }];
+    testDb.criteria = [{ id: 'crit-original', name: 'Original', description: 'Original' }];
+    testDb.reviews = [{ id: 'rev-original', mediaAssetId: 'vid-original', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }];
     testDb.criterionRatings = [{ id: 'rate-original', videoReviewId: 'rev-original', criterionId: 'crit-original', score: 3 }];
     testDb.tags = [{ id: 'tag-original', name: 'Original' }];
-    testDb.videoTags = [{ videoId: 'vid-original', tagId: 'tag-original' }];
-    testDb.timelineNotes = [{ id: 'note-original', videoReviewId: 'rev-original', text: 'Original' }];
-    testDb.directorySources = [{ id: 'dir-original', name: 'Original' }];
-    testDb.genres = [{ id: 'genre-original', name: 'Original' }];
-    testDb.templates = [{ id: 'template-original', genreId: 'genre-original' }];
+    testDb.videoTags = [{ mediaAssetId: 'vid-original', tagId: 'tag-original' }];
+    testDb.timelineNotes = [{ id: 'note-original', videoReviewId: 'rev-original', mediaAssetId: 'vid-original', timestampSeconds: 0, timestampLabel: '00:00', comment: 'Original', createdAt: new Date().toISOString() }];
+    testDb.directorySources = [{ id: 'dir-original', name: 'Original', includeSubdirectories: true, permissionStatus: 'granted', handleKey: 'handle-orig', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }];
+    testDb.genres = [{ id: 'genre-original', name: 'Original', displayTitle: 'Original Genre', description: 'Original', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }];
+    testDb.templates = [{ id: 'template-original', genreId: 'genre-original', name: 'Original Template', criteriaIds: 'crit-original', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }];
     testDb._saveAll();
     
     // Mock IndexedDB
@@ -1202,16 +1245,17 @@ export async function runTests() {
 
     // Target restore values
     const restoredData = {
-      videos: [{ id: 'vid-new', title: 'New Video' }],
-      rating_criteria: [{ id: 'crit-new', name: 'New' }],
-      video_reviews: [{ id: 'rev-new', videoId: 'vid-new' }],
+      media_assets: [{ id: 'vid-new', contentHash: 'hash-new', hashAlgorithm: 'SHA-256', quickHash: 'qn', hashStatus: 'completed', fileSize: 200, duration: 20, displayTitle: 'New Video', genreId: 'genre-new', thumbnailId: 'img-new', videoUrl: '', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }],
+      file_locations: [{ id: 'loc-new', mediaAssetId: 'vid-new', directoryId: 'dir-new', relativePath: 'new.mp4', fileName: 'new.mp4', fileSize: 200, lastModified: 0, availabilityStatus: 'available', lastVerifiedAt: new Date().toISOString(), createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }],
+      rating_criteria: [{ id: 'crit-new', name: 'New', description: 'New Crit' }],
+      video_reviews: [{ id: 'rev-new', mediaAssetId: 'vid-new', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }],
       criterion_ratings: [{ id: 'rate-new', videoReviewId: 'rev-new', criterionId: 'crit-new', score: 5 }],
       tags: [{ id: 'tag-new', name: 'New' }],
-      video_tags: [{ videoId: 'vid-new', tagId: 'tag-new' }],
-      timeline_notes: [{ id: 'note-new', videoReviewId: 'rev-new', text: 'New' }],
-      directory_sources: [{ id: 'dir-new', name: 'New' }],
-      genres: [{ id: 'genre-new', name: 'New' }],
-      evaluation_templates: [{ id: 'template-new', genreId: 'genre-new' }]
+      video_tags: [{ mediaAssetId: 'vid-new', tagId: 'tag-new' }],
+      timeline_notes: [{ id: 'note-new', videoReviewId: 'rev-new', mediaAssetId: 'vid-new', timestampSeconds: 10, timestampLabel: '00:10', comment: 'New', createdAt: new Date().toISOString() }],
+      directory_sources: [{ id: 'dir-new', name: 'New', includeSubdirectories: true, permissionStatus: 'granted', handleKey: 'handle-new', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }],
+      genres: [{ id: 'genre-new', name: 'New', displayTitle: 'New Genre', description: 'New', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }],
+      evaluation_templates: [{ id: 'template-new', genreId: 'genre-new', name: 'New Template', criteriaIds: 'crit-new', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }]
     };
     const newImages = [{ id: 'img-new', data: new Blob(['new-img'], { type: 'image/jpeg' }) }];
 
@@ -1228,8 +1272,8 @@ export async function runTests() {
 
     assert(restoreSucceeded === false, 'Restore should have failed due to IndexedDB error');
     // Verify rollback integrity for every in-memory collection
-    assert(testDb.videos[0].id === 'vid-original', 'Original videos must be preserved');
-    assert(testDb.videos.some(v => v.id === 'vid-new') === false, 'New videos must not be present');
+    assert(testDb.getVideos()[0].id === 'vid-original', 'Original videos must be preserved');
+    assert(testDb.getVideos().some(v => v.id === 'vid-new') === false, 'New videos must not be present');
     assert(testDb.criteria[0].id === 'crit-original', 'Original criteria must be preserved');
     assert(testDb.reviews[0].id === 'rev-original', 'Original reviews must be preserved');
     assert(testDb.criterionRatings[0].id === 'rate-original', 'Original criterionRatings must be preserved');
@@ -1266,8 +1310,8 @@ export async function runTests() {
     assert(restoreSucceeded === false, 'Restore should have failed due to localStorage write error');
     
     // Verify rollback integrity for every in-memory collection on localStorage failure
-    assert(testDb.videos[0].id === 'vid-original', 'Original videos must be preserved on localStorage write error');
-    assert(testDb.videos.some(v => v.id === 'vid-new') === false, 'New videos must not be present on localStorage write error');
+    assert(testDb.getVideos()[0].id === 'vid-original', 'Original videos must be preserved on localStorage write error');
+    assert(testDb.getVideos().some(v => v.id === 'vid-new') === false, 'New videos must not be present on localStorage write error');
     assert(testDb.criteria[0].id === 'crit-original', 'Original criteria must be preserved on localStorage write error');
     assert(testDb.reviews[0].id === 'rev-original', 'Original reviews must be preserved on localStorage write error');
     assert(testDb.criterionRatings[0].id === 'rate-original', 'Original ratings must be preserved on localStorage write error');
@@ -1308,7 +1352,7 @@ export async function runTests() {
     };
 
     const restoredData = {
-      videos: [], rating_criteria: [], video_reviews: [], criterion_ratings: [],
+      media_assets: [], file_locations: [], rating_criteria: [], video_reviews: [], criterion_ratings: [],
       tags: [], video_tags: [], timeline_notes: [], directory_sources: [],
       genres: [], evaluation_templates: []
     };
@@ -1330,41 +1374,56 @@ export async function runTests() {
     await testDb.initAsync();
 
     // Seed base DB state
-    testDb.videos = [{ id: 'vid-1', title: 'Test Video' }];
-    testDb.reviews = [{ id: 'rev-1', videoId: 'vid-1' }];
+    testDb.mediaAssets = [{ id: 'vid-test-video-1', displayTitle: 'Test Video', contentHash: '', hashAlgorithm: 'SHA-256', quickHash: '', hashStatus: 'pending', fileSize: 0, duration: 0, genreId: 'genre-default', createdAt: '', updatedAt: '' }];
+    testDb.fileLocations = [];
+    testDb.reviews = [{ id: 'rev-test-review-1', mediaAssetId: 'vid-test-video-1', createdAt: '', updatedAt: '' }];
     testDb.timelineNotes = [];
     testDb._saveAll();
 
     const manifest = {
       application: 'VideoReviewer',
-      schemaVersion: 1,
+      schemaVersion: 3,
       createdAt: '2026-08-16T12:00:00.000Z',
-      counts: { videos: 1, reviews: 1, images: 2 }
+      counts: { media_assets: 1, file_locations: 0, reviews: 1, images: 2 }
     };
 
     const parsedDb = {
-      videos: [{ id: 'vid-1', title: 'Test Video' }],
+      media_assets: [{ id: 'vid-test-video-1', displayTitle: 'Test Video', contentHash: '', hashAlgorithm: 'SHA-256', quickHash: '', hashStatus: 'pending', fileSize: 0, duration: 0, genreId: 'genre-default', createdAt: '', updatedAt: '' }],
+      file_locations: [],
       rating_criteria: [],
-      video_reviews: [{ id: 'rev-1', videoId: 'vid-1' }],
+      video_reviews: [{ id: 'rev-test-review-1', mediaAssetId: 'vid-test-video-1', createdAt: '', updatedAt: '' }],
       criterion_ratings: [],
       tags: [],
       video_tags: [],
       timeline_notes: [
-        // 1. Repairable note (missing videoReviewId but has videoId and exactly one review)
-        { id: 'note-repairable', text: 'Repairable', videoId: 'vid-1', videoReviewId: 'nonexistent-rev', thumbnailId: 'img-valid' },
-        // 2. Irreparable note (missing review and videoId)
-        { id: 'note-irreparable', text: 'Irreparable', videoReviewId: 'nonexistent-rev-2', thumbnailId: 'img-orphan' }
+        // 1. Repairable note (missing videoReviewId but has mediaAssetId and exactly one review)
+        { id: 'note-repairable', comment: 'Repairable', mediaAssetId: 'vid-test-video-1', videoReviewId: 'nonexistent-rev', timestampSeconds: 0, timestampLabel: '00:00', createdAt: '', thumbnailId: 'img-valid' },
+        // 2. Irreparable note (missing review and mediaAssetId)
+        { id: 'note-irreparable', comment: 'Irreparable', videoReviewId: 'nonexistent-rev-2', timestampSeconds: 0, timestampLabel: '00:00', createdAt: '', thumbnailId: 'img-orphan' }
       ],
       directory_sources: [],
-      genres: [],
-      evaluation_templates: []
+      genres: [{
+        id: 'genre-default',
+        name: '一般',
+        displayTitle: '一般',
+        description: 'デフォルトのジャンル区分',
+        createdAt: '2026-08-16T12:00:00.000Z',
+        updatedAt: '2026-08-16T12:00:00.000Z'
+      }],
+      evaluation_templates: [{
+        id: 'temp-default',
+        genreId: 'genre-default',
+        name: 'デフォルトテンプレート',
+        criteriaIds: '',
+        createdAt: '2026-08-16T12:00:00.000Z',
+        updatedAt: '2026-08-16T12:00:00.000Z'
+      }]
     };
 
     const zipImageIds = ['img-valid', 'img-orphan'];
 
     // Validate
     const validationResult = testDb.validateBackupData(parsedDb, manifest, zipImageIds);
-
     // Assertions
     assert(validationResult.isValid === true, 'Validation is valid because warnings are not fatal');
     assert(validationResult.fatalErrors.length === 0, 'No fatal errors');
@@ -1375,7 +1434,7 @@ export async function runTests() {
     
     assert(repairableWarning !== undefined, 'Has warning for repairable note');
     assert(repairableWarning.repaired === true, 'Repairable note is marked repaired');
-    assert(repairableWarning.repairedToReviewId === 'rev-1', 'Repairable note is mapped to rev-1');
+    assert(repairableWarning.repairedToReviewId === 'rev-test-review-1', 'Repairable note is mapped to rev-test-review-1');
     
     assert(irreparableWarning !== undefined, 'Has warning for irreparable note');
     assert(irreparableWarning.repaired === false, 'Irreparable note is marked not repaired');
@@ -1384,7 +1443,7 @@ export async function runTests() {
     const repairedNotes = validationResult.repairedDb.timeline_notes;
     assert(repairedNotes.length === 1, 'Irreparable note must be excluded from active timeline_notes');
     assert(repairedNotes[0].id === 'note-repairable', 'Repairable note must be included');
-    assert(repairedNotes[0].videoReviewId === 'rev-1', 'Repairable note review ID must be updated');
+    assert(repairedNotes[0].videoReviewId === 'rev-test-review-1', 'Repairable note review ID must be updated');
 
     // Image exclusion check
     assert(validationResult.requiredImageIds.includes('img-valid') === true, 'img-valid must be included');
@@ -1393,7 +1452,7 @@ export async function runTests() {
     // Confirm that other broken references (e.g. broken review video reference) still reject the backup
     const fatalDb = {
       ...parsedDb,
-      video_reviews: [{ id: 'rev-1', videoId: 'nonexistent-video' }]
+      video_reviews: [{ id: 'rev-test-review-1', mediaAssetId: 'nonexistent-video', createdAt: '', updatedAt: '' }]
     };
     const fatalResult = testDb.validateBackupData(fatalDb, manifest, zipImageIds);
     assert(fatalResult.isValid === false, 'Broken review video reference must make validation invalid');
@@ -1406,12 +1465,14 @@ export async function runTests() {
     await testDb.initAsync();
 
     // Seed original DB state
-    testDb.videos = [{ id: 'vid-original', title: 'Original' }];
-    testDb.timelineNotes = [{ id: 'note-original', videoReviewId: 'rev-original', text: 'Original' }];
+    testDb.mediaAssets = [{ id: 'vid-original', displayTitle: 'Original', contentHash: '', hashAlgorithm: 'SHA-256', quickHash: '', hashStatus: 'pending', fileSize: 0, duration: 0, genreId: 'genre-default', createdAt: '', updatedAt: '' }];
+    testDb.fileLocations = [];
+    testDb.timelineNotes = [{ id: 'note-original', videoReviewId: 'rev-original', mediaAssetId: 'vid-original', timestampSeconds: 0, timestampLabel: '00:00', comment: 'Original', createdAt: '' }];
     testDb._saveAll();
 
     const parsedDb = {
-      videos: [{ id: 'vid-new', title: 'New' }],
+      media_assets: [{ id: 'vid-test-video-new', displayTitle: 'New', contentHash: '', hashAlgorithm: 'SHA-256', quickHash: '', hashStatus: 'pending', fileSize: 0, duration: 0, genreId: 'genre-default', createdAt: '', updatedAt: '' }],
+      file_locations: [],
       rating_criteria: [], video_reviews: [], criterion_ratings: [],
       tags: [], video_tags: [], timeline_notes: [], directory_sources: [],
       genres: [], evaluation_templates: []
@@ -1419,15 +1480,15 @@ export async function runTests() {
 
     const manifest = {
       application: 'VideoReviewer',
-      schemaVersion: 1,
+      schemaVersion: 3,
       createdAt: '2026-08-16T12:00:00.000Z',
-      counts: { videos: 1, reviews: 0, images: 0 }
+      counts: { media_assets: 1, file_locations: 0, reviews: 0, images: 0 }
     };
 
     // Preflight validation - changes nothing
     testDb.validateBackupData(parsedDb, manifest, []);
-    assert(testDb.videos[0].id === 'vid-original', 'In-memory state remains unchanged before confirmation');
-    assert(memoryStorage.getItem('test_v8_cancel_videos').includes('vid-original'), 'Storage state remains unchanged before confirmation');
+    assert(testDb.getVideos()[0].id === 'vid-original', 'In-memory state remains unchanged before confirmation');
+    assert(memoryStorage.getItem('test_v8_cancel_media_assets').includes('vid-original'), 'Storage state remains unchanged before confirmation');
   });
 
   await runTest('Check & Clean up orphan data action', async () => {
@@ -1455,13 +1516,14 @@ export async function runTests() {
     };
 
     // Seed database
-    testDb.videos = [{ id: 'vid-1', title: 'Video', thumbnailId: 'img-referenced' }];
-    testDb.reviews = [{ id: 'rev-1', videoId: 'vid-1' }];
+    testDb.mediaAssets = [{ id: 'vid-test-video-1', displayTitle: 'Video', thumbnailId: 'img-referenced', contentHash: '', hashAlgorithm: 'SHA-256', quickHash: '', hashStatus: 'pending', fileSize: 0, duration: 0, genreId: 'genre-default', createdAt: '', updatedAt: '' }];
+    testDb.fileLocations = [];
+    testDb.reviews = [{ id: 'rev-test-review-1', mediaAssetId: 'vid-test-video-1', createdAt: '', updatedAt: '' }];
     testDb.timelineNotes = [
       // Valid note
-      { id: 'note-valid', videoReviewId: 'rev-1', text: 'Valid', thumbnailId: 'img-referenced-by-note' },
+      { id: 'note-valid', videoReviewId: 'rev-test-review-1', mediaAssetId: 'vid-test-video-1', timestampSeconds: 0, timestampLabel: '00:00', comment: 'Valid', thumbnailId: 'img-referenced-by-note', createdAt: '' },
       // Irreparable orphan note
-      { id: 'note-orphan', videoReviewId: 'nonexistent-rev', text: 'Orphan', thumbnailId: 'img-orphan' }
+      { id: 'note-orphan', videoReviewId: 'nonexistent-rev', mediaAssetId: 'vid-test-video-1', timestampSeconds: 0, timestampLabel: '00:00', comment: 'Orphan', thumbnailId: 'img-orphan', createdAt: '' }
     ];
     testDb._saveAll();
 
@@ -1509,7 +1571,7 @@ export async function runTests() {
     };
 
     const restoredData = {
-      videos: [], rating_criteria: [], video_reviews: [], criterion_ratings: [],
+      media_assets: [], file_locations: [], rating_criteria: [], video_reviews: [], criterion_ratings: [],
       tags: [], video_tags: [], timeline_notes: [],
       directory_sources: [
         { id: 'src-1', name: 'real-dir', handleKey: 'handle-1', permissionStatus: 'prompt' }
@@ -1551,7 +1613,7 @@ export async function runTests() {
 
     // Restored data has src-1 pointing to handle-backup (different handleKey)
     const restoredData = {
-      videos: [], rating_criteria: [], video_reviews: [], criterion_ratings: [],
+      media_assets: [], file_locations: [], rating_criteria: [], video_reviews: [], criterion_ratings: [],
       tags: [], video_tags: [], timeline_notes: [],
       directory_sources: [
         { id: 'src-1', name: 'real-dir', handleKey: 'handle-backup', permissionStatus: 'prompt' }
@@ -1581,7 +1643,7 @@ export async function runTests() {
     };
 
     const restoredData = {
-      videos: [], rating_criteria: [], video_reviews: [], criterion_ratings: [],
+      media_assets: [], file_locations: [], rating_criteria: [], video_reviews: [], criterion_ratings: [],
       tags: [], video_tags: [], timeline_notes: [],
       directory_sources: [
         { id: 'src-1', name: 'missing-dir', handleKey: 'handle-missing', permissionStatus: 'granted' }
@@ -1611,7 +1673,7 @@ export async function runTests() {
     };
 
     const restoredData = {
-      videos: [], rating_criteria: [], video_reviews: [], criterion_ratings: [],
+      media_assets: [], file_locations: [], rating_criteria: [], video_reviews: [], criterion_ratings: [],
       tags: [], video_tags: [], timeline_notes: [],
       directory_sources: [
         { id: 'src-1', name: 'some-dir', handleKey: 'handle-some', permissionStatus: 'granted' }
@@ -1651,7 +1713,7 @@ export async function runTests() {
     };
 
     const restoredData = {
-      videos: [], rating_criteria: [], video_reviews: [], criterion_ratings: [],
+      media_assets: [], file_locations: [], rating_criteria: [], video_reviews: [], criterion_ratings: [],
       tags: [], video_tags: [], timeline_notes: [],
       directory_sources: [
         { id: 'src-1', name: 'real-dir', handleKey: 'handle-1', permissionStatus: 'prompt' }
@@ -1712,7 +1774,7 @@ export async function runTests() {
     };
 
     const restoredData = {
-      videos: [], rating_criteria: [], video_reviews: [], criterion_ratings: [],
+      media_assets: [], file_locations: [], rating_criteria: [], video_reviews: [], criterion_ratings: [],
       tags: [], video_tags: [], timeline_notes: [],
       directory_sources: [
         { id: 'src-new', name: 'new-dir', handleKey: 'handle-new', permissionStatus: 'granted' }
@@ -1774,10 +1836,10 @@ export async function runTests() {
     const videoId = video.id; // Correctly get the generated video ID
 
     // Add review, rating, tags, timeline notes referencing the actual generated videoId
-    testDb.reviews = [{ id: 'rev-1', videoId: videoId, overallGrade: 'A' }];
+    testDb.reviews = [{ id: 'rev-1', mediaAssetId: videoId, overallGrade: 'A', createdAt: '', updatedAt: '' }];
     testDb.criterionRatings = [{ id: 'rate-1', videoReviewId: 'rev-1', criterionId: 'crit-1', score: 4 }];
-    testDb.videoTags = [{ videoId: videoId, tagId: 'tag-1' }];
-    testDb.timelineNotes = [{ id: 'note-1', videoReviewId: 'rev-1', text: 'Note 1' }];
+    testDb.videoTags = [{ mediaAssetId: videoId, tagId: 'tag-1' }];
+    testDb.timelineNotes = [{ id: 'note-1', videoReviewId: 'rev-1', mediaAssetId: videoId, timestampSeconds: 0, timestampLabel: '00:00', comment: 'Note 1', createdAt: '' }];
     testDb._saveAll();
 
     // Reconnection via production DB method (Requirement 4)
@@ -1821,7 +1883,7 @@ export async function runTests() {
 
     // Verify evaluations are preserved
     assert(testDb.reviews.length === 1, 'Reviews are preserved');
-    assert(testDb.reviews[0].videoId === videoId, 'Review is still linked to video');
+    assert(testDb.reviews[0].mediaAssetId === videoId, 'Review is still linked to video');
     assert(testDb.criterionRatings.length === 1, 'Ratings are preserved');
     assert(testDb.videoTags.length === 1, 'Tags are preserved');
     assert(testDb.timelineNotes.length === 1, 'Timeline notes are preserved');
@@ -1921,6 +1983,1389 @@ export async function runTests() {
     assert(testDb.getDirectorySources().length === 1, 'Only one directory source remains');
     assert(testDb.getDirectorySources()[0].id === sourceB.id, 'Remaining source is FolderB');
     assert(testDb.getDirectorySource(sourceA.id) === undefined, 'FolderA has been deleted');
+  });
+
+  console.groupEnd();
+
+  console.group('Group 10. Media Identity & Content Hashing Tests');
+
+  await runTest('10-1. Empty data SHA-256 matches known NIST/RFC vector', async () => {
+    const hash = computeSHA256(new Uint8Array(0));
+    assert(hash === 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855', 'Empty hash matches');
+  });
+
+  await runTest('10-2. "abc" SHA-256 matches known vector', async () => {
+    const hash = computeSHA256('abc');
+    assert(hash === 'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad', 'Hash of "abc" matches');
+  });
+
+  await runTest('10-3. Multi-chunk data matches correct SHA-256', async () => {
+    const data = new Uint8Array(1024 * 1024 * 3 + 500);
+    for (let i = 0; i < data.length; i++) {
+      data[i] = i % 256;
+    }
+    const file = new Blob([data]);
+    const hashDirect = computeSHA256(data);
+    const hashChunked = await computeFileSHA256(file, { chunkSize: 1024 * 1024, useWorker: false });
+    assert(hashChunked === hashDirect, 'Chunked hash matches direct hash');
+  });
+
+  await runTest('10-4. Variable chunk boundaries yield identical hash', async () => {
+    const data = new Uint8Array(1024 * 1024 * 2 + 100);
+    for (let i = 0; i < data.length; i++) {
+      data[i] = (i * 3) % 256;
+    }
+    const file = new Blob([data]);
+    const hash1 = await computeFileSHA256(file, { chunkSize: 500 * 1024, useWorker: false });
+    const hash2 = await computeFileSHA256(file, { chunkSize: 1024 * 1024, useWorker: false });
+    assert(hash1 === hash2, 'Hash with different chunk sizes matches');
+  });
+
+  await runTest('10-5. Same content & same filename re-scan does not duplicate records', async () => {
+    const memory = new MemoryStorage();
+    const testDb = new AppDatabase(memory, 'test_vreview_hash_dup_', 'TestVideoDB_HashDup');
+    await testDb.initAsync();
+    testDb.mediaAssets = [];
+    testDb.fileLocations = [];
+
+    const content = new Uint8Array([1, 2, 3, 4, 5]);
+    const file = new MockFileSystemFileHandle('video.mp4', content.length, 100, content);
+    const qh = await computeQuickHash(await file.getFile());
+    const hash = await computeFileSHA256(await file.getFile(), { useWorker: false });
+
+    const videoA = await testDb.addVideo({
+      title: 'video.mp4',
+      fileName: 'video.mp4',
+      fileSize: content.length,
+      videoUrl: '',
+      duration: 10,
+      sourceType: 'directory',
+      directoryId: 'src-1',
+      relativePath: 'video.mp4',
+      lastModified: 100,
+      quickHash: qh,
+      contentHash: hash,
+      hashStatus: 'completed'
+    });
+
+    const videoB = await testDb.addVideo({
+      title: 'video.mp4',
+      fileName: 'video.mp4',
+      fileSize: content.length,
+      videoUrl: '',
+      duration: 10,
+      sourceType: 'directory',
+      directoryId: 'src-1',
+      relativePath: 'video.mp4',
+      lastModified: 100,
+      quickHash: qh,
+      contentHash: hash,
+      hashStatus: 'completed'
+    });
+
+    assert(videoA.id === videoB.id, 'Same file re-add resolves to the same asset ID');
+    assert(testDb.mediaAssets.length === 1, 'Only one media asset is stored');
+    assert(testDb.fileLocations.length === 1, 'Only one file location is stored');
+  });
+
+  await runTest('10-6. Same content & different filename merges into single media_asset', async () => {
+    const memory = new MemoryStorage();
+    const testDb = new AppDatabase(memory, 'test_vreview_diff_name_', 'TestVideoDB_DiffName');
+    await testDb.initAsync();
+    testDb.mediaAssets = [];
+    testDb.fileLocations = [];
+
+    const content = new Uint8Array([10, 20, 30]);
+    const file1 = new MockFileSystemFileHandle('video1.mp4', content.length, 100, content);
+    const file2 = new MockFileSystemFileHandle('video2.mp4', content.length, 101, content);
+    
+    const hash = await computeFileSHA256(await file1.getFile(), { useWorker: false });
+
+    const video1 = await testDb.addVideo({
+      title: 'video1.mp4',
+      fileName: 'video1.mp4',
+      fileSize: content.length,
+      videoUrl: '',
+      duration: 10,
+      sourceType: 'directory',
+      directoryId: 'src-1',
+      relativePath: 'video1.mp4',
+      lastModified: 100,
+      contentHash: hash,
+      hashStatus: 'completed'
+    });
+
+    const video2 = await testDb.addVideo({
+      title: 'video2.mp4',
+      fileName: 'video2.mp4',
+      fileSize: content.length,
+      videoUrl: '',
+      duration: 10,
+      sourceType: 'directory',
+      directoryId: 'src-1',
+      relativePath: 'video2.mp4',
+      lastModified: 101,
+      contentHash: hash,
+      hashStatus: 'completed'
+    });
+
+    assert(video1.id === video2.id, 'Assets with identical contentHash resolve to the same media_asset ID');
+    assert(testDb.mediaAssets.length === 1, 'Exactly one logical media asset stored');
+    assert(testDb.fileLocations.length === 2, 'Two file locations registered for the same media asset');
+  });
+
+  await runTest('10-7. Same content & different directory registers 1 asset + multiple locations', async () => {
+    const memory = new MemoryStorage();
+    const testDb = new AppDatabase(memory, 'test_vreview_diff_dir_', 'TestVideoDB_DiffDir');
+    await testDb.initAsync();
+    testDb.mediaAssets = [];
+    testDb.fileLocations = [];
+
+    const content = new Uint8Array([5, 6, 7, 8]);
+    const hash = await computeFileSHA256(new Blob([content]), { useWorker: false });
+
+    const video1 = await testDb.addVideo({
+      title: 'vid.mp4',
+      fileName: 'vid.mp4',
+      fileSize: content.length,
+      videoUrl: '',
+      duration: 10,
+      sourceType: 'directory',
+      directoryId: 'dir-A',
+      relativePath: 'vid.mp4',
+      lastModified: 100,
+      contentHash: hash,
+      hashStatus: 'completed'
+    });
+
+    const video2 = await testDb.addVideo({
+      title: 'vid.mp4',
+      fileName: 'vid.mp4',
+      fileSize: content.length,
+      videoUrl: '',
+      duration: 10,
+      sourceType: 'directory',
+      directoryId: 'dir-B',
+      relativePath: 'vid.mp4',
+      lastModified: 100,
+      contentHash: hash,
+      hashStatus: 'completed'
+    });
+
+    assert(video1.id === video2.id, 'Linked to same asset');
+    assert(testDb.mediaAssets.length === 1, 'Only one media_asset');
+    assert(testDb.fileLocations.length === 2, 'Two location records created');
+    assert(testDb.fileLocations.some(l => l.directoryId === 'dir-A'), 'Has location dir-A');
+    assert(testDb.fileLocations.some(l => l.directoryId === 'dir-B'), 'Has location dir-B');
+  });
+
+  await runTest('10-8. Same file size with different content registers distinct assets', async () => {
+    const memory = new MemoryStorage();
+    const testDb = new AppDatabase(memory, 'test_vreview_same_size_', 'TestVideoDB_SameSize');
+    await testDb.initAsync();
+    testDb.mediaAssets = [];
+    testDb.fileLocations = [];
+
+    const size = 100;
+    const contentA = new Uint8Array(size); contentA[0] = 1;
+    const contentB = new Uint8Array(size); contentB[0] = 2;
+
+    const hashA = await computeFileSHA256(new Blob([contentA]), { useWorker: false });
+    const hashB = await computeFileSHA256(new Blob([contentB]), { useWorker: false });
+
+    const videoA = await testDb.addVideo({
+      title: 'vidA.mp4',
+      fileName: 'vidA.mp4',
+      fileSize: size,
+      videoUrl: '',
+      duration: 5,
+      sourceType: 'directory',
+      directoryId: 'dir-1',
+      relativePath: 'vidA.mp4',
+      lastModified: 100,
+      contentHash: hashA,
+      hashStatus: 'completed'
+    });
+
+    const videoB = await testDb.addVideo({
+      title: 'vidB.mp4',
+      fileName: 'vidB.mp4',
+      fileSize: size,
+      videoUrl: '',
+      duration: 5,
+      sourceType: 'directory',
+      directoryId: 'dir-1',
+      relativePath: 'vidB.mp4',
+      lastModified: 100,
+      contentHash: hashB,
+      hashStatus: 'completed'
+    });
+
+    assert(videoA.id !== videoB.id, 'Different content hashes yield distinct asset IDs');
+    assert(testDb.mediaAssets.length === 2, 'Two separate media assets exist');
+  });
+
+  await runTest('10-9. File move / relative path change preserves evaluations, tags, and notes', async () => {
+    const memory = new MemoryStorage();
+    const testDb = new AppDatabase(memory, 'test_vreview_move_', 'TestVideoDB_Move');
+    await testDb.initAsync();
+    testDb.mediaAssets = [];
+    testDb.fileLocations = [];
+
+    const content = new Uint8Array([42, 42]);
+    const hash = await computeFileSHA256(new Blob([content]), { useWorker: false });
+
+    // Register initial location
+    const video = await testDb.addVideo({
+      title: 'original.mp4',
+      fileName: 'original.mp4',
+      fileSize: content.length,
+      videoUrl: '',
+      duration: 60,
+      sourceType: 'directory',
+      directoryId: 'dir-1',
+      relativePath: 'original.mp4',
+      lastModified: 100,
+      contentHash: hash,
+      hashStatus: 'completed'
+    });
+
+    // Add review, rating, tags, and notes
+    await testDb.saveReview(video.id, { overallGrade: 'A', comment: 'Loved it', ratings: { 'crit-content': 5 } });
+    const tag = await testDb.addTagToVideo(video.id, 'tag-1');
+    await testDb.addTimelineNote(video.id, { timestampSeconds: 10, comment: 'Great transition', timestampLabel: '00:10', thumbnailBlob: null });
+
+    // Scan detects file moved to new relative path
+    const movedVideo = await testDb.addVideo({
+      title: 'moved.mp4',
+      fileName: 'moved.mp4',
+      fileSize: content.length,
+      videoUrl: '',
+      duration: 60,
+      sourceType: 'directory',
+      directoryId: 'dir-1',
+      relativePath: 'subfolder/moved.mp4',
+      lastModified: 101,
+      contentHash: hash,
+      hashStatus: 'completed'
+    });
+
+    assert(video.id === movedVideo.id, 'Moved file shares the same logical asset ID');
+    
+    // Check that evaluations, tags, and notes are preserved
+    const retrievedReview = testDb.reviews.find(r => r.mediaAssetId === video.id);
+    assert(retrievedReview.overallGrade === 'A', 'Review grade preserved');
+    
+    const hasTag = testDb.videoTags.some(vt => vt.mediaAssetId === video.id && vt.tagId === tag.id);
+    assert(hasTag, 'Tag association preserved');
+
+    const note = testDb.timelineNotes.find(n => n.mediaAssetId === video.id);
+    assert(note && note.comment === 'Great transition', 'Timeline note preserved');
+  });
+
+  await runTest('10-10. Hashing failure marks hashStatus: failed without destroying existing data', async () => {
+    const memory = new MemoryStorage();
+    const testDb = new AppDatabase(memory, 'test_vreview_hash_fail_', 'TestVideoDB_HashFail');
+    await testDb.initAsync();
+
+    const video = await testDb.addVideo({
+      title: 'test.mp4',
+      fileName: 'test.mp4',
+      fileSize: 500,
+      videoUrl: '',
+      duration: 30,
+      sourceType: 'directory',
+      directoryId: 'dir-1',
+      relativePath: 'test.mp4',
+      lastModified: 100,
+      hashStatus: 'pending'
+    });
+
+    await testDb.saveReview(video.id, { overallGrade: 'B', comment: 'Tested' });
+
+    // Mark hash as failed
+    await testDb.updateVideo(video.id, { hashStatus: 'failed' });
+
+    const updatedVideo = testDb.getVideo(video.id);
+    assert(updatedVideo.hashStatus === 'failed', 'Status is failed');
+    assert(updatedVideo.contentHash === '', 'Hash remains empty');
+
+    const review = testDb.reviews.find(r => r.mediaAssetId === video.id);
+    assert(review && review.overallGrade === 'B', 'Review remains intact');
+  });
+
+  await runTest('10-11. Deduplication merge rollback on failure', async () => {
+    const memory = new MemoryStorage();
+    const testDb = new AppDatabase(memory, 'test_vreview_merge_fail_', 'TestVideoDB_MergeFail');
+    await testDb.initAsync();
+    testDb.mediaAssets = [];
+    testDb.fileLocations = [];
+    testDb.reviews = [];
+    testDb.criterionRatings = [];
+    testDb.videoTags = [];
+    testDb.timelineNotes = [];
+
+    const videoA = await testDb.addVideo({
+      title: 'A.mp4',
+      fileName: 'A.mp4',
+      fileSize: 100,
+      sourceType: 'directory',
+      directoryId: 'dir-1',
+      relativePath: 'A.mp4',
+      contentHash: 'hash-A',
+      hashStatus: 'completed'
+    });
+
+    const videoB = await testDb.addVideo({
+      title: 'B.mp4',
+      fileName: 'B.mp4',
+      fileSize: 100,
+      sourceType: 'directory',
+      directoryId: 'dir-1',
+      relativePath: 'B.mp4',
+      contentHash: 'hash-B',
+      hashStatus: 'completed'
+    });
+
+    await testDb.addTagToVideo(videoB.id, 'tag-1');
+
+    const snapMemoryAssets = JSON.stringify(testDb.mediaAssets);
+    const snapMemoryLocations = JSON.stringify(testDb.fileLocations);
+    const snapMemoryReviews = JSON.stringify(testDb.reviews);
+    const snapMemoryVideoTags = JSON.stringify(testDb.videoTags);
+    const snapStorageAssets = memory.getItem('test_vreview_merge_fail_media_assets');
+    const snapStorageLocations = memory.getItem('test_vreview_merge_fail_file_locations');
+    const snapStorageVideoTags = memory.getItem('test_vreview_merge_fail_video_tags');
+
+    const originalSaveTable = testDb._saveTable;
+    testDb._saveTable = function(key, data) {
+      if (key === 'file_locations') {
+        throw new Error('Disk Full Mock Error');
+      }
+      return originalSaveTable.call(testDb, key, data);
+    };
+
+    let threw = false;
+    try {
+      await testDb.mergeMediaAssets(videoA.id, videoB.id);
+    } catch (err) {
+      if (err.message.includes('Disk Full Mock Error')) {
+        threw = true;
+      }
+    }
+
+    testDb._saveTable = originalSaveTable;
+
+    assert(threw, 'Merge throws error mid-way during saving');
+
+    assert(JSON.stringify(testDb.mediaAssets) === snapMemoryAssets, 'In-memory assets rolled back');
+    assert(JSON.stringify(testDb.fileLocations) === snapMemoryLocations, 'In-memory locations rolled back');
+    assert(JSON.stringify(testDb.reviews) === snapMemoryReviews, 'In-memory reviews rolled back');
+    assert(JSON.stringify(testDb.videoTags) === snapMemoryVideoTags, 'In-memory video tags rolled back');
+
+    assert(memory.getItem('test_vreview_merge_fail_media_assets') === snapStorageAssets, 'Storage assets rolled back');
+    assert(memory.getItem('test_vreview_merge_fail_file_locations') === snapStorageLocations, 'Storage locations rolled back');
+    assert(memory.getItem('test_vreview_merge_fail_video_tags') === snapStorageVideoTags, 'Storage video tags rolled back');
+  });
+
+  await runTest('10-12. Tag filter works with mediaAssetId', async () => {
+    const memory = new MemoryStorage();
+    const testDb = new AppDatabase(memory, 'test_vreview_tag_filter_', 'TestVideoDB_TagFilter');
+    await testDb.initAsync();
+
+    const video = await testDb.addVideo({
+      title: 'tag-test.mp4',
+      fileName: 'tag-test.mp4',
+      fileSize: 100,
+      sourceType: 'directory',
+      directoryId: 'dir-1',
+      relativePath: 'tag-test.mp4'
+    });
+
+    const tag = await testDb.addTagToVideo(video.id, 'tag-action');
+
+    const videosList = [video];
+    const filtered = filterVideosByTag(videosList, testDb.videoTags, tag.id);
+    assert(filtered.length === 1, 'Filter returns tagged video');
+    assert(filtered[0].id === video.id, 'Successfully resolved to media asset ID');
+  });
+
+  await runTest('10-13. Backup restore with displayTitle: null succeeds', async () => {
+    const memory = new MemoryStorage();
+    const testDb = new AppDatabase(memory, 'test_vreview_backup_null_', 'TestVideoDB_BackupNull');
+    await testDb.initAsync();
+
+    const sampleBackup = {
+      schemaVersion: 3,
+      media_assets: [
+        {
+          id: 'ast-asset12345678',
+          contentHash: VALID_HASH_A,
+          hashAlgorithm: 'SHA-256',
+          quickHash: 'qh1',
+          hashStatus: 'completed',
+          fileSize: 100,
+          duration: 10,
+          displayTitle: null,
+          genreId: 'genre-default',
+          thumbnailId: '',
+          identityStatus: 'normal',
+          identityConflictGroupId: null,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString()
+        }
+      ],
+      file_locations: [
+        {
+          id: 'loc-location12345678',
+          mediaAssetId: 'ast-asset12345678',
+          directoryId: 'dir-1',
+          relativePath: 'path.mp4',
+          fileName: 'path.mp4',
+          fileSize: 100,
+          lastModified: 100,
+          availabilityStatus: 'available',
+          lastVerifiedAt: new Date().toISOString(),
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString()
+        }
+      ],
+      rating_criteria: [],
+      video_reviews: [],
+      criterion_ratings: [],
+      tags: [],
+      video_tags: [],
+      timeline_notes: [],
+      directory_sources: [],
+      genres: [{ id: 'genre-default', name: 'default', displayTitle: 'Default', description: '', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }],
+      evaluation_templates: []
+    };
+
+    const manifest = {
+      schemaVersion: 3,
+      createdAt: new Date().toISOString(),
+      counts: {
+        media_assets: 1,
+        file_locations: 1,
+        reviews: 0,
+        images: 0
+      }
+    };
+
+    const result = testDb.validateBackupData(sampleBackup, manifest, []);
+    assert(result.fatalErrors.length === 0, 'Backup with displayTitle: null failed validation: ' + result.fatalErrors.join(', '));
+  });
+
+  await runTest('10-14. Backup restore with custom criteria descriptions succeeds', async () => {
+    const memory = new MemoryStorage();
+    const testDb = new AppDatabase(memory, 'test_vreview_backup_crit_', 'TestVideoDB_BackupCrit');
+    await testDb.initAsync();
+
+    const sampleBackup = {
+      schemaVersion: 3,
+      media_assets: [],
+      file_locations: [],
+      rating_criteria: [
+        { id: 'crit-custom', name: 'Custom Name', description: 'Custom Description', templateId: 'temp-default', status: 'active', orderIndex: 1, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }
+      ],
+      video_reviews: [],
+      criterion_ratings: [],
+      tags: [],
+      video_tags: [],
+      timeline_notes: [],
+      directory_sources: [],
+      genres: [],
+      evaluation_templates: []
+    };
+
+    const manifest = {
+      schemaVersion: 3,
+      createdAt: new Date().toISOString(),
+      counts: {
+        media_assets: 0,
+        file_locations: 0,
+        reviews: 0,
+        images: 0
+      }
+    };
+
+    const result = testDb.validateBackupData(sampleBackup, manifest, []);
+    assert(result.fatalErrors.length === 0, 'Custom criteria validated successfully');
+  });
+
+  await runTest('10-15. Reject backup if hashStatus: completed has invalid SHA-256', async () => {
+    const memory = new MemoryStorage();
+    const testDb = new AppDatabase(memory, 'test_vreview_backup_invalid_hash_', 'TestVideoDB_BackupInvalidHash');
+    await testDb.initAsync();
+
+    const sampleBackup = {
+      schemaVersion: 3,
+      media_assets: [
+        {
+          id: 'ast-1',
+          contentHash: 'short-hash',
+          hashAlgorithm: 'SHA-256',
+          quickHash: 'qh1',
+          hashStatus: 'completed',
+          fileSize: 100,
+          duration: 10,
+          displayTitle: 'Video A',
+          genreId: 'genre-default',
+          thumbnailId: '',
+          identityStatus: 'normal',
+          identityConflictGroupId: null,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString()
+        }
+      ],
+      file_locations: [],
+      rating_criteria: [],
+      video_reviews: [],
+      criterion_ratings: [],
+      tags: [],
+      video_tags: [],
+      timeline_notes: [],
+      directory_sources: [],
+      genres: [],
+      evaluation_templates: []
+    };
+
+    const manifest = {
+      schemaVersion: 3,
+      createdAt: new Date().toISOString(),
+      counts: {
+        media_assets: 1,
+        file_locations: 0,
+        reviews: 0,
+        images: 0
+      }
+    };
+
+    const result = testDb.validateBackupData(sampleBackup, manifest, []);
+    assert(result.fatalErrors.length > 0, 'Rejected invalid contentHash length');
+  });
+
+  await runTest('10-16. Reject backup if duplicate completed contentHash exists across multiple assets', async () => {
+    const memory = new MemoryStorage();
+    const testDb = new AppDatabase(memory, 'test_vreview_backup_dup_hash_', 'TestVideoDB_BackupDupHash');
+    await testDb.initAsync();
+
+    const sampleBackup = {
+      schemaVersion: 3,
+      media_assets: [
+        {
+          id: 'ast-1',
+          contentHash: VALID_HASH_A,
+          hashAlgorithm: 'SHA-256',
+          quickHash: 'qh1',
+          hashStatus: 'completed',
+          fileSize: 100,
+          duration: 10,
+          displayTitle: 'Video A',
+          genreId: 'genre-default',
+          thumbnailId: '',
+          identityStatus: 'normal',
+          identityConflictGroupId: null,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString()
+        },
+        {
+          id: 'ast-2',
+          contentHash: VALID_HASH_A,
+          hashAlgorithm: 'SHA-256',
+          quickHash: 'qh2',
+          hashStatus: 'completed',
+          fileSize: 100,
+          duration: 10,
+          displayTitle: 'Video B',
+          genreId: 'genre-default',
+          thumbnailId: '',
+          identityStatus: 'normal',
+          identityConflictGroupId: null,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString()
+        }
+      ],
+      file_locations: [],
+      rating_criteria: [],
+      video_reviews: [],
+      criterion_ratings: [],
+      tags: [],
+      video_tags: [],
+      timeline_notes: [],
+      directory_sources: [],
+      genres: [],
+      evaluation_templates: []
+    };
+
+    const manifest = {
+      schemaVersion: 3,
+      createdAt: new Date().toISOString(),
+      counts: {
+        media_assets: 2,
+        file_locations: 0,
+        reviews: 0,
+        images: 0
+      }
+    };
+
+    const result = testDb.validateBackupData(sampleBackup, manifest, []);
+    assert(result.fatalErrors.length > 0, 'Rejected duplicate completed hash without conflict status');
+  });
+
+  await runTest('10-17. Migration from v2 preserves reviews, tags, notes, thumbnails', async () => {
+    const memory = new MemoryStorage();
+    const originalVideos = [
+      { id: 'vid-1', title: 'Video 1', fileName: 'v1.mp4', fileSize: 100, duration: 10, hashStatus: 'pending', genreId: 'genre-default', thumbnailUrl: '', thumbnailId: 'img-1', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }
+    ];
+    const originalReviews = [
+      { id: 'rev-1', videoId: 'vid-1', overallGrade: 'A', comment: 'Cool', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }
+    ];
+    const originalVideoTags = [
+      { mediaAssetId: 'vid-1', videoId: 'vid-1', tagId: 'tag-action' }
+    ];
+    const originalTimelineNotes = [
+      { id: 'note-1', videoId: 'vid-1', timestampSeconds: 2, timestampLabel: '00:02', comment: 'Cool scene', thumbnailId: 'img-note-1', createdAt: new Date().toISOString() }
+    ];
+
+    memory.setItem('test_v2_schema_version', '2');
+    memory.setItem('test_v2_videos', JSON.stringify(originalVideos));
+    memory.setItem('test_v2_video_reviews', JSON.stringify(originalReviews));
+    memory.setItem('test_v2_video_tags', JSON.stringify(originalVideoTags));
+    memory.setItem('test_v2_timeline_notes', JSON.stringify(originalTimelineNotes));
+
+    const testDb = new AppDatabase(memory, 'test_v2_', 'TestVideoDB_v2');
+    await testDb.initAsync();
+
+    assert(testDb.mediaAssets.length === 1, 'Video migrated to media asset');
+    assert(testDb.fileLocations.length === 1, 'Location created');
+
+    const review = testDb.reviews.find(r => r.mediaAssetId === 'vid-v2-1' || r.mediaAssetId === 'vid-1');
+    assert(review && review.overallGrade === 'A', 'Review overallGrade preserved');
+
+    const hasTag = testDb.videoTags.some(vt => (vt.mediaAssetId === 'vid-1' || vt.mediaAssetId === 'vid-v2-1') && vt.tagId === 'tag-action');
+    assert(hasTag, 'Tag preserved');
+
+    const note = testDb.timelineNotes.find(n => n.mediaAssetId === 'vid-1' || n.mediaAssetId === 'vid-v2-1');
+    assert(note && note.comment === 'Cool scene', 'Timeline note preserved');
+  });
+
+  await runTest('10-18. Windows backslash vs Unix slash path normalization does not affect hash identity', async () => {
+    const relativePathWindows = 'subfolder\\video.mp4';
+    const relativePathUnix = 'subfolder/video.mp4';
+
+    const normalizedWindows = normalizePath(relativePathWindows);
+    assert(normalizedWindows === relativePathUnix, 'Backslashes successfully converted to Unix forward slashes');
+    assert(normalizePath('/subfolder/video.mp4/') === 'subfolder/video.mp4', 'Leading/trailing slashes stripped');
+  });
+
+  await runTest('10-19. Database reload / persistence retains completed hashes and associations', async () => {
+    const memory = new MemoryStorage();
+    const testDb1 = new AppDatabase(memory, 'test_vreview_reload_', 'TestVideoDB_Reload');
+    await testDb1.initAsync();
+
+    const video = await testDb1.addVideo({
+      title: 'persisted.mp4',
+      fileName: 'persisted.mp4',
+      fileSize: 1000,
+      contentHash: 'abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789',
+      hashStatus: 'completed'
+    });
+
+    const testDb2 = new AppDatabase(memory, 'test_vreview_reload_', 'TestVideoDB_Reload');
+    await testDb2.initAsync();
+
+    const reloadedVideo = testDb2.getVideo(video.id);
+    assert(reloadedVideo, 'Video exists after database reload');
+    assert(reloadedVideo.contentHash === 'abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789', 'SHA-256 hash persists');
+    assert(reloadedVideo.hashStatus === 'completed', 'hashStatus persists');
+  });
+
+  await runTest('10-20. Dual folders with same relative paths register correctly', async () => {
+    const memory = new MemoryStorage();
+    const testDb = new AppDatabase(memory, 'test_vreview_dual_folder_', 'TestVideoDB_DualFolder');
+    await testDb.initAsync();
+    testDb.mediaAssets = [];
+    testDb.fileLocations = [];
+
+    const vid1 = await testDb.addVideo({
+      title: 'vid.mp4',
+      fileName: 'vid.mp4',
+      fileSize: 100,
+      sourceType: 'directory',
+      directoryId: 'dir-1',
+      relativePath: 'sub/vid.mp4'
+    });
+
+    const vid2 = await testDb.addVideo({
+      title: 'vid.mp4',
+      fileName: 'vid.mp4',
+      fileSize: 100,
+      sourceType: 'directory',
+      directoryId: 'dir-2',
+      relativePath: 'sub/vid.mp4'
+    });
+
+    assert(vid1.id !== vid2.id, 'Different media assets initially');
+    assert(testDb.fileLocations.length === 2, 'Two locations created');
+    assert(testDb.fileLocations.some(l => l.directoryId === 'dir-1'), 'Location 1 mapped to dir-1');
+    assert(testDb.fileLocations.some(l => l.directoryId === 'dir-2'), 'Location 2 mapped to dir-2');
+  });
+
+  await runTest('10-21. Hashing second folder video merges into first if no evaluations exist', async () => {
+    const memory = new MemoryStorage();
+    const testDb = new AppDatabase(memory, 'test_vreview_dual_hash_', 'TestVideoDB_DualHash');
+    await testDb.initAsync();
+    testDb.mediaAssets = [];
+    testDb.fileLocations = [];
+
+    const vid1 = await testDb.addVideo({
+      title: 'vid.mp4',
+      fileName: 'vid.mp4',
+      fileSize: 100,
+      sourceType: 'directory',
+      directoryId: 'dir-1',
+      relativePath: 'sub/vid.mp4'
+    });
+
+    const vid2 = await testDb.addVideo({
+      title: 'vid.mp4',
+      fileName: 'vid.mp4',
+      fileSize: 100,
+      sourceType: 'directory',
+      directoryId: 'dir-2',
+      relativePath: 'sub/vid.mp4'
+    });
+
+    const res1 = await testDb.completeVideoHashing(vid1.id, VALID_HASH_A);
+    assert(!res1.merged && !res1.conflict, 'First hash completes normally');
+
+    const res2 = await testDb.completeVideoHashing(vid2.id, VALID_HASH_A);
+    assert(res2.merged, 'Second hash triggers auto-merge');
+    assert(res2.targetAssetId === vid1.id, 'Merged target is vid1');
+    assert(testDb.mediaAssets.length === 1, 'Only one media asset remains');
+    assert(testDb.fileLocations.length === 2, 'Both locations exist on target');
+    assert(testDb.fileLocations.every(l => l.mediaAssetId === vid1.id), 'Locations point to vid1');
+  });
+
+  await runTest('10-22. Multi-location fallback on handle permission failure', async () => {
+    const memory = new MemoryStorage();
+    const testDb = new AppDatabase(memory, 'test_vreview_fallback_', 'TestVideoDB_Fallback');
+    await testDb.initAsync();
+    testDb.mediaAssets = [];
+    testDb.fileLocations = [];
+    testDb.directorySources = [
+      { id: 'dir-fail', name: 'Failed Folder', handleKey: 'key-fail', permissionStatus: 'denied' },
+      { id: 'dir-ok', name: 'OK Folder', handleKey: 'key-ok', permissionStatus: 'granted' }
+    ];
+
+    const asset = await testDb.addVideo({
+      title: 'file.mp4',
+      fileName: 'file.mp4',
+      fileSize: 500,
+      sourceType: 'directory',
+      directoryId: 'dir-fail',
+      relativePath: 'file.mp4',
+      lastModified: 999
+    });
+
+    await testDb.addFileLocation(asset.id, {
+      directoryId: 'dir-ok',
+      relativePath: 'file.mp4',
+      fileName: 'file.mp4',
+      fileSize: 500,
+      lastModified: 999
+    });
+
+    const mockFileObj = new Blob([new Uint8Array(500)]);
+    mockFileObj.lastModified = 999;
+    const mockFileHandle = { getFile: async () => mockFileObj };
+    const mockDirHandleOK = {
+      queryPermission: async () => 'granted',
+      getFileHandle: async () => mockFileHandle
+    };
+    const mockDirHandleFail = {
+      queryPermission: async () => 'denied'
+    };
+
+    const handles = {
+      'key-fail': mockDirHandleFail,
+      'key-ok': mockDirHandleOK
+    };
+    testDb.getDirectoryHandle = async (key) => handles[key];
+
+    const locations = testDb.fileLocations.filter(loc => loc.mediaAssetId === asset.id);
+    let resolvedFile = null;
+    for (const loc of locations) {
+      try {
+        const source = testDb.directorySources.find(s => s.id === loc.directoryId);
+        const handle = await testDb.getDirectoryHandle(source.handleKey);
+        const perm = await handle.queryPermission({ mode: 'read' });
+        if (perm !== 'granted') throw new Error('No permission');
+        resolvedFile = await handle.getFileHandle(loc.relativePath);
+        break;
+      } catch (e) {
+        // continues
+      }
+    }
+
+    assert(resolvedFile !== null, 'Successfully fell back to working directory handle');
+  });
+
+  await runTest('10-23. Revert calculating state to pending on startup for directory and local-file videos', async () => {
+    const memory = new MemoryStorage();
+    const mockAssets = [
+      { id: 'vid-dir-calc', contentHash: '', hashStatus: 'calculating', videoUrl: '' },
+      { id: 'vid-url-calc', contentHash: '', hashStatus: 'calculating', videoUrl: 'http://example.com/v.mp4' },
+      { id: 'vid-sample-calc', contentHash: '', hashStatus: 'calculating', videoUrl: '' }
+    ];
+    memory.setItem('test_vreview_startup_calc_media_assets', JSON.stringify(mockAssets));
+
+    const testDb = new AppDatabase(memory, 'test_vreview_startup_calc_', 'TestVideoDB_StartupCalc');
+    await testDb.initAsync();
+
+    const vDir = testDb.getVideo('vid-dir-calc');
+    const vUrl = testDb.getVideo('vid-url-calc');
+    const vSample = testDb.getVideo('vid-sample-calc');
+
+    assert(vDir.hashStatus === 'pending', 'Directory video calculating state reverted to pending');
+    assert(vUrl.hashStatus === 'calculating', 'URL video calculating state left untouched');
+    assert(vSample.hashStatus === 'calculating', 'Sample video calculating state left untouched');
+  });
+
+  await runTest('10-24. Same grade but different comments triggers conflict', async () => {
+    const memory = new MemoryStorage();
+    const testDb = new AppDatabase(memory, 'test_vreview_conflict_comment_', 'TestVideoDB_ConflictComment');
+    await testDb.initAsync();
+    testDb.mediaAssets = [];
+    testDb.fileLocations = [];
+    testDb.reviews = [];
+
+    const vidA = await testDb.addVideo({ title: 'A.mp4', fileName: 'A.mp4' });
+    const vidB = await testDb.addVideo({ title: 'B.mp4', fileName: 'B.mp4' });
+
+    await testDb.saveReview(vidA.id, { overallGrade: 'A', comment: 'First' });
+    await testDb.saveReview(vidB.id, { overallGrade: 'A', comment: 'Second' });
+
+    await testDb.completeVideoHashing(vidA.id, VALID_HASH_A);
+    const res = await testDb.completeVideoHashing(vidB.id, VALID_HASH_A);
+    assert(res.conflict, 'Conflict detected');
+    assert(res.reason === 'both-assets-have-review-data', 'Reason matches both-assets-have-review-data');
+  });
+
+  await runTest('10-25. Ratings presence on both assets triggers conflict', async () => {
+    const memory = new MemoryStorage();
+    const testDb = new AppDatabase(memory, 'test_vreview_conflict_rating_', 'TestVideoDB_ConflictRating');
+    await testDb.initAsync();
+    testDb.mediaAssets = [];
+    testDb.fileLocations = [];
+    testDb.reviews = [];
+    testDb.criterionRatings = [];
+
+    const vidA = await testDb.addVideo({ title: 'A.mp4', fileName: 'A.mp4' });
+    const vidB = await testDb.addVideo({ title: 'B.mp4', fileName: 'B.mp4' });
+
+    const revA = await testDb.saveReview(vidA.id, { overallGrade: '', comment: '' });
+    const revB = await testDb.saveReview(vidB.id, { overallGrade: '', comment: '' });
+
+    testDb.criterionRatings.push({ id: 'cr-1', videoReviewId: revA.id, criterionId: 'crit-lighting', score: 4 });
+    testDb.criterionRatings.push({ id: 'cr-2', videoReviewId: revB.id, criterionId: 'crit-lighting', score: 3 });
+
+    await testDb.completeVideoHashing(vidA.id, VALID_HASH_A);
+    const res = await testDb.completeVideoHashing(vidB.id, VALID_HASH_A);
+    assert(res.conflict, 'Conflict detected');
+  });
+
+  await runTest('10-26. Timeline note presence on both assets triggers conflict', async () => {
+    const memory = new MemoryStorage();
+    const testDb = new AppDatabase(memory, 'test_vreview_conflict_notes_', 'TestVideoDB_ConflictNotes');
+    await testDb.initAsync();
+    testDb.mediaAssets = [];
+    testDb.fileLocations = [];
+    testDb.timelineNotes = [];
+
+    const vidA = await testDb.addVideo({ title: 'A.mp4', fileName: 'A.mp4' });
+    const vidB = await testDb.addVideo({ title: 'B.mp4', fileName: 'B.mp4' });
+
+    testDb.timelineNotes.push({ id: 'note-1', mediaAssetId: vidA.id, timestampSeconds: 5, comment: 'note A' });
+    testDb.timelineNotes.push({ id: 'note-2', mediaAssetId: vidB.id, timestampSeconds: 5, comment: 'note B' });
+
+    await testDb.completeVideoHashing(vidA.id, VALID_HASH_A);
+    const res = await testDb.completeVideoHashing(vidB.id, VALID_HASH_A);
+    assert(res.conflict, 'Conflict detected');
+  });
+
+  await runTest('10-27. Conflict returns separate assets and preserves all original data of both', async () => {
+    const memory = new MemoryStorage();
+    const testDb = new AppDatabase(memory, 'test_vreview_preserve_', 'TestVideoDB_Preserve');
+    await testDb.initAsync();
+    testDb.mediaAssets = [];
+    testDb.fileLocations = [];
+    testDb.reviews = [];
+    testDb.timelineNotes = [];
+
+    const vidA = await testDb.addVideo({ title: 'A.mp4', fileName: 'A.mp4' });
+    const vidB = await testDb.addVideo({ title: 'B.mp4', fileName: 'B.mp4' });
+
+    await testDb.saveReview(vidA.id, { overallGrade: 'A', comment: 'First' });
+    await testDb.saveReview(vidB.id, { overallGrade: 'B', comment: 'Second' });
+
+    await testDb.completeVideoHashing(vidA.id, VALID_HASH_A);
+    const res = await testDb.completeVideoHashing(vidB.id, VALID_HASH_A);
+    
+    assert(res.conflict, 'Conflict returned');
+    
+    assert(testDb.mediaAssets.length === 2, 'Both assets retained');
+    assert(testDb.fileLocations.length === 2, 'Both locations retained');
+    assert(testDb.reviews.length === 2, 'Both reviews retained');
+
+    const assetA = testDb.mediaAssets.find(a => a.id === vidA.id);
+    const assetB = testDb.mediaAssets.find(a => a.id === vidB.id);
+    assert(assetA.identityStatus === 'conflict' && assetB.identityStatus === 'conflict', 'Both marked as conflict');
+    assert(assetA.identityConflictGroupId === assetB.identityConflictGroupId, 'Conflict group IDs match');
+    assert(assetA.identityConflictGroupId !== null, 'Conflict group ID is not null');
+  });
+
+  await runTest('10-28. Backup with duplicate contentHash succeeds if marked as conflict with matching group ID', async () => {
+    const memory = new MemoryStorage();
+    const testDb = new AppDatabase(memory, 'test_vreview_backup_conf_ok_', 'TestVideoDB_BackupConfOk');
+    await testDb.initAsync();
+
+    const sampleBackup = {
+      schemaVersion: 3,
+      media_assets: [
+        {
+          id: 'ast-asset12345678',
+          contentHash: VALID_HASH_A,
+          hashAlgorithm: 'SHA-256',
+          quickHash: 'qh1',
+          hashStatus: 'completed',
+          fileSize: 100,
+          duration: 10,
+          displayTitle: 'Video A',
+          genreId: 'genre-default',
+          thumbnailId: '',
+          identityStatus: 'conflict',
+          identityConflictGroupId: 'group-1',
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString()
+        },
+        {
+          id: 'ast-asset87654321',
+          contentHash: VALID_HASH_A,
+          hashAlgorithm: 'SHA-256',
+          quickHash: 'qh2',
+          hashStatus: 'completed',
+          fileSize: 100,
+          duration: 10,
+          displayTitle: 'Video B',
+          genreId: 'genre-default',
+          thumbnailId: '',
+          identityStatus: 'conflict',
+          identityConflictGroupId: 'group-1',
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString()
+        }
+      ],
+      file_locations: [
+        {
+          id: 'loc-location12345678',
+          mediaAssetId: 'ast-asset12345678',
+          directoryId: 'dir-1',
+          relativePath: 'path1.mp4',
+          fileName: 'path1.mp4',
+          fileSize: 100,
+          lastModified: 100,
+          availabilityStatus: 'available',
+          lastVerifiedAt: new Date().toISOString(),
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString()
+        },
+        {
+          id: 'loc-location87654321',
+          mediaAssetId: 'ast-asset87654321',
+          directoryId: 'dir-2',
+          relativePath: 'path2.mp4',
+          fileName: 'path2.mp4',
+          fileSize: 100,
+          lastModified: 100,
+          availabilityStatus: 'available',
+          lastVerifiedAt: new Date().toISOString(),
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString()
+        }
+      ],
+      rating_criteria: [],
+      video_reviews: [],
+      criterion_ratings: [],
+      tags: [],
+      video_tags: [],
+      timeline_notes: [],
+      directory_sources: [],
+      genres: [{ id: 'genre-default', name: 'default', displayTitle: 'Default', description: '', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }],
+      evaluation_templates: []
+    };
+
+    const manifest = {
+      schemaVersion: 3,
+      createdAt: new Date().toISOString(),
+      counts: {
+        media_assets: 2,
+        file_locations: 2,
+        reviews: 0,
+        images: 0
+      }
+    };
+
+    const result = testDb.validateBackupData(sampleBackup, manifest, []);
+    assert(result.fatalErrors.length === 0, 'Backup failed validation in 10-28: ' + result.fatalErrors.join(', '));
+  });
+
+  await runTest('10-29. Backup is rejected if duplicate contentHash exists on normal assets', async () => {
+    const memory = new MemoryStorage();
+    const testDb = new AppDatabase(memory, 'test_vreview_backup_conf_ng_', 'TestVideoDB_BackupConfNg');
+    await testDb.initAsync();
+
+    const sampleBackup = {
+      schemaVersion: 3,
+      media_assets: [
+        {
+          id: 'ast-asset12345678',
+          contentHash: VALID_HASH_A,
+          hashAlgorithm: 'SHA-256',
+          quickHash: 'qh1',
+          hashStatus: 'completed',
+          fileSize: 100,
+          duration: 10,
+          displayTitle: 'Video A',
+          genreId: 'genre-default',
+          thumbnailId: '',
+          identityStatus: 'normal',
+          identityConflictGroupId: null,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString()
+        },
+        {
+          id: 'ast-asset87654321',
+          contentHash: VALID_HASH_A,
+          hashAlgorithm: 'SHA-256',
+          quickHash: 'qh2',
+          hashStatus: 'completed',
+          fileSize: 100,
+          duration: 10,
+          displayTitle: 'Video B',
+          genreId: 'genre-default',
+          thumbnailId: '',
+          identityStatus: 'conflict',
+          identityConflictGroupId: 'group-1',
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString()
+        }
+      ],
+      file_locations: [
+        {
+          id: 'loc-location12345678',
+          mediaAssetId: 'ast-asset12345678',
+          directoryId: 'dir-1',
+          relativePath: 'path1.mp4',
+          fileName: 'path1.mp4',
+          fileSize: 100,
+          lastModified: 100,
+          availabilityStatus: 'available',
+          lastVerifiedAt: new Date().toISOString(),
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString()
+        },
+        {
+          id: 'loc-location87654321',
+          mediaAssetId: 'ast-asset87654321',
+          directoryId: 'dir-2',
+          relativePath: 'path2.mp4',
+          fileName: 'path2.mp4',
+          fileSize: 100,
+          lastModified: 100,
+          availabilityStatus: 'available',
+          lastVerifiedAt: new Date().toISOString(),
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString()
+        }
+      ],
+      rating_criteria: [],
+      video_reviews: [],
+      criterion_ratings: [],
+      tags: [],
+      video_tags: [],
+      timeline_notes: [],
+      directory_sources: [],
+      genres: [{ id: 'genre-default', name: 'default', displayTitle: 'Default', description: '', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }],
+      evaluation_templates: []
+    };
+
+    const manifest = {
+      schemaVersion: 3,
+      createdAt: new Date().toISOString(),
+      counts: {
+        media_assets: 2,
+        file_locations: 2,
+        reviews: 0,
+        images: 0
+      }
+    };
+
+    const result = testDb.validateBackupData(sampleBackup, manifest, []);
+    assert(result.fatalErrors.length > 0, 'Backup is rejected with fatal errors due to invalid duplicate hashes');
+    assert(result.fatalErrors.some(err => err.includes('重複')), 'Rejection error mentions duplicate hash');
+  });
+
+  await runTest('10-30. Backup is rejected if duplicate contentHash conflict assets have different group IDs', async () => {
+    const memory = new MemoryStorage();
+    const testDb = new AppDatabase(memory, 'test_vreview_backup_conf_ng2_', 'TestVideoDB_BackupConfNg2');
+    await testDb.initAsync();
+
+    const sampleBackup = {
+      schemaVersion: 3,
+      media_assets: [
+        {
+          id: 'ast-asset12345678',
+          contentHash: VALID_HASH_A,
+          hashAlgorithm: 'SHA-256',
+          quickHash: 'qh1',
+          hashStatus: 'completed',
+          fileSize: 100,
+          duration: 10,
+          displayTitle: 'Video A',
+          genreId: 'genre-default',
+          thumbnailId: '',
+          identityStatus: 'conflict',
+          identityConflictGroupId: 'group-1',
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString()
+        },
+        {
+          id: 'ast-asset87654321',
+          contentHash: VALID_HASH_A,
+          hashAlgorithm: 'SHA-256',
+          quickHash: 'qh2',
+          hashStatus: 'completed',
+          fileSize: 100,
+          duration: 10,
+          displayTitle: 'Video B',
+          genreId: 'genre-default',
+          thumbnailId: '',
+          identityStatus: 'conflict',
+          identityConflictGroupId: 'group-2',
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString()
+        }
+      ],
+      file_locations: [
+        {
+          id: 'loc-location12345678',
+          mediaAssetId: 'ast-asset12345678',
+          directoryId: 'dir-1',
+          relativePath: 'path1.mp4',
+          fileName: 'path1.mp4',
+          fileSize: 100,
+          lastModified: 100,
+          availabilityStatus: 'available',
+          lastVerifiedAt: new Date().toISOString(),
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString()
+        },
+        {
+          id: 'loc-location87654321',
+          mediaAssetId: 'ast-asset87654321',
+          directoryId: 'dir-2',
+          relativePath: 'path2.mp4',
+          fileName: 'path2.mp4',
+          fileSize: 100,
+          lastModified: 100,
+          availabilityStatus: 'available',
+          lastVerifiedAt: new Date().toISOString(),
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString()
+        }
+      ],
+      rating_criteria: [],
+      video_reviews: [],
+      criterion_ratings: [],
+      tags: [],
+      video_tags: [],
+      timeline_notes: [],
+      directory_sources: [],
+      genres: [{ id: 'genre-default', name: 'default', displayTitle: 'Default', description: '', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }],
+      evaluation_templates: []
+    };
+
+    const manifest = {
+      schemaVersion: 3,
+      createdAt: new Date().toISOString(),
+      counts: {
+        media_assets: 2,
+        file_locations: 2,
+        reviews: 0,
+        images: 0
+      }
+    };
+
+    const result = testDb.validateBackupData(sampleBackup, manifest, []);
+    assert(result.fatalErrors.length > 0, 'Backup is rejected if conflict group IDs mismatch');
+    assert(result.fatalErrors.some(err => err.includes('identityConflictGroupId')), 'Rejection error mentions mismatch of identityConflictGroupId');
+  });
+
+  await runTest('10-31. Path separator normalization across folder scans and addVideo matching', async () => {
+    const memory = new MemoryStorage();
+    const testDb = new AppDatabase(memory, 'test_vreview_path_norm_', 'TestVideoDB_PathNorm');
+    await testDb.initAsync();
+    testDb.mediaAssets = [];
+    testDb.fileLocations = [];
+
+    const video = await testDb.addVideo({
+      title: 'video.mp4',
+      fileName: 'video.mp4',
+      fileSize: 100,
+      sourceType: 'directory',
+      directoryId: 'dir-1',
+      relativePath: 'subfolder\\video.mp4'
+    });
+
+    const loc = testDb.fileLocations.find(l => l.mediaAssetId === video.id);
+    assert(loc.relativePath === 'subfolder/video.mp4', 'Path normalized in DB to forward slash');
+
+    const matched = await testDb.addVideo({
+      title: 'video.mp4',
+      fileName: 'video.mp4',
+      fileSize: 100,
+      sourceType: 'directory',
+      directoryId: 'dir-1',
+      relativePath: 'subfolder/video.mp4'
+    });
+
+    assert(matched.id === video.id, 'Matching successfully resolves to same media asset ID');
+  });
+
+  await runTest('10-32. Hashing resets to pending if file size changes before or after calculation', async () => {
+    const memory = new MemoryStorage();
+    const testDb = new AppDatabase(memory, 'test_vreview_dynamic_', 'TestVideoDB_Dynamic');
+    await testDb.initAsync();
+    testDb.mediaAssets = [];
+    testDb.fileLocations = [];
+
+    const asset = await testDb.addVideo({
+      title: 'file.mp4',
+      fileName: 'file.mp4',
+      fileSize: 500,
+      sourceType: 'directory',
+      directoryId: 'dir-1',
+      relativePath: 'file.mp4',
+      lastModified: 1000
+    });
+
+    let fileObjBefore = { size: 600, lastModified: 1000 };
+    const resBefore = await testDb.performVerifiedVideoHashing(
+      asset.id,
+      async (loc) => fileObjBefore,
+      async (file) => VALID_HASH_A
+    );
+    assert(resBefore.status === 'failed' && resBefore.reason === 'all-locations-failed', 'Fails when properties mismatched before hashing');
+
+    let resolveCount = 0;
+    const resDuring = await testDb.performVerifiedVideoHashing(
+      asset.id,
+      async (loc) => {
+        resolveCount++;
+        if (resolveCount === 1) {
+          return { size: 500, lastModified: 1000 };
+        } else {
+          return { size: 600, lastModified: 1000 };
+        }
+      },
+      async (file) => VALID_HASH_A
+    );
+    assert(resDuring.status === 'discarded' && resDuring.reason === 'metadata-changed', 'Discarded when properties change during hashing');
+
+    const updatedAsset = testDb.getVideo(asset.id);
+    assert(updatedAsset.hashStatus === 'pending', 'Asset hashStatus reset to pending');
+  });
+
+  await runTest('10-33. Backfill and schema normalization on restore', async () => {
+    const memory = new MemoryStorage();
+    const testDb = new AppDatabase(memory, 'test_vreview_restore_norm_', 'TestVideoDB_RestoreNorm');
+    await testDb.initAsync();
+
+    const sampleBackup = {
+      schemaVersion: 3,
+      media_assets: [
+        {
+          id: 'ast-asset12345678',
+          contentHash: VALID_HASH_A,
+          hashAlgorithm: 'SHA-256',
+          quickHash: 'qh1',
+          hashStatus: 'completed',
+          fileSize: 100,
+          duration: 10,
+          displayTitle: '',
+          genreId: 'genre-default',
+          thumbnailId: '',
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString()
+        }
+      ],
+      file_locations: [
+        {
+          id: 'loc-location12345678',
+          mediaAssetId: 'ast-asset12345678',
+          directoryId: 'dir-1',
+          relativePath: 'path1\\subfolder\\file.mp4',
+          fileName: 'file.mp4',
+          fileSize: 100,
+          lastModified: 100,
+          availabilityStatus: 'available',
+          lastVerifiedAt: new Date().toISOString(),
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString()
+        }
+      ]
+    };
+
+    const normalized = testDb.normalizeBackupData(sampleBackup);
+
+    assert(sampleBackup.media_assets[0].displayTitle === '', 'Original object was not mutated (displayTitle)');
+    assert(sampleBackup.file_locations[0].relativePath === 'path1\\subfolder\\file.mp4', 'Original object was not mutated (path)');
+    assert(sampleBackup.media_assets[0].identityStatus === undefined, 'Original object was not mutated (identityStatus)');
+
+    assert(normalized.media_assets[0].displayTitle === null, 'displayTitle normalized to null');
+    assert(normalized.media_assets[0].identityStatus === 'normal', 'identityStatus backfilled to normal');
+    assert(normalized.media_assets[0].identityConflictGroupId === null, 'identityConflictGroupId backfilled to null');
+    assert(normalized.file_locations[0].relativePath === 'path1/subfolder/file.mp4', 'relativePath normalized to forward slash');
+  });
+
+  await runTest('10-34. Merging preserves thumbnail correctly based on canonical priority rules', async () => {
+    const memory = new MemoryStorage();
+    const testDb = new AppDatabase(memory, 'test_vreview_merge_thumb_', 'TestVideoDB_MergeThumb');
+    await testDb.initAsync();
+    testDb.mediaAssets = [];
+    testDb.fileLocations = [];
+    testDb.reviews = [];
+
+    const vidA = await testDb.addVideo({ title: 'A.mp4', fileName: 'A.mp4' });
+    const vidB = await testDb.addVideo({ title: 'B.mp4', fileName: 'B.mp4' });
+
+    await testDb.updateVideo(vidB.id, { thumbnailId: 'img-source' });
+
+    await testDb.mergeMediaAssets(vidA.id, vidB.id);
+
+    const mergedAsset = testDb.mediaAssets.find(a => a.id === vidA.id);
+    assert(mergedAsset.thumbnailId === 'img-source', 'Inherited thumbnail from source asset');
+
+    const vidC = await testDb.addVideo({ title: 'C.mp4', fileName: 'C.mp4' });
+    const vidD = await testDb.addVideo({ title: 'D.mp4', fileName: 'D.mp4' });
+    await testDb.updateVideo(vidC.id, { thumbnailId: 'img-target' });
+    await testDb.updateVideo(vidD.id, { thumbnailId: 'img-source-new' });
+
+    await testDb.mergeMediaAssets(vidC.id, vidD.id);
+    const mergedAsset2 = testDb.mediaAssets.find(a => a.id === vidC.id);
+    assert(mergedAsset2.thumbnailId === 'img-target', 'Preserved target thumbnail');
   });
 
   console.groupEnd();

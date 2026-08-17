@@ -1,0 +1,111 @@
+erDiagram
+    media_assets {
+        string id PK
+        string contentHash
+        string hashAlgorithm
+        string quickHash
+        string hashStatus
+        int fileSize
+        float duration
+        string displayTitle
+        string genreId FK
+        string thumbnailId
+        string createdAt
+        string updatedAt
+    }
+
+    file_locations {
+        string id PK
+        string mediaAssetId FK
+        string directoryId FK
+        string relativePath
+        string fileName
+        int fileSize
+        int lastModified
+        string availabilityStatus
+        string lastVerifiedAt
+        string createdAt
+        string updatedAt
+    }
+
+    video_reviews {
+        string id PK
+        string mediaAssetId FK
+        string overallGrade
+        string comment
+        string createdAt
+        string updatedAt
+    }
+
+    criterion_ratings {
+        string id PK
+        string videoReviewId FK
+        string criterionId FK
+        int score
+    }
+
+    rating_criteria {
+        string id PK
+        string name
+        string description
+    }
+
+    tags {
+        string id PK
+        string name
+    }
+
+    video_tags {
+        string mediaAssetId PK, FK
+        string tagId PK, FK
+    }
+
+    timeline_notes {
+        string id PK
+        string videoReviewId FK
+        string mediaAssetId FK
+        float timestampSeconds
+        string timestampLabel
+        string comment
+        string thumbnailId
+        string createdAt
+    }
+
+    directory_sources {
+        string id PK
+        string name
+        boolean includeSubdirectories
+        string permissionStatus
+        string handleKey
+        string createdAt
+        string updatedAt
+    }
+
+    genres {
+        string id PK
+        string name
+        string displayTitle
+        string description
+        string createdAt
+        string updatedAt
+    }
+
+    evaluation_templates {
+        string id PK
+        string genreId FK
+        string name
+        string criteriaIds
+        string createdAt
+        string updatedAt
+    }
+
+    media_assets ||--o{ file_locations : "has locations"
+    media_assets ||--o{ video_reviews : "has review"
+    media_assets ||--o{ video_tags : "has tags"
+    media_assets ||--o{ timeline_notes : "has notes"
+    directory_sources ||--o{ file_locations : "contains"
+    genres ||--o{ media_assets : "categorizes"
+    genres ||--o{ evaluation_templates : "has templates"
+    video_reviews ||--o{ criterion_ratings : "contains"
+    rating_criteria ||--o{ criterion_ratings : "rated under"
+    tags ||--o{ video_tags : "linked in"

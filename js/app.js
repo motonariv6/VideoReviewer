@@ -1,7 +1,8 @@
 import { AppDatabase } from './db.js';
-import { formatTime, parseTime, generateFileSignature, captureVideoFrame, validateVideoUrl, getFileHandleFromRelativePath } from './video-helper.js';
+import { formatTime, parseTime, generateFileSignature, captureVideoFrame, validateVideoUrl, getFileHandleFromRelativePath, filterVideosByTag } from './video-helper.js';
 import { RadarChart } from './radar.js';
 import { scanDirectory, classifyScanResults, applyScanDifferentials } from './directory-scanner.js';
+import { computeQuickHash, computeFileSHA256, globalHashQueue } from './hash-helper.js';
 
 // Instantiate DB & components
 export let db = new AppDatabase();
@@ -727,22 +728,77 @@ async function syncActiveDirectoryPermissions() {
         await db.updateDirectorySource(source.id, { permissionStatus: status });
         
         // Sync videos availabilityStatus based on permission
-        db.videos.forEach(v => {
-          if (v.sourceType === 'directory' && v.directoryId === source.id) {
-            v.availabilityStatus = (status === 'granted') ? 'available' : 'permission-required';
+        db.fileLocations.forEach(loc => {
+          if (loc.directoryId === source.id) {
+            loc.availabilityStatus = (status === 'granted') ? 'available' : 'permission-required';
           }
         });
+        db._saveTable('file_locations', db.fileLocations);
+
+        if (status === 'granted') {
+          processBackgroundHashingQueue();
+        }
       } else {
         await db.updateDirectorySource(source.id, { permissionStatus: 'prompt' });
-        db.videos.forEach(v => {
-          if (v.sourceType === 'directory' && v.directoryId === source.id) {
-            v.availabilityStatus = 'permission-required';
+        db.fileLocations.forEach(loc => {
+          if (loc.directoryId === source.id) {
+            loc.availabilityStatus = 'permission-required';
           }
         });
+        db._saveTable('file_locations', db.fileLocations);
       }
     } catch (err) {
       console.error(`Failed to sync permission for directory source ${source.name}:`, err);
     }
+  }
+}
+
+async function processBackgroundHashingQueue() {
+  const videos = db.getVideos().filter(v => v.sourceType === 'directory' && v.hashStatus === 'pending');
+  if (videos.length === 0) return;
+
+  const sources = db.getDirectorySources();
+  if (sources.length === 0) return;
+
+  for (const video of videos) {
+    globalHashQueue.enqueue(async () => {
+      try {
+        const currentVideo = db.getVideo(video.id);
+        if (!currentVideo || currentVideo.hashStatus !== 'pending') return;
+
+        const result = await db.performVerifiedVideoHashing(
+          video.id,
+          async (loc) => {
+            const source = sources.find(s => s.id === loc.directoryId);
+            if (!source) return null;
+            const handle = await db.getDirectoryHandle(source.handleKey);
+            if (!handle) return null;
+            const perm = await handle.queryPermission({ mode: 'read' });
+            if (perm !== 'granted') return null;
+            const fileHandle = await getFileHandleFromRelativePath(handle, loc.relativePath);
+            return await fileHandle.getFile();
+          },
+          computeFileSHA256
+        );
+
+        if (result.status === 'success') {
+          if (result.merged) {
+            console.log(`Merged duplicate asset in background: ${video.id} -> ${result.targetAssetId}`);
+          } else if (result.conflict) {
+            console.log(`Conflict detected for contentHash ${result.hash}. Group ID: ${result.conflictGroupId}`);
+          } else {
+            console.log(`Successfully hashed video ${video.id} -> ${result.hash}`);
+          }
+        } else {
+          console.warn(`Background hashing finished with status: ${result.status}, reason: ${result.reason}`);
+        }
+        renderLibrary();
+      } catch (err) {
+        console.error(`Failed background hashing for video ${video.id}:`, err);
+      }
+    }).catch(err => {
+      console.error(`Queue error for video ${video.id}:`, err);
+    });
   }
 }
 
@@ -758,8 +814,7 @@ function getFilteredVideosList() {
 
   // 2. Tag Filter
   if (state.filters.tagId) {
-    const tagAssoc = db.videoTags.filter(vt => vt.tagId === state.filters.tagId).map(vt => vt.videoId);
-    videos = videos.filter(v => tagAssoc.includes(v.id));
+    videos = filterVideosByTag(videos, db.videoTags, state.filters.tagId);
   }
 
   // 3. Overall Grade Filter
@@ -1546,6 +1601,7 @@ function handleAddLocalFile(e) {
     cleanup(); // Revoke Object URL immediately
     
     try {
+      const qh = await computeQuickHash(file);
       const added = await db.addVideo({
         title: file.name,
         fileName: file.name,
@@ -1553,7 +1609,9 @@ function handleAddLocalFile(e) {
         videoUrl: '',
         duration: duration,
         thumbnailBlob: frameBlob,
-        sourceType: 'local-file'
+        sourceType: 'local-file',
+        quickHash: qh,
+        hashStatus: 'calculating'
       });
 
       state.videoFilesMap.set(added.id, file);
@@ -1561,30 +1619,67 @@ function handleAddLocalFile(e) {
 
       switchScreenToEditor(added.id);
       showToast('動画を追加しました');
+
+      // Trigger background full content hashing
+      computeFileSHA256(file).then(async hash => {
+        const result = await db.completeVideoHashing(added.id, hash);
+        if (result.merged) {
+          console.log(`Merged duplicate local asset: ${added.id} -> ${result.targetAssetId}`);
+          switchScreenToEditor(result.targetAssetId);
+        } else if (result.conflict) {
+          console.log(`Conflict detected for local file contentHash ${hash}. Group ID: ${result.conflictGroupId}`);
+        }
+        renderLibrary();
+      }).catch(async err => {
+        console.error('Local file hashing failed:', err);
+        await db.updateVideo(added.id, { hashStatus: 'failed' });
+      });
+
     } catch (err) {
       showToast(`動画を追加できませんでした: ${err.message}`, 'error');
     }
   };
   
-  tempVideo.onerror = () => {
+  tempVideo.onerror = async () => {
     cleanup();
     
-    db.addVideo({
-      title: file.name,
-      fileName: file.name,
-      fileSize: file.size,
-      videoUrl: '',
-      duration: 0,
-      thumbnailBlob: null,
-      sourceType: 'local-file'
-    }).then(added => {
+    try {
+      const qh = await computeQuickHash(file);
+      const added = await db.addVideo({
+        title: file.name,
+        fileName: file.name,
+        fileSize: file.size,
+        videoUrl: '',
+        duration: 0,
+        thumbnailBlob: null,
+        sourceType: 'local-file',
+        quickHash: qh,
+        hashStatus: 'calculating'
+      });
+
       state.videoFilesMap.set(added.id, file);
       els.addLocalFileInput.value = '';
       switchScreenToEditor(added.id);
       showToast('動画を追加しました(再生時間未取得)');
-    }).catch(err => {
+
+      // Trigger background full content hashing
+      computeFileSHA256(file).then(async hash => {
+        const result = await db.completeVideoHashing(added.id, hash);
+        if (result.merged) {
+          console.log(`Merged duplicate local asset: ${added.id} -> ${result.targetAssetId}`);
+          switchScreenToEditor(result.targetAssetId);
+        } else if (result.conflict) {
+          console.log(`Conflict detected for local file contentHash ${hash}. Group ID: ${result.conflictGroupId}`);
+        }
+        renderLibrary();
+      }).catch(async err => {
+        console.error('Local file hashing failed:', err);
+        await db.updateVideo(added.id, { hashStatus: 'failed' });
+      });
+
+    } catch (err) {
       showToast(`動画を追加できませんでした: ${err.message}`, 'error');
-    });
+    }
   };
 }
 
@@ -2443,6 +2538,7 @@ async function startFolderScanning(source, handle) {
 
     renderFolderSettingsPanel();
     renderLibrary();
+    processBackgroundHashingQueue();
   } catch (err) {
     els.scanProgressBox.classList.add('hidden');
     if (err.name === 'AbortError' || state.scanAbort) {
@@ -2816,7 +2912,9 @@ function renderSettingsGenreControls() {
 // Helper to generate a ZIP Blob of the current database state
 async function generateLocalBackupZipBlob() {
   const dbData = {
-    videos: db.videos,
+    schemaVersion: 3,
+    media_assets: db.mediaAssets,
+    file_locations: db.fileLocations,
     rating_criteria: db.criteria,
     video_reviews: db.reviews,
     criterion_ratings: db.criterionRatings,
@@ -2838,15 +2936,13 @@ async function generateLocalBackupZipBlob() {
 
   const manifest = {
     application: "VideoReviewer",
-    schemaVersion: 1,
+    schemaVersion: 3,
     createdAt: new Date().toISOString(),
     appVersion: "1.0.0",
     counts: {
-      videos: db.videos.length,
+      media_assets: db.mediaAssets.length,
+      file_locations: db.fileLocations.length,
       reviews: db.reviews.length,
-      criterionRatings: db.criterionRatings.length,
-      tags: db.tags.length,
-      timelineNotes: db.timelineNotes.length,
       images: images.length
     }
   };
@@ -2952,7 +3048,7 @@ async function handleBackupRestore(e) {
 
     let confirmMsg = `バックアップデータを復元しますか？\n現在のデータは上書きされ、復元されたデータに置き換わります。\n\n` +
       `作成日時: ${new Date(manifest.createdAt).toLocaleString()}\n` +
-      `動画数: ${manifest.counts.videos}本\n` +
+      `動画数: ${manifest.counts.media_assets !== undefined ? manifest.counts.media_assets : manifest.counts.videos}本\n` +
       `レビュー数: ${manifest.counts.reviews}件\n` +
       `画像数: ${manifest.counts.images}枚\n\n`;
 

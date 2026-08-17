@@ -3,6 +3,9 @@
  * Isolated from DOM and DB layers for unit testing compatibility.
  */
 
+import { computeQuickHash } from './hash-helper.js';
+import { normalizePath } from './video-helper.js';
+
 /**
  * Checks if a filename matches supported video formats (case-insensitive)
  * @param {string} fileName 
@@ -97,14 +100,16 @@ export async function scanDirectory({ directoryHandle, recursive = true, signal 
 
           if (entry.kind === 'file') {
             if (isSupportedVideoFile(entry.name)) {
-              const fileRelPath = relPath ? `${relPath}/${entry.name}` : entry.name;
+              const fileRelPath = normalizePath(relPath ? `${relPath}/${entry.name}` : entry.name);
               try {
                 const file = await entry.getFile();
+                const qh = await computeQuickHash(file);
                 scannedFiles.push({
                   fileName: entry.name,
                   fileSize: file.size,
                   lastModified: file.lastModified,
-                  relativePath: fileRelPath
+                  relativePath: fileRelPath,
+                  quickHash: qh
                 });
               } catch (err) {
                 failedFiles.push({
@@ -117,7 +122,7 @@ export async function scanDirectory({ directoryHandle, recursive = true, signal 
           } else if (entry.kind === 'directory' && recursive) {
             queue.push({
               dirHandle: entry,
-              relPath: relPath ? `${relPath}/${entry.name}` : entry.name
+              relPath: normalizePath(relPath ? `${relPath}/${entry.name}` : entry.name)
             });
           }
 
@@ -266,7 +271,9 @@ export async function applyScanDifferentials({ db, directoryId, scanResult, recu
           sourceType: 'directory',
           directoryId,
           relativePath: sf.relativePath,
-          lastModified: sf.lastModified
+          lastModified: sf.lastModified,
+          quickHash: sf.quickHash || '',
+          hashStatus: 'pending'
         });
         added++;
       } catch (err) {

@@ -1,0 +1,70 @@
+table,field,type,required,default,description,references,example,introducedInSchemaVersion
+media_assets,id,string,true,,Unique identifier of logical video asset,,vid-f64e28ab-b295-46cb-8d1b-123456789abc,3
+media_assets,contentHash,string,true,,SHA-256 hash of entire file contents,,e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855,3
+media_assets,hashAlgorithm,string,true,SHA-256,Hash algorithm name,,SHA-256,3
+media_assets,quickHash,string,true,,Fast preliminary candidate hash,,q_10485760_1a89c8a98f7e8b8c,3
+media_assets,hashStatus,string,true,pending,Hashing state (pending / calculating / completed / failed),,completed,3
+media_assets,fileSize,number,true,,Reference file size in bytes,,10485760,3
+media_assets,duration,number,true,,Duration of video in seconds,,123.45,3
+media_assets,displayTitle,string,false,,Nullable user-set display title (falls back to filename/original title),,My Video Presentation,3
+media_assets,genreId,string,true,genre-default,Genre reference,genres.id,genre-action,3
+media_assets,thumbnailId,string,false,,ID reference to image store in IndexedDB,,img-vid-abc,3
+media_assets,identityStatus,string,true,normal,Conflict state of logical asset (normal / conflict),,normal,3
+media_assets,identityConflictGroupId,string,false,,ID reference to the conflict group,,conflict-f64e28ab-b295-46cb-8d1b-123456789abc,3
+media_assets,createdAt,string,true,,Timestamp of asset creation,,2026-08-16T12:00:00.000Z,3
+media_assets,updatedAt,string,true,,Timestamp of asset last update,,2026-08-16T12:05:00.000Z,3
+file_locations,id,string,true,,Unique file location identifier,,loc-9a2d3b4e-8f90-4c3d-be1f-123456789abc,3
+file_locations,mediaAssetId,string,true,,Foreign key pointing to the media asset,media_assets.id,vid-f64e28ab-b295-46cb-8d1b-123456789abc,3
+file_locations,directoryId,string,false,,Foreign key pointing to directory source,directory_sources.id,dir-e9c8b7a6,3
+file_locations,relativePath,string,true,,Path relative to the directory source,,subfolder/video.mp4,3
+file_locations,fileName,string,true,,File name with extension,,video.mp4,3
+file_locations,fileSize,number,true,,Physical file size in bytes,,10485760,3
+file_locations,lastModified,number,true,,Physical file system last modified timestamp,,1718228392102,3
+file_locations,availabilityStatus,string,true,available,Reachability status (available / permission-required / missing / unsupported / scan-error),,available,3
+file_locations,lastVerifiedAt,string,true,,Timestamp of last verify check,,2026-08-16T12:00:00.000Z,3
+file_locations,createdAt,string,true,,Timestamp of location registration,,2026-08-16T12:00:00.000Z,3
+file_locations,updatedAt,string,true,,Timestamp of location update,,2026-08-16T12:00:00.000Z,3
+video_reviews,id,string,true,,Unique review identifier,,rev-a91d9a9c-84c5-4f59-9b4e-be51a1a13ec7,1
+video_reviews,mediaAssetId,string,true,,Foreign key referencing the logical media asset,media_assets.id,vid-f64e28ab-b295-46cb-8d1b-123456789abc,3
+video_reviews,overallGrade,string,false,,Overall evaluation grade,,A,1
+video_reviews,comment,string,false,,Overall comments,,Excellent video.,1
+video_reviews,createdAt,string,true,,Timestamp of review creation,,2026-08-16T12:00:00.000Z,1
+video_reviews,updatedAt,string,true,,Timestamp of review update,,2026-08-16T12:00:00.000Z,1
+criterion_ratings,id,string,true,,Unique rating identifier,,rate-1a2b3c4d,1
+criterion_ratings,videoReviewId,string,true,,Foreign key to the review,video_reviews.id,rev-a91d9a9c-84c5-4f59-9b4e-be51a1a13ec7,1
+criterion_ratings,criterionId,string,true,,Foreign key to rating criterion,rating_criteria.id,crit-lighting,1
+criterion_ratings,score,number,false,,Rating score (1 to 5),,4,1
+rating_criteria,id,string,true,,Unique criterion identifier,,crit-lighting,1
+rating_criteria,name,string,true,,Name of the criterion,,Lighting,1
+rating_criteria,description,string,true,,Description of the criterion,,Evaluates the light quality.,1
+tags,id,string,true,,Unique tag identifier,,tag-action,1
+tags,name,string,true,,Name of the tag,,Action,1
+video_tags,mediaAssetId,string,true,,Foreign key referencing the logical media asset,media_assets.id,vid-f64e28ab-b295-46cb-8d1b-123456789abc,3
+video_tags,tagId,string,true,,Foreign key referencing the tag,tags.id,tag-action,3
+timeline_notes,id,string,true,,Unique timeline note identifier,,note-45f16b05-b287-41a6-a62e-f59964aef438,1
+timeline_notes,videoReviewId,string,true,,Foreign key referencing the review,video_reviews.id,rev-a91d9a9c-84c5-4f59-9b4e-be51a1a13ec7,1
+timeline_notes,mediaAssetId,string,true,,Foreign key referencing the media asset,media_assets.id,vid-f64e28ab-b295-46cb-8d1b-123456789abc,3
+timeline_notes,timestampSeconds,number,true,,Timestamp of the note in seconds,,12.34,1
+timeline_notes,timestampLabel,string,true,,Format representation of timestamp,,00:12,1
+timeline_notes,comment,string,true,,Content of note,,Noticeable camera shake.,1
+timeline_notes,thumbnailId,string,false,,ID reference to image store in IndexedDB,,img-note-abc,2
+timeline_notes,createdAt,string,true,,Timestamp of note creation,,2026-08-16T12:00:00.000Z,1
+directory_sources,id,string,true,,Unique identifier of directory source,,dir-e9c8b7a6,1
+directory_sources,name,string,true,,Directory folder name,,My local videos,1
+directory_sources,includeSubdirectories,boolean,true,true,Flag to search in subdirectories,,true,1
+directory_sources,permissionStatus,string,true,prompt,FileSystem API status (granted / denied / prompt / disconnected),,granted,1
+directory_sources,handleKey,string,true,,IndexedDB key for FileSystemDirectoryHandle,,directory-handle-dir-e9c8b7a6,1
+directory_sources,createdAt,string,true,,Timestamp of registration,,2026-08-16T12:00:00.000Z,1
+directory_sources,updatedAt,string,true,,Timestamp of update,,2026-08-16T12:00:00.000Z,1
+genres,id,string,true,,Unique genre identifier,,genre-action,2
+genres,name,string,true,,Internal name of the genre,,action,2
+genres,displayTitle,string,true,,Display title of the genre,,Action Movies,2
+genres,description,string,false,,Description of the genre,,Action packed movies.,2
+genres,createdAt,string,true,,Timestamp of creation,,2026-08-16T12:00:00.000Z,2
+genres,updatedAt,string,true,,Timestamp of update,,2026-08-16T12:00:00.000Z,2
+evaluation_templates,id,string,true,,Unique template identifier,,temp-action,2
+evaluation_templates,genreId,string,true,,Foreign key to genre,genres.id,genre-action,2
+evaluation_templates,name,string,true,,Name of the template,,Standard Action evaluation,2
+evaluation_templates,criteriaIds,string,true,,Comma-separated criterion IDs,,crit-lighting,crit-acting,2
+evaluation_templates,createdAt,string,true,,Timestamp of creation,,2026-08-16T12:00:00.000Z,2
+evaluation_templates,updatedAt,string,true,,Timestamp of update,,2026-08-16T12:00:00.000Z,2
