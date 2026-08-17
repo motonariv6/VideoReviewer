@@ -13,6 +13,13 @@ function generateUUID() {
   return 'id-' + Date.now().toString(36) + '-' + Math.random().toString(36).substr(2, 9);
 }
 
+// Normalizes displayTitle: null/undefined/blank becomes null, non-empty string is trimmed.
+export function normalizeDisplayTitle(title) {
+  if (title === null || title === undefined) return null;
+  const trimmed = String(title).trim();
+  return trimmed === '' ? null : trimmed;
+}
+
 // Default Rating Criteria
 const DEFAULT_CRITERIA = [
   { id: 'crit-content', name: '内容', description: 'ストーリーやテーマ性など構成要素の評価', displayOrder: 1, isActive: true, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() },
@@ -976,25 +983,80 @@ export class AppDatabase {
     return this._buildVirtualVideo(asset);
   }
 
-  async addVideo({ title, fileName, fileSize, videoUrl, duration, thumbnailBlob, sourceType, directoryId, relativePath, lastModified, contentHash, quickHash, hashStatus }) {
+  async addVideo({ title, displayTitle, fileName, fileSize, videoUrl, duration, thumbnailBlob, sourceType, directoryId, relativePath, lastModified, contentHash, quickHash, hashStatus }) {
     const sType = sourceType || (videoUrl ? 'url' : 'directory');
-    
+    const normalizedTitle = normalizeDisplayTitle(displayTitle !== undefined ? displayTitle : title);
+
     let existingAsset = null;
     let existingLoc = null;
 
     if (sType === 'url') {
       existingAsset = this.mediaAssets.find(a => a.videoUrl === videoUrl);
     } else {
+      // 1. Check physical location match (directoryId + relativePath)
       existingLoc = this.fileLocations.find(l => l.directoryId === directoryId && l.relativePath === relativePath);
       if (existingLoc) {
         existingAsset = this.mediaAssets.find(a => a.id === existingLoc.mediaAssetId);
+        if (existingAsset) {
+          let assetChanged = false;
+          if (contentHash && existingAsset.contentHash !== contentHash) {
+            existingAsset.contentHash = contentHash;
+            existingAsset.hashStatus = hashStatus || 'completed';
+            assetChanged = true;
+          }
+          if (quickHash && !existingAsset.quickHash) {
+            existingAsset.quickHash = quickHash;
+            assetChanged = true;
+          }
+          if (normalizedTitle !== undefined && normalizedTitle !== null && existingAsset.displayTitle !== normalizedTitle) {
+            existingAsset.displayTitle = normalizedTitle;
+            assetChanged = true;
+          }
+          if (assetChanged) {
+            existingAsset.updatedAt = new Date().toISOString();
+            this._saveTable('media_assets', this.mediaAssets);
+          }
+          if (existingLoc.availabilityStatus !== 'available' || (fileSize && existingLoc.fileSize !== fileSize)) {
+            existingLoc.availabilityStatus = 'available';
+            if (fileSize) existingLoc.fileSize = fileSize;
+            if (lastModified) existingLoc.lastModified = lastModified;
+            existingLoc.lastVerifiedAt = new Date().toISOString();
+            existingLoc.updatedAt = new Date().toISOString();
+            this._saveTable('file_locations', this.fileLocations);
+          }
+          return this._buildVirtualVideo(existingAsset);
+        }
+      }
+
+      // 2. Check if another asset already exists with identical non-empty contentHash
+      if (contentHash) {
+        existingAsset = this.mediaAssets.find(a => a.contentHash === contentHash);
       }
     }
 
+    // 3. If matching media asset exists by contentHash, attach new location to it
     if (existingAsset) {
+      if (sType !== 'url' && !existingLoc) {
+        const newLoc = {
+          id: 'loc-' + generateUUID(),
+          mediaAssetId: existingAsset.id,
+          directoryId: directoryId || '',
+          relativePath: relativePath || '',
+          fileName: fileName || '',
+          fileSize: fileSize || existingAsset.fileSize || 0,
+          lastModified: lastModified || 0,
+          availabilityStatus: 'available',
+          lastVerifiedAt: new Date().toISOString(),
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString()
+        };
+        this.fileLocations.push(newLoc);
+        this._saveTable('file_locations', this.fileLocations);
+      }
       return this._buildVirtualVideo(existingAsset);
     }
 
+    // 4. Create new media asset and location
     const assetId = 'vid-' + generateUUID();
     const locId = 'loc-' + generateUUID();
 
@@ -1003,10 +1065,10 @@ export class AppDatabase {
       contentHash: contentHash || '',
       hashAlgorithm: 'SHA-256',
       quickHash: quickHash || '',
-      hashStatus: hashStatus || 'pending',
+      hashStatus: hashStatus || (contentHash ? 'completed' : 'pending'),
       fileSize: fileSize || 0,
       duration: duration || 0,
-      displayTitle: title || fileName || 'Untitled Video',
+      displayTitle: normalizedTitle,
       genreId: 'genre-default',
       thumbnailId: '',
       videoUrl: videoUrl || '',
@@ -1076,6 +1138,131 @@ export class AppDatabase {
     return loc;
   }
 
+  async mergeMediaAssets(targetAssetId, sourceAssetId, { force = false } = {}) {
+    if (targetAssetId === sourceAssetId) return { merged: true, targetAssetId };
+
+    const targetAsset = this.mediaAssets.find(a => a.id === targetAssetId);
+    const sourceAsset = this.mediaAssets.find(a => a.id === sourceAssetId);
+    if (!targetAsset || !sourceAsset) {
+      throw new Error('Merge error: target or source media asset not found.');
+    }
+
+    // Determine evaluations
+    const targetReview = this.reviews.find(r => r.mediaAssetId === targetAssetId);
+    const sourceReview = this.reviews.find(r => r.mediaAssetId === sourceAssetId);
+    const targetRatings = targetReview ? this.getCriterionRatingsForReview(targetReview.id) : [];
+    const sourceRatings = sourceReview ? this.getCriterionRatingsForReview(sourceReview.id) : [];
+
+    const hasTargetEval = !!(targetReview && (targetReview.overallGrade || targetReview.comment || targetRatings.length > 0));
+    const hasSourceEval = !!(sourceReview && (sourceReview.overallGrade || sourceReview.comment || sourceRatings.length > 0));
+
+    // Determine canonical target: if source has eval and target does not, swap canonical target
+    let canonicalTargetId = targetAssetId;
+    let canonicalSourceId = sourceAssetId;
+
+    if (!hasTargetEval && hasSourceEval) {
+      canonicalTargetId = sourceAssetId;
+      canonicalSourceId = targetAssetId;
+    } else if (hasTargetEval && hasSourceEval && !force) {
+      const gradeConflict = targetReview.overallGrade && sourceReview.overallGrade && targetReview.overallGrade !== sourceReview.overallGrade;
+      if (gradeConflict) {
+        return {
+          merged: false,
+          conflict: true,
+          message: `Evaluation conflict between ${targetAssetId} and ${sourceAssetId}. Manual resolution required.`
+        };
+      }
+    }
+
+    // Create snapshot for atomic rollback
+    const snapAssets = JSON.parse(JSON.stringify(this.mediaAssets));
+    const snapLocations = JSON.parse(JSON.stringify(this.fileLocations));
+    const snapReviews = JSON.parse(JSON.stringify(this.reviews));
+    const snapRatings = JSON.parse(JSON.stringify(this.criterionRatings));
+    const snapVideoTags = JSON.parse(JSON.stringify(this.videoTags));
+    const snapNotes = JSON.parse(JSON.stringify(this.timelineNotes));
+
+    try {
+      const target = this.mediaAssets.find(a => a.id === canonicalTargetId);
+      const source = this.mediaAssets.find(a => a.id === canonicalSourceId);
+
+      // 1. Re-link file locations
+      this.fileLocations.forEach(loc => {
+        if (loc.mediaAssetId === canonicalSourceId) {
+          loc.mediaAssetId = canonicalTargetId;
+          loc.updatedAt = new Date().toISOString();
+        }
+      });
+
+      // 2. Merge video tags without duplicates
+      const targetTagIds = new Set(this.videoTags.filter(vt => vt.mediaAssetId === canonicalTargetId).map(vt => vt.tagId));
+      this.videoTags.forEach(vt => {
+        if (vt.mediaAssetId === canonicalSourceId) {
+          if (!targetTagIds.has(vt.tagId)) {
+            vt.mediaAssetId = canonicalTargetId;
+            targetTagIds.add(vt.tagId);
+          }
+        }
+      });
+      this.videoTags = this.videoTags.filter(vt => vt.mediaAssetId !== canonicalSourceId);
+
+      // 3. Merge timeline notes
+      let activeReview = this.reviews.find(r => r.mediaAssetId === canonicalTargetId);
+      if (!activeReview) {
+        const sRev = this.reviews.find(r => r.mediaAssetId === canonicalSourceId);
+        if (sRev) {
+          sRev.mediaAssetId = canonicalTargetId;
+          activeReview = sRev;
+        }
+      }
+      this.timelineNotes.forEach(note => {
+        if (note.mediaAssetId === canonicalSourceId) {
+          note.mediaAssetId = canonicalTargetId;
+          if (activeReview) {
+            note.videoReviewId = activeReview.id;
+          }
+          note.updatedAt = new Date().toISOString();
+        }
+      });
+
+      // 4. Merge review & ratings
+      if (!targetReview && sourceReview) {
+        sourceReview.mediaAssetId = canonicalTargetId;
+      } else if (sourceReview && targetReview) {
+        this.reviews = this.reviews.filter(r => r.id !== sourceReview.id);
+        this.criterionRatings = this.criterionRatings.filter(cr => cr.videoReviewId !== sourceReview.id);
+      }
+
+      // 5. Preserve thumbnail
+      if (!target.thumbnailId && source.thumbnailId) {
+        target.thumbnailId = source.thumbnailId;
+      }
+
+      // 6. Remove source asset
+      this.mediaAssets = this.mediaAssets.filter(a => a.id !== canonicalSourceId);
+
+      // Save all tables
+      this._saveTable('media_assets', this.mediaAssets);
+      this._saveTable('file_locations', this.fileLocations);
+      this._saveTable('video_reviews', this.reviews);
+      this._saveTable('criterion_ratings', this.criterionRatings);
+      this._saveTable('video_tags', this.videoTags);
+      this._saveTable('timeline_notes', this.timelineNotes);
+
+      return { merged: true, targetAssetId: canonicalTargetId, sourceAssetId: canonicalSourceId };
+    } catch (err) {
+      // Atomic rollback
+      this.mediaAssets = snapAssets;
+      this.fileLocations = snapLocations;
+      this.reviews = snapReviews;
+      this.criterionRatings = snapRatings;
+      this.videoTags = snapVideoTags;
+      this.timelineNotes = snapNotes;
+      this._saveAll();
+      throw err;
+    }
+  }
+
   async updateVideo(id, updates) {
     const asset = this.mediaAssets.find(a => a.id === id);
     if (asset) {
@@ -1086,8 +1273,8 @@ export class AppDatabase {
       const locUpdates = {};
       
       for (const [k, v] of Object.entries(updates)) {
-        if (k === 'title') {
-          assetUpdates.displayTitle = v;
+        if (k === 'title' || k === 'displayTitle') {
+          assetUpdates.displayTitle = normalizeDisplayTitle(v);
         } else if (assetKeys.includes(k)) {
           assetUpdates[k] = v;
         }
@@ -1205,7 +1392,7 @@ export class AppDatabase {
     return this.getCriteria().filter(c => c.isActive);
   }
 
-  async addCriterion(name) {
+  async addCriterion(name, description = '') {
     const active = this.getActiveCriteria();
     if (active.length >= 6) {
       throw new Error('Maximum of 6 active criteria allowed.');
@@ -1215,6 +1402,7 @@ export class AppDatabase {
     const crit = {
       id: 'crit-' + generateUUID(),
       name,
+      description: description || '',
       displayOrder: maxOrder + 1,
       isActive: true,
       createdAt: new Date().toISOString(),
@@ -1229,6 +1417,9 @@ export class AppDatabase {
   async updateCriterion(id, updates) {
     const idx = this.criteria.findIndex(c => c.id === id);
     if (idx !== -1) {
+      if (updates.description !== undefined) {
+        updates.description = updates.description || '';
+      }
       this.criteria[idx] = {
         ...this.criteria[idx],
         ...updates,
@@ -1504,6 +1695,9 @@ export class AppDatabase {
     const fatalErrors = [];
     const warnings = [];
 
+    // Clone the input parsedDb to avoid mutating the original object
+    const rawDb = JSON.parse(JSON.stringify(parsedDb || {}));
+
     // 1. Verify manifest exists
     if (!manifest || typeof manifest !== 'object') {
       fatalErrors.push('マニフェストファイルがありません。');
@@ -1541,21 +1735,21 @@ export class AppDatabase {
       seenImages.add(imgId);
     });
 
-    if (parsedDb && typeof parsedDb === 'object') {
+    if (rawDb && typeof rawDb === 'object') {
       if (manifest && manifest.schemaVersion) {
-        parsedDb.schemaVersion = parsedDb.schemaVersion || manifest.schemaVersion;
+        rawDb.schemaVersion = rawDb.schemaVersion || manifest.schemaVersion;
       }
     }
 
-    if (fatalErrors.length === 0 && parsedDb && typeof parsedDb === 'object') {
+    if (fatalErrors.length === 0 && rawDb && typeof rawDb === 'object') {
       // 7. Match counts
-      if (manifest.counts.media_assets !== parsedDb.media_assets.length) {
+      if (manifest.counts.media_assets !== rawDb.media_assets.length) {
         fatalErrors.push('動画アセットの件数がマニフェストのカウントと一致しません。');
       }
-      if (manifest.counts.file_locations !== parsedDb.file_locations.length) {
+      if (manifest.counts.file_locations !== rawDb.file_locations.length) {
         fatalErrors.push('ファイル所在地の件数がマニフェストのカウントと一致しません。');
       }
-      if (manifest.counts.reviews !== parsedDb.video_reviews.length) {
+      if (manifest.counts.reviews !== rawDb.video_reviews.length) {
         fatalErrors.push('レビューの件数がマニフェストのカウントと一致しません。');
       }
       if (manifest.counts.images !== imageIds.length) {
@@ -1565,9 +1759,9 @@ export class AppDatabase {
       // 8. Validate duplicate IDs within each table
       const tablesWithId = ['media_assets', 'file_locations', 'rating_criteria', 'video_reviews', 'tags', 'timeline_notes', 'directory_sources', 'genres', 'evaluation_templates'];
       tablesWithId.forEach(t => {
-        if (Array.isArray(parsedDb[t])) {
+        if (Array.isArray(rawDb[t])) {
           const ids = new Set();
-          parsedDb[t].forEach((item, idx) => {
+          rawDb[t].forEach((item, idx) => {
             if (item && item.id) {
               if (ids.has(item.id)) {
                 fatalErrors.push(`テーブル ${t} に重複するID ${item.id} が検出されました。`);
@@ -1579,9 +1773,9 @@ export class AppDatabase {
       });
 
       // 9. Validate duplicate IDs in criterion_ratings
-      if (Array.isArray(parsedDb.criterion_ratings)) {
+      if (Array.isArray(rawDb.criterion_ratings)) {
         const crIds = new Set();
-        parsedDb.criterion_ratings.forEach(cr => {
+        rawDb.criterion_ratings.forEach(cr => {
           if (cr && cr.id) {
             if (crIds.has(cr.id)) {
               fatalErrors.push(`criterion_ratings に重複する ID ${cr.id} が検出されました。`);
@@ -1590,19 +1784,68 @@ export class AppDatabase {
           }
         });
       }
+
+      // 10. Validate contentHash constraints and check duplicate non-empty contentHash
+      if (Array.isArray(rawDb.media_assets)) {
+        const seenContentHashes = new Map();
+        rawDb.media_assets.forEach(v => {
+          if (v.hashStatus === 'completed') {
+            if (!v.contentHash || !/^[0-9a-f]{64}$/.test(v.contentHash)) {
+              fatalErrors.push(`動画アセット ${v.id} の contentHash が不正です (completed 状態では 64 文字の小文字 16 進数が必要です)。`);
+            }
+          } else {
+            if (v.contentHash && !/^[0-9a-f]{64}$/.test(v.contentHash)) {
+              fatalErrors.push(`動画アセット ${v.id} の contentHash の形式が不正です。`);
+            }
+          }
+          if (v.contentHash && v.contentHash.trim() !== '') {
+            if (seenContentHashes.has(v.contentHash)) {
+              fatalErrors.push(`動画アセット ${v.id} の contentHash (${v.contentHash}) がアセット ${seenContentHashes.get(v.contentHash)} と重複しています。`);
+            } else {
+              seenContentHashes.set(v.contentHash, v.id);
+            }
+          }
+        });
+      }
+
+      // 11. Validate file_locations constraints: mediaAssetId reference and unique physical path
+      if (Array.isArray(rawDb.file_locations)) {
+        const seenLocations = new Set();
+        rawDb.file_locations.forEach(loc => {
+          if (!rawDb.media_assets.some(v => v.id === loc.mediaAssetId)) {
+            fatalErrors.push(`ファイル所在地 ${loc.id} が参照する動画アセット ${loc.mediaAssetId} が存在しません。`);
+          }
+          if (loc.directoryId || loc.relativePath) {
+            const locKey = `${loc.directoryId || ''}::${loc.relativePath || ''}`;
+            if (seenLocations.has(locKey)) {
+              fatalErrors.push(`ファイル所在地 ${loc.id} (${loc.relativePath}) の物理パスが重複して登録されています。`);
+            }
+            seenLocations.add(locKey);
+          }
+        });
+      }
+
+      // 12. Backfill missing rating criteria descriptions
+      if (Array.isArray(rawDb.rating_criteria)) {
+        rawDb.rating_criteria.forEach(c => {
+          if (c.description === undefined) {
+            c.description = '';
+          }
+        });
+      }
     }
 
     // Inspect timeline notes and perform legacy repair/exclusion
     const keptTimelineNotes = [];
-    if (parsedDb && Array.isArray(parsedDb.timeline_notes) && Array.isArray(parsedDb.video_reviews)) {
-      parsedDb.timeline_notes.forEach(n => {
-        const hasDirectReview = parsedDb.video_reviews.some(r => r.id === n.videoReviewId);
+    if (rawDb && Array.isArray(rawDb.timeline_notes) && Array.isArray(rawDb.video_reviews)) {
+      rawDb.timeline_notes.forEach(n => {
+        const hasDirectReview = rawDb.video_reviews.some(r => r.id === n.videoReviewId);
         if (hasDirectReview) {
           keptTimelineNotes.push(n);
         } else {
           // Attempt safe repair (mediaAssetId / videoId match)
           const targetAssetId = n.mediaAssetId || n.videoId;
-          const matchingReviews = targetAssetId ? parsedDb.video_reviews.filter(r => r.mediaAssetId === targetAssetId) : [];
+          const matchingReviews = targetAssetId ? rawDb.video_reviews.filter(r => r.mediaAssetId === targetAssetId) : [];
           if (matchingReviews.length === 1) {
             const targetReview = matchingReviews[0];
             const repairedNote = {
@@ -1631,14 +1874,11 @@ export class AppDatabase {
       });
     }
 
-    const repairedDb = {
-      ...parsedDb,
-      timeline_notes: keptTimelineNotes
-    };
+    rawDb.timeline_notes = keptTimelineNotes;
 
     // 6. Validate using JSON Schema v3 on the repaired/cleaned database
-    if (repairedDb && typeof repairedDb === 'object') {
-      const schemaErrors = validateDataByJsonSchema(repairedDb, BACKUP_SCHEMA);
+    if (rawDb && typeof rawDb === 'object') {
+      const schemaErrors = validateDataByJsonSchema(rawDb, BACKUP_SCHEMA);
       if (schemaErrors && schemaErrors.length > 0) {
         fatalErrors.push(...schemaErrors);
       }
@@ -1646,8 +1886,8 @@ export class AppDatabase {
 
     // Recalculate required images set based only on kept/valid database objects
     const requiredImageIdsSet = new Set();
-    if (parsedDb && Array.isArray(parsedDb.media_assets)) {
-      parsedDb.media_assets.forEach(v => {
+    if (rawDb && Array.isArray(rawDb.media_assets)) {
+      rawDb.media_assets.forEach(v => {
         if (v.thumbnailId) requiredImageIdsSet.add(v.thumbnailId);
       });
     }
@@ -1663,32 +1903,32 @@ export class AppDatabase {
     });
 
     // Cross-table references (referential integrity check) on valid kept entries
-    if (parsedDb && fatalErrors.length === 0) {
-      if (Array.isArray(parsedDb.video_reviews)) {
-        parsedDb.video_reviews.forEach(r => {
-          if (!parsedDb.media_assets.some(v => v.id === r.mediaAssetId)) {
+    if (rawDb && fatalErrors.length === 0) {
+      if (Array.isArray(rawDb.video_reviews)) {
+        rawDb.video_reviews.forEach(r => {
+          if (!rawDb.media_assets.some(v => v.id === r.mediaAssetId)) {
             fatalErrors.push(`レビュー ${r.id} が参照する動画 ${r.mediaAssetId} が存在しません。`);
           }
         });
       }
 
-      if (Array.isArray(parsedDb.criterion_ratings)) {
-        parsedDb.criterion_ratings.forEach(cr => {
-          if (!parsedDb.video_reviews.some(r => r.id === cr.videoReviewId)) {
+      if (Array.isArray(rawDb.criterion_ratings)) {
+        rawDb.criterion_ratings.forEach(cr => {
+          if (!rawDb.video_reviews.some(r => r.id === cr.videoReviewId)) {
             fatalErrors.push(`評価スコア ${cr.id} が参照するレビュー ${cr.videoReviewId} が存在しません。`);
           }
-          if (!parsedDb.rating_criteria.some(c => c.id === cr.criterionId)) {
+          if (!rawDb.rating_criteria.some(c => c.id === cr.criterionId)) {
             fatalErrors.push(`評価スコア ${cr.id} が参照する評価項目 ${cr.criterionId} が存在しません。`);
           }
         });
       }
 
-      if (Array.isArray(parsedDb.video_tags)) {
-        parsedDb.video_tags.forEach(vt => {
-          if (!parsedDb.media_assets.some(v => v.id === vt.mediaAssetId)) {
+      if (Array.isArray(rawDb.video_tags)) {
+        rawDb.video_tags.forEach(vt => {
+          if (!rawDb.media_assets.some(v => v.id === vt.mediaAssetId)) {
             fatalErrors.push(`タグ関連情報が参照する動画 ${vt.mediaAssetId} が存在しません。`);
           }
-          if (!parsedDb.tags.some(t => t.id === vt.tagId)) {
+          if (!rawDb.tags.some(t => t.id === vt.tagId)) {
             fatalErrors.push(`タグ関連情報が参照するタグ ${vt.tagId} が存在しません。`);
           }
         });
@@ -1696,28 +1936,28 @@ export class AppDatabase {
 
       // Check referential integrity for kept notes
       keptTimelineNotes.forEach(n => {
-        if (!parsedDb.video_reviews.some(r => r.id === n.videoReviewId)) {
+        if (!rawDb.video_reviews.some(r => r.id === n.videoReviewId)) {
           fatalErrors.push(`タイムラインメモ ${n.id} が参照するレビュー ${n.videoReviewId} が存在しません。`);
         }
       });
 
-      if (Array.isArray(parsedDb.media_assets)) {
-        parsedDb.media_assets.forEach(v => {
-          if (v.genreId && !parsedDb.genres.some(g => g.id === v.genreId)) {
+      if (Array.isArray(rawDb.media_assets)) {
+        rawDb.media_assets.forEach(v => {
+          if (v.genreId && !rawDb.genres.some(g => g.id === v.genreId)) {
             fatalErrors.push(`動画 ${v.id} が参照するジャンル ${v.genreId} が存在しません。`);
           }
         });
       }
 
-      if (Array.isArray(parsedDb.evaluation_templates)) {
-        parsedDb.evaluation_templates.forEach(t => {
-          if (!parsedDb.genres.some(g => g.id === t.genreId)) {
+      if (Array.isArray(rawDb.evaluation_templates)) {
+        rawDb.evaluation_templates.forEach(t => {
+          if (!rawDb.genres.some(g => g.id === t.genreId)) {
             fatalErrors.push(`テンプレート ${t.id} が参照するジャンル ${t.genreId} が存在しません。`);
           }
           if (t.criteriaIds) {
             const ids = t.criteriaIds.split(',').map(s => s.trim()).filter(Boolean);
             ids.forEach(cid => {
-              if (!parsedDb.rating_criteria.some(c => c.id === cid)) {
+              if (!rawDb.rating_criteria.some(c => c.id === cid)) {
                 fatalErrors.push(`テンプレート ${t.id} が参照する評価項目 ${cid} が存在しません。`);
               }
             });
@@ -1730,10 +1970,7 @@ export class AppDatabase {
       isValid: fatalErrors.length === 0,
       fatalErrors,
       warnings,
-      repairedDb: {
-        ...parsedDb,
-        timeline_notes: keptTimelineNotes
-      },
+      repairedDb: rawDb,
       requiredImageIds: Array.from(requiredImageIdsSet)
     };
   }
@@ -2000,7 +2237,7 @@ export class AppDatabase {
     return this.getCriteriaForGenre(genreId).filter(c => c.isActive);
   }
 
-  async addCriterionToGenre(genreId, name) {
+  async addCriterionToGenre(genreId, name, description = '') {
     if (!name || !name.trim()) throw new Error('項目名を入力してください。');
     const cleanName = name.trim();
 
@@ -2022,6 +2259,7 @@ export class AppDatabase {
       id: 'crit-' + generateUUID(),
       templateId: template.id,
       name: cleanName,
+      description: description || '',
       displayOrder: maxOrder + 1,
       isActive: true,
       createdAt: new Date().toISOString(),
@@ -2055,6 +2293,7 @@ export class AppDatabase {
         id: 'crit-' + generateUUID(),
         templateId: toTemplate.id,
         name: sc.name,
+        description: sc.description || '',
         displayOrder: index + 1,
         isActive: true,
         createdAt: now,
@@ -2196,7 +2435,7 @@ export const BACKUP_SCHEMA = {
           "hashStatus": { "type": "string", "enum": ["pending", "calculating", "completed", "failed"] },
           "fileSize": { "type": "integer", "minimum": 0 },
           "duration": { "type": "number", "minimum": 0 },
-          "displayTitle": { "type": "string", "minLength": 1 },
+          "displayTitle": { "type": ["string", "null"] },
           "genreId": { "type": "string", "pattern": "^genre-[a-zA-Z0-9-]{1,64}$" },
           "thumbnailId": { "type": "string" },
           "createdAt": { "type": "string" },
@@ -2399,7 +2638,7 @@ export function validateDataByJsonSchema(data, schema) {
               return;
             }
             for (const reqProp of itemRequired) {
-              if (!(reqProp in item) || item[reqProp] === undefined || item[reqProp] === null) {
+              if (!(reqProp in item) || item[reqProp] === undefined) {
                 errors.push("テーブル " + key + " のレコード (index: " + idx + ") に必須プロパティ " + reqProp + " が存在しません。");
               }
             }

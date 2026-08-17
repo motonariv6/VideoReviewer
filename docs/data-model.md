@@ -8,6 +8,23 @@ The database splits the logical concept of a "Video" (a unique media asset repre
 
 ---
 
+## Identity & Hashing Architecture
+
+1. **Quick Hash (Candidate Selection)**:
+   - Formed from `fileSize` + leading 1MB + middle 1MB + trailing 1MB chunks (e.g. `q_10485760_1a89c...`).
+   - Quick Hash is used exclusively for candidate pre-filtering during scanning. It is **never** used as proof of uniqueness or final deduplication.
+2. **Full Content Hash (SHA-256 Identity)**:
+   - Full 64-character lowercase hexadecimal string of the entire file's SHA-256 digest (`^[0-9a-f]{64}$`).
+   - Absolute identity of any media asset is established strictly by this complete `contentHash`.
+   - Calculated asynchronously in 1MB chunks using Web Workers (`js/sha256-worker.js`) to prevent UI blocking or excessive memory allocation.
+3. **Hashing States**:
+   - `pending`: Waiting in queue for calculation.
+   - `calculating`: Currently being computed.
+   - `completed`: Successfully computed 64-character SHA-256 hash.
+   - `failed`: File read error or computation failure (does not damage existing annotations).
+
+---
+
 ## Storage Architecture & Boundary
 
 The application uses a hybrid storage model:
@@ -44,6 +61,7 @@ The application uses a hybrid storage model:
 
 ### 1. `media_assets` (Logical Record)
 - **Key Identifiers**: Keyed by unique logical IDs (UUIDs prefixed with `vid-`). The absolute identity is verified via `contentHash` (SHA-256).
+- **displayTitle**: Nullable user-set title (`string | null`). When null or empty, displays fallback to physical `fileName` or original title.
 - **genreId**: Foreign key pointing to `genres.id`.
 - **thumbnailId**: Foreign key pointing to the `images` store in IndexedDB.
 
@@ -55,51 +73,11 @@ The application uses a hybrid storage model:
 
 ---
 
-## File Status & logical Availability
+## Deduplication & Merge Safety Rules
 
-A media asset is logical available (`available`) if **at least one** of its physical `file_locations` has an `availabilityStatus` of `'available'`. If all connected locations are `'missing'` or `'permission-required'`, the logical asset is flagged as disconnected but all ratings and reviews remain intact.
-
----
-
-## Schema Migration History
-
-- **v1**: LocalStorage schema with base64 encoded thumbnails.
-- **v2**: Migration of base64 thumbnails to binary Blobs inside IndexedDB to prevent localStorage quota exhaustion.
-- **v3**: Separation of `videos` into `media_assets` and `file_locations` to support content-hash identity. Related tables migrated from `videoId` to `mediaAssetId`.
-
----
-
-## Future Extensibility Design
-
-The `media_assets` schema is designed to allow extensions for AI analysis and natural language search.
-
-### Proposed AI/Search Fields (Extensibility Blueprint)
-```json
-{
-  "jellyfinItemId": "string",
-  "transcript": {
-    "text": "string",
-    "segments": [{"start": 0.0, "end": 2.5, "text": "string"}]
-  },
-  "sceneSummaries": [
-    {"start": 0.0, "end": 10.0, "summary": "string"}
-  ],
-  "aiTags": ["string"],
-  "embeddingRefId": "string",
-  "searchIndexStatus": "pending | indexed | failed"
-}
-```
-
-### Data Provenance & AI Isolation
-To distinguish human-created metadata from AI-generated outputs, all future AI modules must register metadata under a `provenance` wrapper, specifying the generating model name, version, timestamp, and confidence:
-
-```json
-{
-  "provenance": {
-    "module": "whisper-v3",
-    "createdAt": "2026-08-16T22:00:00Z",
-    "confidence": 0.94
-  }
-}
-```
-All UI elements presenting AI-generated data must display a visual indicator of its source model.
+When duplicate assets with the same `contentHash` are detected:
+1. **Target Selection**: The asset containing existing ratings or evaluations is prioritized as the canonical target.
+2. **Conflict Prevention**: If both assets contain conflicting evaluations (e.g. different overall grades), automatic destructive merge is halted and registered as a conflict warning.
+3. **Location Re-linking**: All `file_locations` pointing to the source asset are safely re-linked to the canonical target asset.
+4. **Tag & Note Migration**: Tags are merged without duplicate IDs; timeline notes are reassigned to the canonical target and active review without breaking image thumbnail references.
+5. **Atomic Rollback**: If any error occurs during merging, all affected tables are restored from in-memory snapshots immediately.

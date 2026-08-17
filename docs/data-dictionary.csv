@@ -2,11 +2,11 @@ table,field,type,required,default,description,references,example,introducedInSch
 media_assets,id,string,true,,Unique identifier of logical video asset,,vid-f64e28ab-b295-46cb-8d1b-123456789abc,3
 media_assets,contentHash,string,true,,SHA-256 hash of entire file contents,,e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855,3
 media_assets,hashAlgorithm,string,true,SHA-256,Hash algorithm name,,SHA-256,3
-media_assets,quickHash,string,true,,Fast preliminary candidate hash,,qh-1a89c8a98f7e8b8c,3
+media_assets,quickHash,string,true,,Fast preliminary candidate hash,,q_10485760_1a89c8a98f7e8b8c,3
 media_assets,hashStatus,string,true,pending,Hashing state (pending / calculating / completed / failed),,completed,3
 media_assets,fileSize,number,true,,Reference file size in bytes,,10485760,3
 media_assets,duration,number,true,,Duration of video in seconds,,123.45,3
-media_assets,displayTitle,string,true,,Editable fallback display title,,My Video Presentation,3
+media_assets,displayTitle,string,false,,Nullable user-set display title (falls back to filename/original title),,My Video Presentation,3
 media_assets,genreId,string,true,genre-default,Genre reference,genres.id,genre-action,3
 media_assets,thumbnailId,string,false,,ID reference to image store in IndexedDB,,img-vid-abc,3
 media_assets,createdAt,string,true,,Timestamp of asset creation,,2026-08-16T12:00:00.000Z,3
@@ -34,7 +34,7 @@ criterion_ratings,criterionId,string,true,,Foreign key to rating criterion,ratin
 criterion_ratings,score,number,false,,Rating score (1 to 5),,4,1
 rating_criteria,id,string,true,,Unique criterion identifier,,crit-lighting,1
 rating_criteria,name,string,true,,Name of the criterion,,Lighting,1
-rating_criteria,description,string,false,,Description of the criterion,,Evaluates the light quality.,1
+rating_criteria,description,string,true,,Description of the criterion,,Evaluates the light quality.,1
 tags,id,string,true,,Unique tag identifier,,tag-action,1
 tags,name,string,true,,Name of the tag,,Action,1
 video_tags,mediaAssetId,string,true,,Foreign key referencing the logical media asset,media_assets.id,vid-f64e28ab-b295-46cb-8d1b-123456789abc,3

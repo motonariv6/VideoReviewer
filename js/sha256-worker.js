@@ -123,8 +123,8 @@ class SHA256Hasher {
     this.update(lenBlock);
 
     const hex = val => (val >>> 0).toString(16).padStart(8, '0');
-    return hex(this.h0) + hex(this.h1) + hex(this.h2) + hex(this.h3) + 
-           hex(this.h4) + hex(this.h5) + hex(this.h6) + hex(this.h7);
+    return (hex(this.h0) + hex(this.h1) + hex(this.h2) + hex(this.h3) + 
+            hex(this.h4) + hex(this.h5) + hex(this.h6) + hex(this.h7)).toLowerCase();
   }
 }
 

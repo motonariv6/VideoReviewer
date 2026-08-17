@@ -3,6 +3,8 @@
  * Isolated from DOM and DB layers for unit testing compatibility.
  */
 
+import { computeQuickHash } from './hash-helper.js';
+
 /**
  * Checks if a filename matches supported video formats (case-insensitive)
  * @param {string} fileName 
@@ -100,11 +102,13 @@ export async function scanDirectory({ directoryHandle, recursive = true, signal 
               const fileRelPath = relPath ? `${relPath}/${entry.name}` : entry.name;
               try {
                 const file = await entry.getFile();
+                const qh = await computeQuickHash(file);
                 scannedFiles.push({
                   fileName: entry.name,
                   fileSize: file.size,
                   lastModified: file.lastModified,
-                  relativePath: fileRelPath
+                  relativePath: fileRelPath,
+                  quickHash: qh
                 });
               } catch (err) {
                 failedFiles.push({
@@ -266,7 +270,9 @@ export async function applyScanDifferentials({ db, directoryId, scanResult, recu
           sourceType: 'directory',
           directoryId,
           relativePath: sf.relativePath,
-          lastModified: sf.lastModified
+          lastModified: sf.lastModified,
+          quickHash: sf.quickHash || '',
+          hashStatus: 'pending'
         });
         added++;
       } catch (err) {

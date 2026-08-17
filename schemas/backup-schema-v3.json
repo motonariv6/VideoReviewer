@@ -46,7 +46,7 @@
           "hashStatus": { "type": "string", "enum": ["pending", "calculating", "completed", "failed"] },
           "fileSize": { "type": "integer", "minimum": 0 },
           "duration": { "type": "number", "minimum": 0 },
-          "displayTitle": { "type": "string", "minLength": 1 },
+          "displayTitle": { "type": ["string", "null"] },
           "genreId": { "type": "string", "pattern": "^genre-[a-zA-Z0-9-]{1,64}$" },
           "thumbnailId": { "type": "string" },
           "createdAt": { "type": "string" },
@@ -151,7 +151,15 @@
       "type": "array",
       "items": {
         "type": "object",
-        "required": ["id", "videoReviewId", "mediaAssetId", "timestampSeconds", "timestampLabel", "comment", "createdAt"],
+        "required": [
+          "id",
+          "videoReviewId",
+          "mediaAssetId",
+          "timestampSeconds",
+          "timestampLabel",
+          "comment",
+          "createdAt"
+        ],
         "properties": {
           "id": { "type": "string", "pattern": "^note-[a-zA-Z0-9-]{8,64}$" },
           "videoReviewId": { "type": "string", "pattern": "^rev-[a-zA-Z0-9-]{8,64}$" },
@@ -168,13 +176,13 @@
       "type": "array",
       "items": {
         "type": "object",
-        "required": ["id", "name", "includeSubdirectories", "permissionStatus", "handleKey", "createdAt", "updatedAt"],
+        "required": ["id", "name", "permissionStatus", "createdAt", "updatedAt"],
         "properties": {
-          "id": { "type": "string", "pattern": "^dir-[a-zA-Z0-9-]{8,64}$" },
+          "id": { "type": "string", "pattern": "^src-[a-zA-Z0-9-]{8,64}$" },
           "name": { "type": "string", "minLength": 1 },
-          "includeSubdirectories": { "type": "boolean" },
-          "permissionStatus": { "type": "string", "enum": ["granted", "denied", "prompt", "disconnected"] },
           "handleKey": { "type": "string" },
+          "permissionStatus": { "type": "string", "enum": ["granted", "prompt", "denied", "disconnected"] },
+          "lastScanAt": { "type": "string" },
           "createdAt": { "type": "string" },
           "updatedAt": { "type": "string" }
         }
