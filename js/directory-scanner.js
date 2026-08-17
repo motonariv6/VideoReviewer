@@ -7,6 +7,39 @@ import { computeQuickHash } from './hash-helper.js';
 import { normalizePath } from './video-helper.js';
 
 /**
+ * Checks if a file or directory should be ignored as a system/hidden entry
+ * @param {string} name
+ * @param {string} relativePath
+ * @returns {boolean}
+ */
+export function isIgnoredSystemEntry(name, relativePath) {
+  const lowerName = name.toLowerCase();
+  
+  if (lowerName === '.ds_store') {
+    return true;
+  }
+  
+  if (name.startsWith('.')) {
+    return true;
+  }
+  
+  const normalizedPath = (relativePath || '').replace(/\\/g, '/');
+  const components = normalizedPath.split('/');
+  
+  for (const part of components) {
+    const lowerPart = part.toLowerCase();
+    if (lowerPart === '__macosx') {
+      return true;
+    }
+    if (part.startsWith('.')) {
+      return true;
+    }
+  }
+  
+  return false;
+}
+
+/**
  * Checks if a filename matches supported video formats (case-insensitive)
  * @param {string} fileName 
  * @returns {boolean}
@@ -99,8 +132,11 @@ export async function scanDirectory({ directoryHandle, recursive = true, signal 
           checkedFilesCount++;
 
           if (entry.kind === 'file') {
+            const fileRelPath = normalizePath(relPath ? `${relPath}/${entry.name}` : entry.name);
+            if (isIgnoredSystemEntry(entry.name, fileRelPath)) {
+              continue;
+            }
             if (isSupportedVideoFile(entry.name)) {
-              const fileRelPath = normalizePath(relPath ? `${relPath}/${entry.name}` : entry.name);
               try {
                 const file = await entry.getFile();
                 const qh = await computeQuickHash(file);
@@ -120,9 +156,13 @@ export async function scanDirectory({ directoryHandle, recursive = true, signal 
               }
             }
           } else if (entry.kind === 'directory' && recursive) {
+            const dirRelPath = normalizePath(relPath ? `${relPath}/${entry.name}` : entry.name);
+            if (isIgnoredSystemEntry(entry.name, dirRelPath)) {
+              continue;
+            }
             queue.push({
               dirHandle: entry,
-              relPath: normalizePath(relPath ? `${relPath}/${entry.name}` : entry.name)
+              relPath: dirRelPath
             });
           }
 
@@ -227,7 +267,16 @@ export function classifyScanResults({ existingVideos, scannedFiles, failedFiles,
  * @param {boolean} [options.recursive=true]
  * @returns {Promise<Object>}
  */
-export async function applyScanDifferentials({ db, directoryId, scanResult, recursive = true }) {
+export async function applyScanDifferentials({
+  db,
+  directoryId,
+  scanResult,
+  recursive = true,
+  directoryHandle = null,
+  getFileHandleFromRelativePathFn = null,
+  computeFileSHA256Fn = null,
+  onProgress = null
+}) {
   const { scannedFiles, failedFiles, failedDirectories, completed, aborted } = scanResult;
   const existingLocations = db.fileLocations.filter(loc => loc.directoryId === directoryId);
   
@@ -258,26 +307,54 @@ export async function applyScanDifferentials({ db, directoryId, scanResult, recu
   let errorCount = failedFiles.length + failedDirectories.length;
 
   // 1. Process successfully scanned files
+  let processedCount = 0;
   for (const sf of scannedFiles) {
+    processedCount++;
+    if (onProgress) {
+      onProgress(processedCount, scannedFiles.length);
+    }
     const matchedLoc = db.fileLocations.find(loc => loc.directoryId === directoryId && normalizePath(loc.relativePath) === normalizePath(sf.relativePath));
     if (!matchedLoc) {
-      try {
-        await db.addVideo({
-          title: sf.fileName,
-          fileName: sf.fileName,
-          fileSize: sf.fileSize,
-          videoUrl: '',
-          duration: 0,
-          sourceType: 'directory',
-          directoryId,
-          relativePath: sf.relativePath,
-          lastModified: sf.lastModified,
-          quickHash: sf.quickHash || '',
-          hashStatus: 'pending'
-        });
-        added++;
-      } catch (err) {
-        errorCount++;
+      if (directoryHandle && getFileHandleFromRelativePathFn && computeFileSHA256Fn) {
+        try {
+          const res = await db.resolveAndRegisterNewScannedFile({
+            directoryId,
+            directoryHandle,
+            sf,
+            getFileHandleFromRelativePathFn,
+            computeFileSHA256Fn
+          });
+          if (res.status === 'new') {
+            added++;
+          } else if (res.status === 'merged') {
+            unchanged++;
+          } else if (res.status === 'verification-pending') {
+            pending++;
+          } else {
+            errorCount++;
+          }
+        } catch (err) {
+          errorCount++;
+        }
+      } else {
+        try {
+          await db.addVideo({
+            title: sf.fileName,
+            fileName: sf.fileName,
+            fileSize: sf.fileSize,
+            videoUrl: '',
+            duration: 0,
+            sourceType: 'directory',
+            directoryId,
+            relativePath: sf.relativePath,
+            lastModified: sf.lastModified,
+            quickHash: sf.quickHash || '',
+            hashStatus: 'pending'
+          });
+          added++;
+        } catch (err) {
+          errorCount++;
+        }
       }
     } else {
       const isModified = matchedLoc.fileSize !== sf.fileSize || matchedLoc.lastModified !== sf.lastModified;

@@ -1,6 +1,6 @@
 import { AppDatabase } from './db.js';
 import { generateFileSignature, formatTime, parseTime, validateVideoUrl, normalizePath, filterVideosByTag } from './video-helper.js';
-import { isSupportedVideoFile, isPathCoveredByFailedDirectory, scanDirectory, classifyScanResults, applyScanDifferentials } from './directory-scanner.js';
+import { isSupportedVideoFile, isPathCoveredByFailedDirectory, scanDirectory, classifyScanResults, applyScanDifferentials, isIgnoredSystemEntry } from './directory-scanner.js';
 import { RadarChart } from './radar.js';
 import { db, setDbForTesting, handleFolderSelect, handleFolderRequestPermission } from './app.js';
 import { computeSHA256, computeQuickHash, computeFileSHA256 } from './hash-helper.js';
@@ -3892,6 +3892,369 @@ export async function runTests() {
 
     const virtual = testDb._buildVirtualVideo(testDb.mediaAssets[0]);
     assert(virtual.availabilityStatus === 'available', 'Should resolve to available after backup restore and reconnect');
+  });
+
+  await runTest('11-11. Rescan identical file in different folder maps to existing reviews/metadata without duplicates', async () => {
+    const memory = new MemoryStorage();
+    const testDb = new AppDatabase(memory, 'test_vreview_g11_11_', 'TestVideoDB_G11_11');
+    await testDb.initAsync();
+    testDb.idbAvailable = true;
+    testDb.idb = {
+      store: {},
+      get: async function(key, storeName) { return this.store[key] || null; },
+      put: async function(key, val, storeName) { this.store[key] = val; },
+      delete: async function(key, storeName) { delete this.store[key]; },
+      clear: async function() { this.store = {}; }
+    };
+    testDb.mediaAssets = [];
+    testDb.fileLocations = [];
+    testDb.reviews = [];
+    testDb.videoTags = [];
+    testDb.timelineNotes = [];
+
+    const source1 = await testDb.addDirectorySource({ name: 'FolderA' });
+    const video = await testDb.addVideo({
+      title: 'movie.mp4',
+      fileName: 'movie.mp4',
+      fileSize: 100,
+      sourceType: 'directory',
+      directoryId: source1.id,
+      relativePath: 'movie.mp4',
+      lastModified: 200,
+      contentHash: VALID_HASH_A,
+      quickHash: 'qh_bunny',
+      hashStatus: 'completed'
+    });
+
+    // Add rating and comment
+    await testDb.saveReview(video.id, { overallGrade: 'A', comment: 'Excellent' });
+    await testDb.addTagToVideo(video.id, 'tag-11');
+    testDb.timelineNotes.push({
+      id: 'note-11',
+      videoReviewId: testDb.reviews[0].id,
+      mediaAssetId: video.id,
+      timestampSeconds: 12,
+      timestampLabel: '0:12',
+      comment: 'Check this out',
+      createdAt: new Date().toISOString()
+    });
+
+    // Set source1 as disconnected
+    await testDb.updateDirectorySource(source1.id, { handleKey: '', permissionStatus: 'disconnected' });
+
+    // Connect source2
+    const source2 = await testDb.addDirectorySource({ name: 'FolderB' });
+    await testDb.updateDirectorySource(source2.id, { permissionStatus: 'granted' });
+    const handleB = new MockFileSystemDirectoryHandle('FolderB', {
+      'movie.mp4': new MockFileSystemFileHandle('movie.mp4', 100, 200)
+    });
+    await testDb.putDirectoryHandle(source2.handleKey, handleB);
+
+    // Scan source2
+    const scanResult = {
+      scannedFiles: [{ fileName: 'movie.mp4', relativePath: 'movie.mp4', fileSize: 100, lastModified: 200, quickHash: 'qh_bunny' }],
+      failedFiles: [],
+      failedDirectories: [],
+      completed: true,
+      aborted: false
+    };
+
+    const getFileHandleFromRelativePathFn = async (h, path) => h.getFileHandle(path);
+    const computeFileSHA256Fn = async (f) => VALID_HASH_A;
+
+    await applyScanDifferentials({
+      db: testDb,
+      directoryId: source2.id,
+      scanResult,
+      recursive: true,
+      directoryHandle: handleB,
+      getFileHandleFromRelativePathFn,
+      computeFileSHA256Fn
+    });
+
+    // Verify database count
+    assert(testDb.mediaAssets.length === 1, 'Only one mediaAsset should exist');
+    assert(testDb.mediaAssets[0].id === video.id, 'Original mediaAsset ID must be maintained');
+    assert(testDb.fileLocations.length === 2, 'Should have exactly two locations');
+    assert(testDb.reviews.length === 1 && testDb.reviews[0].comment === 'Excellent', 'Review preserved');
+    assert(testDb.videoTags.length === 1, 'Tag preserved');
+    assert(testDb.timelineNotes.length === 1, 'Timeline note preserved');
+
+    // Verify video resolution fallback plays from source2 (available)
+    const virtual = testDb.getVideo(video.id);
+    assert(virtual.availabilityStatus === 'available', 'Should be available overall');
+    assert(virtual.directoryId === source2.id, 'Primary location should resolve to source2');
+    assert(virtual.relativePath === 'movie.mp4', 'Primary location path should be movie.mp4');
+  });
+
+  await runTest('11-12. Scan same size/quickHash but different SHA-256 does not merge', async () => {
+    const memory = new MemoryStorage();
+    const testDb = new AppDatabase(memory, 'test_vreview_g11_12_', 'TestVideoDB_G11_12');
+    await testDb.initAsync();
+    testDb.idbAvailable = true;
+    testDb.idb = {
+      store: {},
+      get: async function(key, storeName) { return this.store[key] || null; },
+      put: async function(key, val, storeName) { this.store[key] = val; },
+      delete: async function(key, storeName) { delete this.store[key]; },
+      clear: async function() { this.store = {}; }
+    };
+    testDb.mediaAssets = [];
+    testDb.fileLocations = [];
+
+    const source = await testDb.addDirectorySource({ name: 'FolderA' });
+    await testDb.updateDirectorySource(source.id, { permissionStatus: 'granted' });
+    const handle = new MockFileSystemDirectoryHandle('FolderA', {
+      'movie1.mp4': new MockFileSystemFileHandle('movie1.mp4', 100, 200),
+      'movie2.mp4': new MockFileSystemFileHandle('movie2.mp4', 100, 200)
+    });
+    await testDb.putDirectoryHandle(source.handleKey, handle);
+
+    // Add first video
+    const video1 = await testDb.addVideo({
+      title: 'movie1.mp4',
+      fileName: 'movie1.mp4',
+      fileSize: 100,
+      sourceType: 'directory',
+      directoryId: source.id,
+      relativePath: 'movie1.mp4',
+      lastModified: 200,
+      contentHash: VALID_HASH_A,
+      quickHash: 'qh_same',
+      hashStatus: 'completed'
+    });
+
+    // Scan second video
+    const scanResult = {
+      scannedFiles: [
+        { fileName: 'movie1.mp4', relativePath: 'movie1.mp4', fileSize: 100, lastModified: 200, quickHash: 'qh_same' },
+        { fileName: 'movie2.mp4', relativePath: 'movie2.mp4', fileSize: 100, lastModified: 200, quickHash: 'qh_same' }
+      ],
+      failedFiles: [],
+      failedDirectories: [],
+      completed: true,
+      aborted: false
+    };
+
+    const getFileHandleFromRelativePathFn = async (h, path) => h.getFileHandle(path);
+    // Return VALID_HASH_B for movie2.mp4 (different SHA-256!)
+    const computeFileSHA256Fn = async (f) => f.name === 'movie1.mp4' ? VALID_HASH_A : VALID_HASH_B;
+
+    await applyScanDifferentials({
+      db: testDb,
+      directoryId: source.id,
+      scanResult,
+      recursive: true,
+      directoryHandle: handle,
+      getFileHandleFromRelativePathFn,
+      computeFileSHA256Fn
+    });
+
+    // Should NOT be merged! Should create two distinct mediaAssets
+    assert(testDb.mediaAssets.length === 2, 'Should create a new mediaAsset for movie2.mp4');
+    assert(testDb.mediaAssets.some(a => a.contentHash === VALID_HASH_B), 'Should contain mediaAsset with hash B');
+  });
+
+  await runTest('11-13. Scan computes hash on pending candidate and merges successfully', async () => {
+    const memory = new MemoryStorage();
+    const testDb = new AppDatabase(memory, 'test_vreview_g11_13_', 'TestVideoDB_G11_13');
+    await testDb.initAsync();
+    testDb.idbAvailable = true;
+    testDb.idb = {
+      store: {},
+      get: async function(key, storeName) { return this.store[key] || null; },
+      put: async function(key, val, storeName) { this.store[key] = val; },
+      delete: async function(key, storeName) { delete this.store[key]; },
+      clear: async function() { this.store = {}; }
+    };
+    testDb.mediaAssets = [];
+    testDb.fileLocations = [];
+
+    const source = await testDb.addDirectorySource({ name: 'FolderA' });
+    await testDb.updateDirectorySource(source.id, { permissionStatus: 'granted' });
+    const handle = new MockFileSystemDirectoryHandle('FolderA', {
+      'movie1.mp4': new MockFileSystemFileHandle('movie1.mp4', 100, 200),
+      'movie2.mp4': new MockFileSystemFileHandle('movie2.mp4', 100, 200)
+    });
+    await testDb.putDirectoryHandle(source.handleKey, handle);
+
+    // movie1 is in database but its contentHash is pending
+    const video1 = await testDb.addVideo({
+      title: 'movie1.mp4',
+      fileName: 'movie1.mp4',
+      fileSize: 100,
+      sourceType: 'directory',
+      directoryId: source.id,
+      relativePath: 'movie1.mp4',
+      lastModified: 200,
+      quickHash: 'qh_same',
+      hashStatus: 'pending'
+    });
+
+    // Scan movie2
+    const scanResult = {
+      scannedFiles: [
+        { fileName: 'movie1.mp4', relativePath: 'movie1.mp4', fileSize: 100, lastModified: 200, quickHash: 'qh_same' },
+        { fileName: 'movie2.mp4', relativePath: 'movie2.mp4', fileSize: 100, lastModified: 200, quickHash: 'qh_same' }
+      ],
+      failedFiles: [],
+      failedDirectories: [],
+      completed: true,
+      aborted: false
+    };
+
+    const getFileHandleFromRelativePathFn = async (h, path) => h.getFileHandle(path);
+    const computeFileSHA256Fn = async (f) => VALID_HASH_A;
+
+    await applyScanDifferentials({
+      db: testDb,
+      directoryId: source.id,
+      scanResult,
+      recursive: true,
+      directoryHandle: handle,
+      getFileHandleFromRelativePathFn,
+      computeFileSHA256Fn
+    });
+
+    // Should merge because both resolve to VALID_HASH_A
+    assert(testDb.mediaAssets.length === 1, 'Should merge movie2 into movie1');
+    assert(testDb.mediaAssets[0].contentHash === VALID_HASH_A, 'Hash should be computed and updated to A');
+    assert(testDb.fileLocations.length === 2, 'Should have both location entries');
+  });
+
+  await runTest('11-14. Excludes AppleDouble files, DS_Store, __MACOSX, and other hidden files during scanning and additions', async () => {
+    const memory = new MemoryStorage();
+    const testDb = new AppDatabase(memory, 'test_vreview_g11_14_', 'TestVideoDB_G11_14');
+    await testDb.initAsync();
+    testDb.idbAvailable = true;
+    testDb.idb = {
+      store: {},
+      get: async function(key, storeName) { return this.store[key] || null; },
+      put: async function(key, val, storeName) { this.store[key] = val; },
+      delete: async function(key, storeName) { delete this.store[key]; },
+      clear: async function() { this.store = {}; }
+    };
+    testDb.mediaAssets = [];
+    testDb.fileLocations = [];
+
+    const source = await testDb.addDirectorySource({ name: 'FolderA' });
+    await testDb.updateDirectorySource(source.id, { permissionStatus: 'granted' });
+
+    // Mock folder containing ignored files and normal files
+    const handle = new MockFileSystemDirectoryHandle('FolderA', {
+      'movie.mp4': new MockFileSystemFileHandle('movie.mp4', 100, 200),
+      '._movie.mp4': new MockFileSystemFileHandle('._movie.mp4', 100, 200),
+      '.DS_Store': new MockFileSystemFileHandle('.DS_Store', 50, 200),
+      '.hidden-video.mp4': new MockFileSystemFileHandle('.hidden-video.mp4', 100, 200),
+      'movie._edited.mp4': new MockFileSystemFileHandle('movie._edited.mp4', 120, 200),
+      '__MACOSX': new MockFileSystemDirectoryHandle('__MACOSX', {
+        'nested.mp4': new MockFileSystemFileHandle('nested.mp4', 100, 200)
+      })
+    });
+    await testDb.putDirectoryHandle(source.handleKey, handle);
+
+    // Run directory scan (mock scanDirectory simulates files detected)
+    const scanResult = {
+      scannedFiles: [
+        { fileName: 'movie.mp4', relativePath: 'movie.mp4', fileSize: 100, lastModified: 200, quickHash: 'qh_1' },
+        { fileName: '._movie.mp4', relativePath: '._movie.mp4', fileSize: 100, lastModified: 200, quickHash: 'qh_2' },
+        { fileName: '.DS_Store', relativePath: '.DS_Store', fileSize: 50, lastModified: 200, quickHash: 'qh_3' },
+        { fileName: '.hidden-video.mp4', relativePath: '.hidden-video.mp4', fileSize: 100, lastModified: 200, quickHash: 'qh_4' },
+        { fileName: 'movie._edited.mp4', relativePath: 'movie._edited.mp4', fileSize: 120, lastModified: 200, quickHash: 'qh_5' },
+        { fileName: 'nested.mp4', relativePath: '__MACOSX/nested.mp4', fileSize: 100, lastModified: 200, quickHash: 'qh_6' }
+      ],
+      failedFiles: [],
+      failedDirectories: [],
+      completed: true,
+      aborted: false
+    };
+
+    // Filter using isIgnoredSystemEntry (mimic scanner integration)
+    const filteredScannedFiles = scanResult.scannedFiles.filter(sf => !isIgnoredSystemEntry(sf.fileName, sf.relativePath));
+    assert(filteredScannedFiles.length === 2, 'Should only detect 2 files (movie.mp4 and movie._edited.mp4)');
+    assert(filteredScannedFiles.some(sf => sf.fileName === 'movie.mp4'), 'movie.mp4 included');
+    assert(filteredScannedFiles.some(sf => sf.fileName === 'movie._edited.mp4'), 'movie._edited.mp4 included');
+
+    const getFileHandleFromRelativePathFn = async (h, path) => h.getFileHandle(path);
+    const computeFileSHA256Fn = async (f) => f.name === 'movie.mp4' ? VALID_HASH_A : VALID_HASH_B;
+
+    const summary = await applyScanDifferentials({
+      db: testDb,
+      directoryId: source.id,
+      scanResult: { ...scanResult, scannedFiles: filteredScannedFiles },
+      recursive: true,
+      directoryHandle: handle,
+      getFileHandleFromRelativePathFn,
+      computeFileSHA256Fn
+    });
+
+    assert(testDb.mediaAssets.length === 2, 'Only 2 mediaAssets should be registered');
+    assert(testDb.fileLocations.some(loc => loc.relativePath === 'movie.mp4'), 'movie.mp4 registered');
+    assert(testDb.fileLocations.some(loc => loc.relativePath === 'movie._edited.mp4'), 'movie._edited.mp4 registered');
+
+    // Windows backslash separator test
+    assert(isIgnoredSystemEntry('nested.mp4', '__MACOSX\\sub\\nested.mp4'), 'Should ignore Windows-style MACOSX paths');
+    assert(isIgnoredSystemEntry('._movie.mp4', 'subdir\\._movie.mp4'), 'Should ignore Windows-style AppleDouble files');
+  });
+
+  await runTest('11-15. Hashing / read error during rescan is treated as verification-pending without adding new assets or locations', async () => {
+    const memory = new MemoryStorage();
+    const testDb = new AppDatabase(memory, 'test_vreview_g11_15_', 'TestVideoDB_G11_15');
+    await testDb.initAsync();
+    testDb.idbAvailable = true;
+    testDb.idb = {
+      store: {},
+      get: async function(key, storeName) { return this.store[key] || null; },
+      put: async function(key, val, storeName) { this.store[key] = val; },
+      delete: async function(key, storeName) { delete this.store[key]; },
+      clear: async function() { this.store = {}; }
+    };
+    testDb.mediaAssets = [];
+    testDb.fileLocations = [];
+    testDb.reviews = [];
+    testDb.videoTags = [];
+    testDb.timelineNotes = [];
+
+    const source = await testDb.addDirectorySource({ name: 'FolderA' });
+    await testDb.updateDirectorySource(source.id, { permissionStatus: 'granted' });
+
+    // Mock folder handle
+    const handle = new MockFileSystemDirectoryHandle('FolderA', {
+      'error_movie.mp4': new MockFileSystemFileHandle('error_movie.mp4', 150, 200)
+    });
+    await testDb.putDirectoryHandle(source.handleKey, handle);
+
+    const scanResult = {
+      scannedFiles: [
+        { fileName: 'error_movie.mp4', relativePath: 'error_movie.mp4', fileSize: 150, lastModified: 200, quickHash: 'qh_err' }
+      ],
+      failedFiles: [],
+      failedDirectories: [],
+      completed: true,
+      aborted: false
+    };
+
+    const getFileHandleFromRelativePathFn = async (h, path) => h.getFileHandle(path);
+    // Mock hash calculation to throw an error (simulating read/access failure)
+    const computeFileSHA256Fn = async (f) => {
+      throw new Error('Disk read error / permission denied');
+    };
+
+    const summary = await applyScanDifferentials({
+      db: testDb,
+      directoryId: source.id,
+      scanResult,
+      recursive: true,
+      directoryHandle: handle,
+      getFileHandleFromRelativePathFn,
+      computeFileSHA256Fn
+    });
+
+    // Assertions
+    assert(testDb.mediaAssets.length === 0, 'No mediaAsset should be registered');
+    assert(testDb.fileLocations.length === 0, 'No fileLocation should be registered');
+    assert(summary.pending === 1, 'Verification error file should be counted as pending');
+    assert(summary.added === 0, 'No asset should be marked as added');
   });
 
   console.groupEnd();

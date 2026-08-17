@@ -1046,6 +1046,107 @@ export class AppDatabase {
     return this._buildVirtualVideo(asset);
   }
 
+  async resolveAndRegisterNewScannedFile({
+    directoryId,
+    directoryHandle,
+    sf,
+    getFileHandleFromRelativePathFn,
+    computeFileSHA256Fn
+  }) {
+    // 1. Get candidates by quickHash and fileSize
+    const candidates = this.mediaAssets.filter(a => a.fileSize === sf.fileSize && a.quickHash === sf.quickHash);
+
+    let scannedHash = null;
+    let fileObj = null;
+    try {
+      const fileHandle = await getFileHandleFromRelativePathFn(directoryHandle, sf.relativePath);
+      fileObj = await fileHandle.getFile();
+      scannedHash = await computeFileSHA256Fn(fileObj);
+    } catch (err) {
+      console.warn(`Failed to compute hash for scanned file ${sf.relativePath}:`, err);
+      return { status: 'verification-pending', assetId: null };
+    }
+
+    // 2. Resolve candidate hashes if they are not computed yet
+    for (const candidate of candidates) {
+      if (candidate.hashStatus !== 'completed' || !candidate.contentHash) {
+        const candLocs = this.fileLocations.filter(l => l.mediaAssetId === candidate.id);
+        let resolvedCandidateHash = null;
+        for (const cl of candLocs) {
+          const ds = this.getDirectorySource(cl.directoryId);
+          if (ds && ds.handleKey && ds.permissionStatus === 'granted') {
+            try {
+              const handle = await this.getDirectoryHandle(ds.handleKey);
+              if (handle) {
+                const fh = await getFileHandleFromRelativePathFn(handle, cl.relativePath);
+                const f = await fh.getFile();
+                resolvedCandidateHash = await computeFileSHA256Fn(f);
+                break;
+              }
+            } catch (e) {
+              console.warn(`Failed to resolve candidate location ${cl.id} for hashing:`, e);
+            }
+          }
+        }
+        if (resolvedCandidateHash) {
+          candidate.contentHash = resolvedCandidateHash;
+          candidate.hashStatus = 'completed';
+          candidate.updatedAt = new Date().toISOString();
+          this._saveTable('media_assets', this.mediaAssets);
+        }
+      }
+    }
+
+    // 3. Find if any existing asset has the identical non-empty contentHash (exclude conflict assets)
+    const matchedAsset = this.mediaAssets.find(a => a.contentHash === scannedHash && a.identityStatus !== 'conflict');
+    if (matchedAsset) {
+      // Check if location already exists for this directory and path (safety check)
+      const normPath = normalizePath(sf.relativePath);
+      let existingLoc = this.fileLocations.find(l => l.directoryId === directoryId && normalizePath(l.relativePath) === normPath);
+      if (!existingLoc) {
+        const newLoc = {
+          id: 'loc-' + generateUUID(),
+          mediaAssetId: matchedAsset.id,
+          directoryId: directoryId || '',
+          relativePath: normPath,
+          fileName: sf.fileName || '',
+          fileSize: sf.fileSize || 0,
+          lastModified: sf.lastModified || 0,
+          availabilityStatus: 'available',
+          lastVerifiedAt: '',
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString()
+        };
+        this.fileLocations.push(newLoc);
+        this._saveTable('file_locations', this.fileLocations);
+      } else {
+        if (existingLoc.availabilityStatus !== 'available') {
+          existingLoc.availabilityStatus = 'available';
+          existingLoc.updatedAt = new Date().toISOString();
+          this._saveTable('file_locations', this.fileLocations);
+        }
+      }
+      return { status: 'merged', assetId: matchedAsset.id };
+    } else {
+      // Create new mediaAsset with completed hash
+      const newAsset = await this.addVideo({
+        title: sf.fileName,
+        fileName: sf.fileName,
+        fileSize: sf.fileSize,
+        videoUrl: '',
+        duration: 0,
+        sourceType: 'directory',
+        directoryId,
+        relativePath: sf.relativePath,
+        lastModified: sf.lastModified,
+        quickHash: sf.quickHash || '',
+        contentHash: scannedHash,
+        hashStatus: 'completed'
+      });
+      return { status: 'new', assetId: newAsset.id };
+    }
+  }
+
   async addVideo({ title, displayTitle, fileName, fileSize, videoUrl, duration, thumbnailBlob, sourceType, directoryId, relativePath, lastModified, contentHash, quickHash, hashStatus }) {
     const sType = sourceType || (videoUrl ? 'url' : 'directory');
     const normalizedTitle = normalizeDisplayTitle(displayTitle !== undefined ? displayTitle : title);

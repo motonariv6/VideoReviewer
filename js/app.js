@@ -1,7 +1,7 @@
 import { AppDatabase } from './db.js';
 import { formatTime, parseTime, generateFileSignature, captureVideoFrame, validateVideoUrl, getFileHandleFromRelativePath, filterVideosByTag } from './video-helper.js';
 import { RadarChart } from './radar.js';
-import { scanDirectory, classifyScanResults, applyScanDifferentials } from './directory-scanner.js';
+import { scanDirectory, classifyScanResults, applyScanDifferentials, isIgnoredSystemEntry } from './directory-scanner.js';
 import { computeQuickHash, computeFileSHA256, globalHashQueue } from './hash-helper.js';
 
 // Instantiate DB & components
@@ -1615,6 +1615,12 @@ function handleAddLocalFile(e) {
   const file = e.target.files[0];
   if (!file) return;
 
+  if (isIgnoredSystemEntry(file.name, file.name)) {
+    showToast('このファイルはシステムファイルのため無視されました。', 'error');
+    els.addLocalFileInput.value = '';
+    return;
+  }
+
   const tempVideo = document.createElement('video');
   tempVideo.preload = 'metadata';
   const objectUrl = URL.createObjectURL(file);
@@ -1726,6 +1732,12 @@ function handleAddLocalFile(e) {
 function handleReconnectFile(e) {
   const file = e.target.files[0];
   if (!file || !state.currentVideoId) return;
+
+  if (isIgnoredSystemEntry(file.name, file.name)) {
+    showToast('システムファイルは選択できません。', 'error');
+    els.reconnectFileInput.value = '';
+    return;
+  }
 
   const video = db.getVideo(state.currentVideoId);
   if (!video) return;
@@ -2567,8 +2579,18 @@ async function startFolderScanning(source, handle) {
       db,
       directoryId: source.id,
       scanResult,
-      recursive
+      recursive,
+      directoryHandle: handle,
+      getFileHandleFromRelativePathFn: getFileHandleFromRelativePath,
+      computeFileSHA256Fn: computeFileSHA256,
+      onProgress: (current, total) => {
+        els.scanProgressBox.classList.remove('hidden');
+        els.scanProgressFiles.textContent = `${current} / ${total} 件のハッシュを検証中...`;
+        els.scanProgressVideos.textContent = '照合中';
+      }
     });
+
+    els.scanProgressBox.classList.add('hidden');
 
     // Save scan timestamp
     await db.updateDirectorySource(source.id, { lastScannedAt: new Date().toISOString() });
