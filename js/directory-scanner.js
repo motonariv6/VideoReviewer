@@ -4,6 +4,7 @@
  */
 
 import { computeQuickHash } from './hash-helper.js';
+import { normalizePath } from './video-helper.js';
 
 /**
  * Checks if a filename matches supported video formats (case-insensitive)
@@ -99,7 +100,7 @@ export async function scanDirectory({ directoryHandle, recursive = true, signal 
 
           if (entry.kind === 'file') {
             if (isSupportedVideoFile(entry.name)) {
-              const fileRelPath = relPath ? `${relPath}/${entry.name}` : entry.name;
+              const fileRelPath = normalizePath(relPath ? `${relPath}/${entry.name}` : entry.name);
               try {
                 const file = await entry.getFile();
                 const qh = await computeQuickHash(file);
@@ -121,7 +122,7 @@ export async function scanDirectory({ directoryHandle, recursive = true, signal 
           } else if (entry.kind === 'directory' && recursive) {
             queue.push({
               dirHandle: entry,
-              relPath: relPath ? `${relPath}/${entry.name}` : entry.name
+              relPath: normalizePath(relPath ? `${relPath}/${entry.name}` : entry.name)
             });
           }
 

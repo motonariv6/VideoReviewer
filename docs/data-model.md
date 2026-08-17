@@ -64,6 +64,8 @@ The application uses a hybrid storage model:
 - **displayTitle**: Nullable user-set title (`string | null`). When null or empty, displays fallback to physical `fileName` or original title.
 - **genreId**: Foreign key pointing to `genres.id`.
 - **thumbnailId**: Foreign key pointing to the `images` store in IndexedDB.
+- **identityStatus**: `"normal" | "conflict"`. Used to declare if the asset is in a conflict state due to non-mergible evaluation data.
+- **identityConflictGroupId**: Nullable group ID (`string | null`). Shares the same ID across conflicting logical records representing the same SHA-256 hash.
 
 ### 2. `file_locations` (Physical Record)
 - Keyed by unique location ID (`loc-UUID`).
@@ -77,7 +79,7 @@ The application uses a hybrid storage model:
 
 When duplicate assets with the same `contentHash` are detected:
 1. **Target Selection**: The asset containing existing ratings or evaluations is prioritized as the canonical target.
-2. **Conflict Prevention**: If both assets contain conflicting evaluations (e.g. different overall grades), automatic destructive merge is halted and registered as a conflict warning.
-3. **Location Re-linking**: All `file_locations` pointing to the source asset are safely re-linked to the canonical target asset.
+2. **Conflict Prevention**: If both assets contain meaningful evaluations (e.g. overall grades, non-empty comments, rating criteria, or timeline notes), automatic merging is prevented. Both assets are preserved, marked with `identityStatus: "conflict"`, and assigned the same `identityConflictGroupId` to maintain database referential integrity without losing user data.
+3. **Location Re-linking**: All `file_locations` pointing to the source asset are safely re-linked to the canonical target asset (only when auto-merge is permitted).
 4. **Tag & Note Migration**: Tags are merged without duplicate IDs; timeline notes are reassigned to the canonical target and active review without breaking image thumbnail references.
 5. **Atomic Rollback**: If any error occurs during merging, all affected tables are restored from in-memory snapshots immediately.

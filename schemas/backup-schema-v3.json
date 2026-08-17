@@ -35,6 +35,8 @@
           "duration",
           "displayTitle",
           "genreId",
+          "identityStatus",
+          "identityConflictGroupId",
           "createdAt",
           "updatedAt"
         ],
@@ -49,6 +51,8 @@
           "displayTitle": { "type": ["string", "null"] },
           "genreId": { "type": "string", "pattern": "^genre-[a-zA-Z0-9-]{1,64}$" },
           "thumbnailId": { "type": "string" },
+          "identityStatus": { "type": "string", "enum": ["normal", "conflict"] },
+          "identityConflictGroupId": { "type": ["string", "null"] },
           "createdAt": { "type": "string" },
           "updatedAt": { "type": "string" }
         }

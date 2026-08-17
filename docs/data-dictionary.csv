@@ -9,6 +9,8 @@ media_assets,duration,number,true,,Duration of video in seconds,,123.45,3
 media_assets,displayTitle,string,false,,Nullable user-set display title (falls back to filename/original title),,My Video Presentation,3
 media_assets,genreId,string,true,genre-default,Genre reference,genres.id,genre-action,3
 media_assets,thumbnailId,string,false,,ID reference to image store in IndexedDB,,img-vid-abc,3
+media_assets,identityStatus,string,true,normal,Conflict state of logical asset (normal / conflict),,normal,3
+media_assets,identityConflictGroupId,string,false,,ID reference to the conflict group,,conflict-f64e28ab-b295-46cb-8d1b-123456789abc,3
 media_assets,createdAt,string,true,,Timestamp of asset creation,,2026-08-16T12:00:00.000Z,3
 media_assets,updatedAt,string,true,,Timestamp of asset last update,,2026-08-16T12:05:00.000Z,3
 file_locations,id,string,true,,Unique file location identifier,,loc-9a2d3b4e-8f90-4c3d-be1f-123456789abc,3

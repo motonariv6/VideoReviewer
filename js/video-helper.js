@@ -170,3 +170,36 @@ export async function getFileHandleFromRelativePath(dirHandle, relativePath) {
   const fileName = parts[parts.length - 1];
   return await currentHandle.getFileHandle(fileName);
 }
+
+/**
+ * Normalizes a file path by replacing backslashes with forward slashes,
+ * trimming whitespace, and stripping leading/trailing slashes.
+ * @param {string} path 
+ * @returns {string}
+ */
+export function normalizePath(path) {
+  if (typeof path !== 'string') return '';
+  let p = path.replace(/\\/g, '/').trim();
+  if (p.startsWith('/') && p.length > 1) {
+    p = p.slice(1);
+  }
+  if (p.endsWith('/') && p.length > 1) {
+    p = p.slice(0, -1);
+  }
+  return p;
+}
+
+/**
+ * Filter videos list by a specific tagId using only mediaAssetId.
+ * @param {Array} videos 
+ * @param {Array} videoTags 
+ * @param {string} tagId 
+ * @returns {Array}
+ */
+export function filterVideosByTag(videos, videoTags, tagId) {
+  if (!tagId) return videos;
+  const matchingAssetIds = new Set(
+    videoTags.filter(vt => vt.tagId === tagId).map(vt => vt.mediaAssetId)
+  );
+  return videos.filter(v => matchingAssetIds.has(v.id));
+}

@@ -3,7 +3,7 @@
  * Implements a relational data schema for video reviews, ratings, tags, and timeline notes.
  */
 
-import { base64ToBlob } from './video-helper.js';
+import { base64ToBlob, normalizePath } from './video-helper.js';
 
 // Helper to generate unique IDs
 function generateUUID() {
@@ -398,6 +398,27 @@ export class AppDatabase {
 
     // Perform media assets & file locations migration (v3)
     await this._migrateToV3MediaIdentity();
+
+    // Backfill Schema v3 conflict fields and recover calculating status to pending
+    let assetsModified = false;
+    this.mediaAssets.forEach(a => {
+      if (a.identityStatus === undefined) {
+        a.identityStatus = 'normal';
+        assetsModified = true;
+      }
+      if (a.identityConflictGroupId === undefined) {
+        a.identityConflictGroupId = null;
+        assetsModified = true;
+      }
+      const isUrlOrSample = a.videoUrl || a.id.includes('sample');
+      if (!isUrlOrSample && a.hashStatus === 'calculating') {
+        a.hashStatus = 'pending';
+        assetsModified = true;
+      }
+    });
+    if (assetsModified) {
+      this._saveTable('media_assets', this.mediaAssets);
+    }
   }
 
   _loadTable(key, defaults) {
@@ -651,6 +672,8 @@ export class AppDatabase {
           genreId: v.genreId || 'genre-default',
           thumbnailId: v.thumbnailId || '',
           videoUrl: v.videoUrl || '',
+          identityStatus: 'normal',
+          identityConflictGroupId: null,
           createdAt: v.createdAt || new Date().toISOString(),
           updatedAt: v.updatedAt || new Date().toISOString()
         };
@@ -986,6 +1009,7 @@ export class AppDatabase {
   async addVideo({ title, displayTitle, fileName, fileSize, videoUrl, duration, thumbnailBlob, sourceType, directoryId, relativePath, lastModified, contentHash, quickHash, hashStatus }) {
     const sType = sourceType || (videoUrl ? 'url' : 'directory');
     const normalizedTitle = normalizeDisplayTitle(displayTitle !== undefined ? displayTitle : title);
+    const normPath = normalizePath(relativePath);
 
     let existingAsset = null;
     let existingLoc = null;
@@ -994,7 +1018,7 @@ export class AppDatabase {
       existingAsset = this.mediaAssets.find(a => a.videoUrl === videoUrl);
     } else {
       // 1. Check physical location match (directoryId + relativePath)
-      existingLoc = this.fileLocations.find(l => l.directoryId === directoryId && l.relativePath === relativePath);
+      existingLoc = this.fileLocations.find(l => l.directoryId === directoryId && normalizePath(l.relativePath) === normPath);
       if (existingLoc) {
         existingAsset = this.mediaAssets.find(a => a.id === existingLoc.mediaAssetId);
         if (existingAsset) {
@@ -1028,9 +1052,9 @@ export class AppDatabase {
         }
       }
 
-      // 2. Check if another asset already exists with identical non-empty contentHash
+      // 2. Check if another asset already exists with identical non-empty contentHash (exclude conflict assets)
       if (contentHash) {
-        existingAsset = this.mediaAssets.find(a => a.contentHash === contentHash);
+        existingAsset = this.mediaAssets.find(a => a.contentHash === contentHash && a.identityStatus !== 'conflict');
       }
     }
 
@@ -1041,7 +1065,7 @@ export class AppDatabase {
           id: 'loc-' + generateUUID(),
           mediaAssetId: existingAsset.id,
           directoryId: directoryId || '',
-          relativePath: relativePath || '',
+          relativePath: normPath,
           fileName: fileName || '',
           fileSize: fileSize || existingAsset.fileSize || 0,
           lastModified: lastModified || 0,
@@ -1072,6 +1096,8 @@ export class AppDatabase {
       genreId: 'genre-default',
       thumbnailId: '',
       videoUrl: videoUrl || '',
+      identityStatus: 'normal',
+      identityConflictGroupId: null,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString()
     };
@@ -1080,7 +1106,7 @@ export class AppDatabase {
       id: locId,
       mediaAssetId: assetId,
       directoryId: directoryId || '',
-      relativePath: relativePath || '',
+      relativePath: normPath,
       fileName: fileName || '',
       fileSize: fileSize || 0,
       lastModified: lastModified || 0,
@@ -1110,7 +1136,8 @@ export class AppDatabase {
   }
 
   async addFileLocation(mediaAssetId, { directoryId, relativePath, fileName, fileSize, lastModified, availabilityStatus }) {
-    let loc = this.fileLocations.find(l => l.directoryId === directoryId && l.relativePath === relativePath);
+    const normPath = normalizePath(relativePath);
+    let loc = this.fileLocations.find(l => l.directoryId === directoryId && normalizePath(l.relativePath) === normPath);
     if (loc) {
       loc.mediaAssetId = mediaAssetId;
       loc.fileSize = fileSize;
@@ -1123,7 +1150,7 @@ export class AppDatabase {
         id: 'loc-' + generateUUID(),
         mediaAssetId,
         directoryId,
-        relativePath,
+        relativePath: normPath,
         fileName,
         fileSize,
         lastModified,
@@ -1138,6 +1165,19 @@ export class AppDatabase {
     return loc;
   }
 
+  hasMeaningfulReviewData(assetId) {
+    const review = this.reviews.find(r => r.mediaAssetId === assetId);
+    const ratings = review ? this.getCriterionRatingsForReview(review.id) : [];
+    const notes = this.timelineNotes.filter(n => n.mediaAssetId === assetId);
+
+    const hasOverall = !!(review && review.overallGrade && review.overallGrade.trim() !== '');
+    const hasComment = !!(review && review.comment && review.comment.trim() !== '');
+    const hasRatings = ratings.length > 0;
+    const hasNotes = notes.length > 0;
+
+    return hasOverall || hasComment || hasRatings || hasNotes;
+  }
+
   async mergeMediaAssets(targetAssetId, sourceAssetId, { force = false } = {}) {
     if (targetAssetId === sourceAssetId) return { merged: true, targetAssetId };
 
@@ -1147,16 +1187,9 @@ export class AppDatabase {
       throw new Error('Merge error: target or source media asset not found.');
     }
 
-    // Determine evaluations
-    const targetReview = this.reviews.find(r => r.mediaAssetId === targetAssetId);
-    const sourceReview = this.reviews.find(r => r.mediaAssetId === sourceAssetId);
-    const targetRatings = targetReview ? this.getCriterionRatingsForReview(targetReview.id) : [];
-    const sourceRatings = sourceReview ? this.getCriterionRatingsForReview(sourceReview.id) : [];
+    const hasTargetEval = this.hasMeaningfulReviewData(targetAssetId);
+    const hasSourceEval = this.hasMeaningfulReviewData(sourceAssetId);
 
-    const hasTargetEval = !!(targetReview && (targetReview.overallGrade || targetReview.comment || targetRatings.length > 0));
-    const hasSourceEval = !!(sourceReview && (sourceReview.overallGrade || sourceReview.comment || sourceRatings.length > 0));
-
-    // Determine canonical target: if source has eval and target does not, swap canonical target
     let canonicalTargetId = targetAssetId;
     let canonicalSourceId = sourceAssetId;
 
@@ -1164,17 +1197,15 @@ export class AppDatabase {
       canonicalTargetId = sourceAssetId;
       canonicalSourceId = targetAssetId;
     } else if (hasTargetEval && hasSourceEval && !force) {
-      const gradeConflict = targetReview.overallGrade && sourceReview.overallGrade && targetReview.overallGrade !== sourceReview.overallGrade;
-      if (gradeConflict) {
-        return {
-          merged: false,
-          conflict: true,
-          message: `Evaluation conflict between ${targetAssetId} and ${sourceAssetId}. Manual resolution required.`
-        };
-      }
+      return {
+        merged: false,
+        conflict: true,
+        reason: "both-assets-have-review-data",
+        targetAssetId,
+        sourceAssetId
+      };
     }
 
-    // Create snapshot for atomic rollback
     const snapAssets = JSON.parse(JSON.stringify(this.mediaAssets));
     const snapLocations = JSON.parse(JSON.stringify(this.fileLocations));
     const snapReviews = JSON.parse(JSON.stringify(this.reviews));
@@ -1186,7 +1217,6 @@ export class AppDatabase {
       const target = this.mediaAssets.find(a => a.id === canonicalTargetId);
       const source = this.mediaAssets.find(a => a.id === canonicalSourceId);
 
-      // 1. Re-link file locations
       this.fileLocations.forEach(loc => {
         if (loc.mediaAssetId === canonicalSourceId) {
           loc.mediaAssetId = canonicalTargetId;
@@ -1194,7 +1224,6 @@ export class AppDatabase {
         }
       });
 
-      // 2. Merge video tags without duplicates
       const targetTagIds = new Set(this.videoTags.filter(vt => vt.mediaAssetId === canonicalTargetId).map(vt => vt.tagId));
       this.videoTags.forEach(vt => {
         if (vt.mediaAssetId === canonicalSourceId) {
@@ -1206,15 +1235,15 @@ export class AppDatabase {
       });
       this.videoTags = this.videoTags.filter(vt => vt.mediaAssetId !== canonicalSourceId);
 
-      // 3. Merge timeline notes
-      let activeReview = this.reviews.find(r => r.mediaAssetId === canonicalTargetId);
-      if (!activeReview) {
-        const sRev = this.reviews.find(r => r.mediaAssetId === canonicalSourceId);
-        if (sRev) {
-          sRev.mediaAssetId = canonicalTargetId;
-          activeReview = sRev;
-        }
+      const canonicalTargetReview = this.reviews.find(r => r.mediaAssetId === canonicalTargetId);
+      const canonicalSourceReview = this.reviews.find(r => r.mediaAssetId === canonicalSourceId);
+      
+      let activeReview = canonicalTargetReview;
+      if (!activeReview && canonicalSourceReview) {
+        canonicalSourceReview.mediaAssetId = canonicalTargetId;
+        activeReview = canonicalSourceReview;
       }
+      
       this.timelineNotes.forEach(note => {
         if (note.mediaAssetId === canonicalSourceId) {
           note.mediaAssetId = canonicalTargetId;
@@ -1225,23 +1254,19 @@ export class AppDatabase {
         }
       });
 
-      // 4. Merge review & ratings
-      if (!targetReview && sourceReview) {
-        sourceReview.mediaAssetId = canonicalTargetId;
-      } else if (sourceReview && targetReview) {
-        this.reviews = this.reviews.filter(r => r.id !== sourceReview.id);
-        this.criterionRatings = this.criterionRatings.filter(cr => cr.videoReviewId !== sourceReview.id);
+      if (!canonicalTargetReview && canonicalSourceReview) {
+        canonicalSourceReview.mediaAssetId = canonicalTargetId;
+      } else if (canonicalSourceReview && canonicalTargetReview) {
+        this.reviews = this.reviews.filter(r => r.id !== canonicalSourceReview.id);
+        this.criterionRatings = this.criterionRatings.filter(cr => cr.videoReviewId !== canonicalSourceReview.id);
       }
 
-      // 5. Preserve thumbnail
       if (!target.thumbnailId && source.thumbnailId) {
         target.thumbnailId = source.thumbnailId;
       }
 
-      // 6. Remove source asset
       this.mediaAssets = this.mediaAssets.filter(a => a.id !== canonicalSourceId);
 
-      // Save all tables
       this._saveTable('media_assets', this.mediaAssets);
       this._saveTable('file_locations', this.fileLocations);
       this._saveTable('video_reviews', this.reviews);
@@ -1251,16 +1276,61 @@ export class AppDatabase {
 
       return { merged: true, targetAssetId: canonicalTargetId, sourceAssetId: canonicalSourceId };
     } catch (err) {
-      // Atomic rollback
       this.mediaAssets = snapAssets;
       this.fileLocations = snapLocations;
       this.reviews = snapReviews;
       this.criterionRatings = snapRatings;
       this.videoTags = snapVideoTags;
       this.timelineNotes = snapNotes;
-      this._saveAll();
       throw err;
     }
+  }
+
+  async completeVideoHashing(videoId, contentHash) {
+    const video = this.getVideo(videoId);
+    if (!video) throw new Error('Video not found: ' + videoId);
+
+    if (video.contentHash === contentHash && video.hashStatus === 'completed') {
+      return { merged: false, conflict: false };
+    }
+
+    const existingAsset = this.mediaAssets.find(a => a.contentHash === contentHash && a.id !== video.id);
+
+    if (existingAsset) {
+      const mergeResult = await this.mergeMediaAssets(existingAsset.id, video.id);
+      if (mergeResult.merged) {
+        return { merged: true, conflict: false, targetAssetId: mergeResult.targetAssetId, sourceAssetId: mergeResult.sourceAssetId };
+      } else if (mergeResult.conflict) {
+        const conflictGroupId = existingAsset.identityConflictGroupId || ('conflict-' + generateUUID());
+        
+        existingAsset.identityStatus = 'conflict';
+        existingAsset.identityConflictGroupId = conflictGroupId;
+        existingAsset.updatedAt = new Date().toISOString();
+
+        const currentAsset = this.mediaAssets.find(a => a.id === video.id);
+        if (currentAsset) {
+          currentAsset.contentHash = contentHash;
+          currentAsset.hashStatus = 'completed';
+          currentAsset.identityStatus = 'conflict';
+          currentAsset.identityConflictGroupId = conflictGroupId;
+          currentAsset.updatedAt = new Date().toISOString();
+        }
+
+        this._saveTable('media_assets', this.mediaAssets);
+        return { merged: false, conflict: true, conflictGroupId, targetAssetId: existingAsset.id, sourceAssetId: video.id };
+      }
+    }
+
+    const currentAsset = this.mediaAssets.find(a => a.id === video.id);
+    if (currentAsset) {
+      currentAsset.contentHash = contentHash;
+      currentAsset.hashStatus = 'completed';
+      currentAsset.identityStatus = 'normal';
+      currentAsset.identityConflictGroupId = null;
+      currentAsset.updatedAt = new Date().toISOString();
+      this._saveTable('media_assets', this.mediaAssets);
+    }
+    return { merged: false, conflict: false };
   }
 
   async updateVideo(id, updates) {
@@ -1739,6 +1809,21 @@ export class AppDatabase {
       if (manifest && manifest.schemaVersion) {
         rawDb.schemaVersion = rawDb.schemaVersion || manifest.schemaVersion;
       }
+      if (Array.isArray(rawDb.media_assets)) {
+        rawDb.media_assets.forEach(a => {
+          if (a.identityStatus === undefined) {
+            a.identityStatus = 'normal';
+          }
+          if (a.identityConflictGroupId === undefined) {
+            a.identityConflictGroupId = null;
+          }
+        });
+      }
+      if (Array.isArray(rawDb.file_locations)) {
+        rawDb.file_locations.forEach(loc => {
+          loc.relativePath = normalizePath(loc.relativePath);
+        });
+      }
     }
 
     if (fatalErrors.length === 0 && rawDb && typeof rawDb === 'object') {
@@ -1787,7 +1872,7 @@ export class AppDatabase {
 
       // 10. Validate contentHash constraints and check duplicate non-empty contentHash
       if (Array.isArray(rawDb.media_assets)) {
-        const seenContentHashes = new Map();
+        const hashGroups = new Map();
         rawDb.media_assets.forEach(v => {
           if (v.hashStatus === 'completed') {
             if (!v.contentHash || !/^[0-9a-f]{64}$/.test(v.contentHash)) {
@@ -1799,19 +1884,31 @@ export class AppDatabase {
             }
           }
           if (v.contentHash && v.contentHash.trim() !== '') {
-            if (seenContentHashes.has(v.contentHash)) {
-              fatalErrors.push(`動画アセット ${v.id} の contentHash (${v.contentHash}) がアセット ${seenContentHashes.get(v.contentHash)} と重複しています。`);
-            } else {
-              seenContentHashes.set(v.contentHash, v.id);
+            if (!hashGroups.has(v.contentHash)) {
+              hashGroups.set(v.contentHash, []);
             }
+            hashGroups.get(v.contentHash).push(v);
           }
         });
+
+        // Check duplicate hash groups
+        for (const [hash, assets] of hashGroups.entries()) {
+          if (assets.length > 1) {
+            const allConflict = assets.every(v => v.identityStatus === 'conflict');
+            const firstGroupId = assets[0].identityConflictGroupId;
+            const allSameGroupId = firstGroupId && assets.every(v => v.identityConflictGroupId === firstGroupId);
+            if (!allConflict || !allSameGroupId) {
+              fatalErrors.push(`動画アセット間に重複する contentHash (${hash}) が検出されました。正しい競合状態 (identityStatus === 'conflict' かつ同一の identityConflictGroupId) ではありません。`);
+            }
+          }
+        }
       }
 
       // 11. Validate file_locations constraints: mediaAssetId reference and unique physical path
       if (Array.isArray(rawDb.file_locations)) {
         const seenLocations = new Set();
         rawDb.file_locations.forEach(loc => {
+          loc.relativePath = normalizePath(loc.relativePath);
           if (!rawDb.media_assets.some(v => v.id === loc.mediaAssetId)) {
             fatalErrors.push(`ファイル所在地 ${loc.id} が参照する動画アセット ${loc.mediaAssetId} が存在しません。`);
           }
@@ -2424,6 +2521,8 @@ export const BACKUP_SCHEMA = {
           "duration",
           "displayTitle",
           "genreId",
+          "identityStatus",
+          "identityConflictGroupId",
           "createdAt",
           "updatedAt"
         ],
@@ -2438,6 +2537,8 @@ export const BACKUP_SCHEMA = {
           "displayTitle": { "type": ["string", "null"] },
           "genreId": { "type": "string", "pattern": "^genre-[a-zA-Z0-9-]{1,64}$" },
           "thumbnailId": { "type": "string" },
+          "identityStatus": { "type": "string", "enum": ["normal", "conflict"] },
+          "identityConflictGroupId": { "type": ["string", "null"] },
           "createdAt": { "type": "string" },
           "updatedAt": { "type": "string" }
         }
