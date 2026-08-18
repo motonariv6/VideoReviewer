@@ -1203,64 +1203,6 @@ export class AppDatabase {
         loc.verificationStatus = 'verified';
         this._saveTable('file_locations', this.fileLocations);
 
-        // Copy review data from video to targetAsset to ensure no evaluation data is lost
-        const originalReview = this.reviews.find(r => r.mediaAssetId === video.id);
-        let newReviewId = '';
-        if (originalReview) {
-          const existingReview = this.reviews.find(r => r.mediaAssetId === targetAsset.id);
-          if (!existingReview) {
-            newReviewId = 'rev-' + generateUUID();
-            const newReview = {
-              ...originalReview,
-              id: newReviewId,
-              mediaAssetId: targetAsset.id,
-              createdAt: new Date().toISOString(),
-              updatedAt: new Date().toISOString()
-            };
-            this.reviews.push(newReview);
-            this._saveTable('video_reviews', this.reviews);
-
-            // Copy ratings
-            const ratings = this.criterionRatings.filter(r => r.videoReviewId === originalReview.id);
-            ratings.forEach(r => {
-              this.criterionRatings.push({
-                ...r,
-                id: 'rate-' + generateUUID(),
-                videoReviewId: newReviewId
-              });
-            });
-            this._saveTable('criterion_ratings', this.criterionRatings);
-          } else {
-            newReviewId = existingReview.id;
-          }
-        }
-
-        // Copy tags
-        const tags = this.videoTags.filter(vt => vt.mediaAssetId === video.id);
-        const targetTagIds = new Set(this.videoTags.filter(vt => vt.mediaAssetId === targetAsset.id).map(vt => vt.tagId));
-        tags.forEach(vt => {
-          if (!targetTagIds.has(vt.tagId)) {
-            this.videoTags.push({
-              ...vt,
-              id: 'tag-' + generateUUID(),
-              mediaAssetId: targetAsset.id
-            });
-          }
-        });
-        this._saveTable('video_tags', this.videoTags);
-
-        // Copy timeline notes
-        const notes = this.timelineNotes.filter(tn => tn.mediaAssetId === video.id);
-        notes.forEach(tn => {
-          this.timelineNotes.push({
-            ...tn,
-            id: 'note-' + generateUUID(),
-            mediaAssetId: targetAsset.id,
-            videoReviewId: newReviewId
-          });
-        });
-        this._saveTable('timeline_notes', this.timelineNotes);
-
         return { status: 'separated', newAssetId: targetAsset.id };
       }
     }
@@ -1407,15 +1349,11 @@ export class AppDatabase {
             if (fileSize) existingLoc.fileSize = fileSize;
             if (lastModified) existingLoc.lastModified = lastModified;
             existingLoc.lastVerifiedAt = new Date().toISOString();
+            if (isSizeChanged) {
+              existingLoc.verificationStatus = 'provisional';
+            }
             existingLoc.updatedAt = new Date().toISOString();
             this._saveTable('file_locations', this.fileLocations);
-
-            if (isSizeChanged) {
-              existingAsset.contentHash = '';
-              existingAsset.hashStatus = 'pending';
-              existingAsset.updatedAt = new Date().toISOString();
-              this._saveTable('media_assets', this.mediaAssets);
-            }
           }
           return this._buildVirtualVideo(existingAsset);
         }

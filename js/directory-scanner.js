@@ -343,10 +343,7 @@ export async function applyScanDifferentials({
             verificationStatus: 'provisional'
           });
           
-          const matchedAsset = db.mediaAssets.find(a => a.id === matchedLoc.mediaAssetId);
-          if (matchedAsset) {
-            await db.updateVideo(matchedAsset.id, { hashStatus: 'pending', contentHash: '' });
-          }
+
           updated++;
         } catch (err) {
           errorCount++;

@@ -357,7 +357,7 @@ export class HashQueue {
     this.processNext();
   }
 
-  cancel() {
+  cancelPending() {
     const oldQueue = this.queue;
     this.queue = [];
     for (const item of oldQueue) {
@@ -365,8 +365,8 @@ export class HashQueue {
     }
   }
 
-  clear() {
-    this.cancel();
+  clearPending() {
+    this.cancelPending();
   }
 
   async processNext() {

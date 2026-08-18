@@ -2,8 +2,8 @@ import { AppDatabase } from './db.js';
 import { generateFileSignature, formatTime, parseTime, validateVideoUrl, normalizePath, filterVideosByTag } from './video-helper.js';
 import { isSupportedVideoFile, isPathCoveredByFailedDirectory, scanDirectory, classifyScanResults, applyScanDifferentials, isIgnoredSystemEntry } from './directory-scanner.js';
 import { RadarChart } from './radar.js';
-import { db, setDbForTesting, handleFolderSelect, handleFolderRequestPermission } from './app.js';
-import { computeSHA256, computeQuickHash, computeFileSHA256 } from './hash-helper.js';
+import { db, setDbForTesting, handleFolderSelect, handleFolderRequestPermission, processSingleLocationVerification } from './app.js';
+import { computeSHA256, computeQuickHash, computeFileSHA256, HashQueue } from './hash-helper.js';
 
 export const VALID_HASH_A = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
 export const VALID_HASH_B = 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
@@ -4237,7 +4237,7 @@ export async function runTests() {
       aborted: false
     };
 
-    const summary = await applyScanDifferentials({
+    await applyScanDifferentials({
       db: testDb,
       directoryId: source.id,
       scanResult,
@@ -4246,16 +4246,177 @@ export async function runTests() {
 
     assert(testDb.mediaAssets.length === 1, 'Registers provisional asset');
     assert(testDb.fileLocations.length === 1, 'Registers provisional location');
+    const locId = testDb.fileLocations[0].id;
 
-    try {
-      throw new Error('Read failed during background execution');
-    } catch (e) {
-      // Hashing queue logs error and keeps provisional record
-    }
+    // Enqueue in HashQueue and simulate rejection
+    const testQueue = new HashQueue();
+    let queueNextRan = false;
+    let completionNotificationRan = false;
 
-    assert(testDb.mediaAssets.length === 1, 'Asset remains');
-    assert(testDb.fileLocations.length === 1, 'Location remains');
+    const computeHashFnReject = async () => {
+      throw new Error('Hash calculation failed');
+    };
+
+    await testQueue.enqueue(async () => {
+      try {
+        await processSingleLocationVerification(
+          testDb,
+          locId,
+          [source],
+          async (key) => testDb.getDirectoryHandle(key),
+          async (h, path) => h.getFileHandle(path),
+          computeHashFnReject
+        );
+      } catch (err) {
+        // Handled
+      } finally {
+        completionNotificationRan = true;
+      }
+    });
+
+    await testQueue.enqueue(async () => {
+      queueNextRan = true;
+    });
+
+    assert(testDb.mediaAssets.length === 1, 'Asset count should not increase');
+    assert(testDb.fileLocations.length === 1, 'Location count should not increase');
     assert(testDb.fileLocations[0].verificationStatus === 'provisional', 'Status remains provisional');
+    assert(queueNextRan === true, 'Queue advanced to next job');
+    assert(completionNotificationRan === true, 'UI progress/completion notification ran');
+  });
+
+  await runTest('11-16. Multiple locations: changing one location preserves asset.contentHash', async () => {
+    const memory = new MemoryStorage();
+    const testDb = new AppDatabase(memory, 'test_vreview_g11_16_', 'TestVideoDB_G11_16');
+    await testDb.initAsync();
+    testDb.idbAvailable = true;
+    testDb.idb = {
+      store: {},
+      get: async function(key, storeName) { return this.store[key] || null; },
+      put: async function(key, val, storeName) { this.store[key] = val; }
+    };
+    testDb.mediaAssets = [];
+    testDb.fileLocations = [];
+
+    // Create asset
+    const asset = await testDb.addVideo({
+      title: 'movie.mp4',
+      fileSize: 100,
+      contentHash: VALID_HASH_A,
+      hashStatus: 'completed',
+      identityStatus: 'verified'
+    });
+
+    // Add another location to same asset
+    const source2 = await testDb.addDirectorySource({ name: 'FolderB' });
+    const loc2 = {
+      id: 'loc-2',
+      mediaAssetId: asset.id,
+      directoryId: source2.id,
+      relativePath: 'movie_copy.mp4',
+      fileName: 'movie_copy.mp4',
+      fileSize: 100,
+      lastModified: 200,
+      availabilityStatus: 'available',
+      verificationStatus: 'verified',
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    };
+    testDb.fileLocations.push(loc2);
+
+    // Now, scan/add loc2 with modified size (150)
+    await testDb.addVideo({
+      title: 'movie_copy.mp4',
+      fileName: 'movie_copy.mp4',
+      fileSize: 150, // size changed!
+      lastModified: 300,
+      sourceType: 'directory',
+      directoryId: source2.id,
+      relativePath: 'movie_copy.mp4'
+    });
+
+    const updatedAsset = testDb.mediaAssets.find(a => a.id === asset.id);
+    assert(updatedAsset.contentHash === VALID_HASH_A, 'asset.contentHash must be preserved');
+    assert(updatedAsset.hashStatus === 'completed', 'asset.hashStatus must remain completed');
+
+    const updatedLoc1 = testDb.fileLocations.find(l => l.id !== 'loc-2');
+    const updatedLoc2 = testDb.fileLocations.find(l => l.id === 'loc-2');
+    assert(updatedLoc2.verificationStatus === 'provisional', 'Modified location verificationStatus becomes provisional');
+    assert(updatedLoc1.verificationStatus !== 'provisional', 'Unmodified location verificationStatus remains verified');
+  });
+
+  await runTest('11-17. Mismatch separation: original asset retains evaluations, new asset has none', async () => {
+    const memory = new MemoryStorage();
+    const testDb = new AppDatabase(memory, 'test_vreview_g11_17_', 'TestVideoDB_G11_17');
+    await testDb.initAsync();
+    testDb.idbAvailable = true;
+    testDb.idb = {
+      store: {},
+      get: async function(key, storeName) { return this.store[key] || null; },
+      put: async function(key, val, storeName) { this.store[key] = val; }
+    };
+    testDb.mediaAssets = [];
+    testDb.fileLocations = [];
+    testDb.reviews = [];
+    testDb.criterionRatings = [];
+    testDb.videoTags = [];
+    testDb.timelineNotes = [];
+
+    // Create verified asset with review, ratings, tags, notes
+    const asset = await testDb.addVideo({
+      title: 'movie.mp4',
+      fileSize: 100,
+      contentHash: VALID_HASH_A,
+      hashStatus: 'completed',
+      identityStatus: 'verified'
+    });
+
+    await testDb.saveReview(asset.id, {
+      overallGrade: 'A',
+      comment: 'Excellent video',
+      ratings: { 'crit-1': 5 }
+    });
+    await testDb.addTagToVideo(asset.id, 'Action');
+    await testDb.addTimelineNote(asset.id, {
+      timestampSeconds: 10,
+      timestampLabel: '00:10',
+      comment: 'Nice scene'
+    });
+
+    // Add provisional location
+    const source2 = await testDb.addDirectorySource({ name: 'FolderB' });
+    const loc2 = {
+      id: 'loc-2',
+      mediaAssetId: asset.id,
+      directoryId: source2.id,
+      relativePath: 'movie_other.mp4',
+      fileName: 'movie_other.mp4',
+      fileSize: 100,
+      lastModified: 200,
+      availabilityStatus: 'available',
+      verificationStatus: 'provisional',
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    };
+    testDb.fileLocations.push(loc2);
+
+    const result = await testDb.completeLocationProvisionalVerification('loc-2', VALID_HASH_B);
+    assert(result.status === 'separated', 'Location is separated');
+
+    const reviewsA = testDb.reviews.filter(r => r.mediaAssetId === asset.id);
+    const tagsA = testDb.getVideoTags(asset.id);
+    const notesA = testDb.timelineNotes.filter(n => n.mediaAssetId === asset.id);
+    assert(reviewsA.length === 1 && reviewsA[0].comment === 'Excellent video', 'Original review comment remains');
+    assert(tagsA.length === 1 && tagsA[0].name === 'Action', 'Original tag remains');
+    assert(notesA.length === 1 && notesA[0].comment === 'Nice scene', 'Original note remains');
+
+    const newAssetId = result.newAssetId;
+    const reviewsB = testDb.reviews.filter(r => r.mediaAssetId === newAssetId);
+    const tagsB = testDb.getVideoTags(newAssetId);
+    const notesB = testDb.timelineNotes.filter(n => n.mediaAssetId === newAssetId);
+    assert(reviewsB.length === 0, 'New asset must not copy reviews');
+    assert(tagsB.length === 0, 'New asset must not copy tags');
+    assert(notesB.length === 0, 'New asset must not copy notes');
   });
 
   console.groupEnd();
