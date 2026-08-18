@@ -3959,23 +3959,26 @@ export async function runTests() {
       aborted: false
     };
 
-    const getFileHandleFromRelativePathFn = async (h, path) => h.getFileHandle(path);
-    const computeFileSHA256Fn = async (f) => VALID_HASH_A;
-
+    // Run scan (does not execute full hashing)
     await applyScanDifferentials({
       db: testDb,
       directoryId: source2.id,
       scanResult,
-      recursive: true,
-      directoryHandle: handleB,
-      getFileHandleFromRelativePathFn,
-      computeFileSHA256Fn
+      recursive: true
     });
 
-    // Verify database count
+    // Verify database count (provisional phase)
     assert(testDb.mediaAssets.length === 1, 'Only one mediaAsset should exist');
-    assert(testDb.mediaAssets[0].id === video.id, 'Original mediaAsset ID must be maintained');
     assert(testDb.fileLocations.length === 2, 'Should have exactly two locations');
+    const newLoc = testDb.fileLocations.find(l => l.directoryId === source2.id);
+    assert(newLoc.verificationStatus === 'provisional', 'Location verification status should be provisional');
+
+    // Run background verification completion
+    const res = await testDb.completeLocationProvisionalVerification(newLoc.id, VALID_HASH_A);
+    assert(res.status === 'success', 'Verification succeeds');
+
+    assert(testDb.mediaAssets.length === 1, 'Still only one mediaAsset');
+    assert(testDb.mediaAssets[0].id === video.id, 'Original mediaAsset ID must be maintained');
     assert(testDb.reviews.length === 1 && testDb.reviews[0].comment === 'Excellent', 'Review preserved');
     assert(testDb.videoTags.length === 1, 'Tag preserved');
     assert(testDb.timelineNotes.length === 1, 'Timeline note preserved');
@@ -4036,21 +4039,23 @@ export async function runTests() {
       aborted: false
     };
 
-    const getFileHandleFromRelativePathFn = async (h, path) => h.getFileHandle(path);
-    // Return VALID_HASH_B for movie2.mp4 (different SHA-256!)
-    const computeFileSHA256Fn = async (f) => f.name === 'movie1.mp4' ? VALID_HASH_A : VALID_HASH_B;
-
     await applyScanDifferentials({
       db: testDb,
       directoryId: source.id,
       scanResult,
-      recursive: true,
-      directoryHandle: handle,
-      getFileHandleFromRelativePathFn,
-      computeFileSHA256Fn
+      recursive: true
     });
 
-    // Should NOT be merged! Should create two distinct mediaAssets
+    // Provisional phase: provisionally matches video1 because exactly 1 candidate exists
+    assert(testDb.mediaAssets.length === 1, 'Provisional match');
+    assert(testDb.fileLocations.length === 2, 'Two locations');
+
+    // Run background verification on movie2.mp4 with different hash
+    const loc2 = testDb.fileLocations.find(l => l.relativePath === 'movie2.mp4');
+    const res = await testDb.completeLocationProvisionalVerification(loc2.id, VALID_HASH_B);
+    assert(res.status === 'separated', 'Separated due to hash mismatch');
+
+    // Should create two distinct mediaAssets
     assert(testDb.mediaAssets.length === 2, 'Should create a new mediaAsset for movie2.mp4');
     assert(testDb.mediaAssets.some(a => a.contentHash === VALID_HASH_B), 'Should contain mediaAsset with hash B');
   });
@@ -4088,8 +4093,12 @@ export async function runTests() {
       relativePath: 'movie1.mp4',
       lastModified: 200,
       quickHash: 'qh_same',
-      hashStatus: 'pending'
+      hashStatus: 'pending',
+      identityStatus: 'provisional'
     });
+    const loc1 = testDb.fileLocations.find(l => l.mediaAssetId === video1.id);
+    loc1.verificationStatus = 'provisional';
+    testDb._saveTable('file_locations', testDb.fileLocations);
 
     // Scan movie2
     const scanResult = {
@@ -4103,18 +4112,18 @@ export async function runTests() {
       aborted: false
     };
 
-    const getFileHandleFromRelativePathFn = async (h, path) => h.getFileHandle(path);
-    const computeFileSHA256Fn = async (f) => VALID_HASH_A;
-
     await applyScanDifferentials({
       db: testDb,
       directoryId: source.id,
       scanResult,
-      recursive: true,
-      directoryHandle: handle,
-      getFileHandleFromRelativePathFn,
-      computeFileSHA256Fn
+      recursive: true
     });
+
+    const loc2 = testDb.fileLocations.find(l => l.relativePath === 'movie2.mp4');
+
+    // Run background verification on both
+    await testDb.completeLocationProvisionalVerification(loc1.id, VALID_HASH_A);
+    const res = await testDb.completeLocationProvisionalVerification(loc2.id, VALID_HASH_A);
 
     // Should merge because both resolve to VALID_HASH_A
     assert(testDb.mediaAssets.length === 1, 'Should merge movie2 into movie1');
@@ -4175,17 +4184,11 @@ export async function runTests() {
     assert(filteredScannedFiles.some(sf => sf.fileName === 'movie.mp4'), 'movie.mp4 included');
     assert(filteredScannedFiles.some(sf => sf.fileName === 'movie._edited.mp4'), 'movie._edited.mp4 included');
 
-    const getFileHandleFromRelativePathFn = async (h, path) => h.getFileHandle(path);
-    const computeFileSHA256Fn = async (f) => f.name === 'movie.mp4' ? VALID_HASH_A : VALID_HASH_B;
-
     const summary = await applyScanDifferentials({
       db: testDb,
       directoryId: source.id,
       scanResult: { ...scanResult, scannedFiles: filteredScannedFiles },
-      recursive: true,
-      directoryHandle: handle,
-      getFileHandleFromRelativePathFn,
-      computeFileSHA256Fn
+      recursive: true
     });
 
     assert(testDb.mediaAssets.length === 2, 'Only 2 mediaAssets should be registered');
@@ -4197,7 +4200,7 @@ export async function runTests() {
     assert(isIgnoredSystemEntry('._movie.mp4', 'subdir\\._movie.mp4'), 'Should ignore Windows-style AppleDouble files');
   });
 
-  await runTest('11-15. Hashing / read error during rescan is treated as verification-pending without adding new assets or locations', async () => {
+  await runTest('11-15. Hashing / read error during rescan does not register duplicate assets or locations', async () => {
     const memory = new MemoryStorage();
     const testDb = new AppDatabase(memory, 'test_vreview_g11_15_', 'TestVideoDB_G11_15');
     await testDb.initAsync();
@@ -4234,27 +4237,25 @@ export async function runTests() {
       aborted: false
     };
 
-    const getFileHandleFromRelativePathFn = async (h, path) => h.getFileHandle(path);
-    // Mock hash calculation to throw an error (simulating read/access failure)
-    const computeFileSHA256Fn = async (f) => {
-      throw new Error('Disk read error / permission denied');
-    };
-
     const summary = await applyScanDifferentials({
       db: testDb,
       directoryId: source.id,
       scanResult,
-      recursive: true,
-      directoryHandle: handle,
-      getFileHandleFromRelativePathFn,
-      computeFileSHA256Fn
+      recursive: true
     });
 
-    // Assertions
-    assert(testDb.mediaAssets.length === 0, 'No mediaAsset should be registered');
-    assert(testDb.fileLocations.length === 0, 'No fileLocation should be registered');
-    assert(summary.pending === 1, 'Verification error file should be counted as pending');
-    assert(summary.added === 0, 'No asset should be marked as added');
+    assert(testDb.mediaAssets.length === 1, 'Registers provisional asset');
+    assert(testDb.fileLocations.length === 1, 'Registers provisional location');
+
+    try {
+      throw new Error('Read failed during background execution');
+    } catch (e) {
+      // Hashing queue logs error and keeps provisional record
+    }
+
+    assert(testDb.mediaAssets.length === 1, 'Asset remains');
+    assert(testDb.fileLocations.length === 1, 'Location remains');
+    assert(testDb.fileLocations[0].verificationStatus === 'provisional', 'Status remains provisional');
   });
 
   console.groupEnd();

@@ -334,10 +334,11 @@ async function computeFileSHA256InThread(file, { onProgress = null, signal = nul
  * Concurrency Queue to prevent overwhelming memory/workers with too many parallel calculations.
  */
 export class HashQueue {
-  constructor(concurrency = 2) {
+  constructor(concurrency = 1) {
     this.concurrency = concurrency;
     this.runningCount = 0;
     this.queue = [];
+    this.isPaused = false;
   }
 
   enqueue(taskFn) {
@@ -347,8 +348,29 @@ export class HashQueue {
     });
   }
 
+  pause() {
+    this.isPaused = true;
+  }
+
+  resume() {
+    this.isPaused = false;
+    this.processNext();
+  }
+
+  cancel() {
+    const oldQueue = this.queue;
+    this.queue = [];
+    for (const item of oldQueue) {
+      item.reject(new Error('Hashing queue cancelled'));
+    }
+  }
+
+  clear() {
+    this.cancel();
+  }
+
   async processNext() {
-    if (this.runningCount >= this.concurrency || this.queue.length === 0) {
+    if (this.isPaused || this.runningCount >= this.concurrency || this.queue.length === 0) {
       return;
     }
 
@@ -365,10 +387,6 @@ export class HashQueue {
       this.processNext();
     }
   }
-
-  clear() {
-    this.queue = [];
-  }
 }
 
-export const globalHashQueue = new HashQueue(2);
+export const globalHashQueue = new HashQueue(1);

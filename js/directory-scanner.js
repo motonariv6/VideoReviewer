@@ -315,46 +315,22 @@ export async function applyScanDifferentials({
     }
     const matchedLoc = db.fileLocations.find(loc => loc.directoryId === directoryId && normalizePath(loc.relativePath) === normalizePath(sf.relativePath));
     if (!matchedLoc) {
-      if (directoryHandle && getFileHandleFromRelativePathFn && computeFileSHA256Fn) {
-        try {
-          const res = await db.resolveAndRegisterNewScannedFile({
-            directoryId,
-            directoryHandle,
-            sf,
-            getFileHandleFromRelativePathFn,
-            computeFileSHA256Fn
-          });
-          if (res.status === 'new') {
-            added++;
-          } else if (res.status === 'merged') {
-            unchanged++;
-          } else if (res.status === 'verification-pending') {
-            pending++;
-          } else {
-            errorCount++;
-          }
-        } catch (err) {
-          errorCount++;
-        }
-      } else {
-        try {
-          await db.addVideo({
-            title: sf.fileName,
-            fileName: sf.fileName,
-            fileSize: sf.fileSize,
-            videoUrl: '',
-            duration: 0,
-            sourceType: 'directory',
-            directoryId,
-            relativePath: sf.relativePath,
-            lastModified: sf.lastModified,
-            quickHash: sf.quickHash || '',
-            hashStatus: 'pending'
-          });
+      try {
+        const res = await db.resolveAndRegisterNewScannedFileProvisional({
+          directoryId,
+          sf
+        });
+        if (res.status === 'new') {
           added++;
-        } catch (err) {
+        } else if (res.status === 'merged') {
+          unchanged++;
+        } else if (res.status === 'verification-pending') {
+          pending++;
+        } else {
           errorCount++;
         }
+      } catch (err) {
+        errorCount++;
       }
     } else {
       const isModified = matchedLoc.fileSize !== sf.fileSize || matchedLoc.lastModified !== sf.lastModified;
@@ -363,10 +339,10 @@ export async function applyScanDifferentials({
           await db.updateLocationInfo(matchedLoc.id, {
             fileSize: sf.fileSize,
             lastModified: sf.lastModified,
-            availabilityStatus: 'available'
+            availabilityStatus: 'available',
+            verificationStatus: 'provisional'
           });
           
-          // Reset hashStatus to pending so it gets re-hashed
           const matchedAsset = db.mediaAssets.find(a => a.id === matchedLoc.mediaAssetId);
           if (matchedAsset) {
             await db.updateVideo(matchedAsset.id, { hashStatus: 'pending', contentHash: '' });

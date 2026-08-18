@@ -753,51 +753,87 @@ async function syncActiveDirectoryPermissions() {
   }
 }
 
+let bgHashTotal = 0;
+let bgHashCurrent = 0;
+
+function updateBackgroundHashingUI(current, total) {
+  let indicator = document.getElementById('bg-hash-indicator');
+  if (total === 0 || current >= total) {
+    if (indicator) indicator.classList.add('hidden');
+    return;
+  }
+  if (!indicator) {
+    indicator = document.createElement('div');
+    indicator.id = 'bg-hash-indicator';
+    Object.assign(indicator.style, {
+      position: 'fixed',
+      bottom: '16px',
+      right: '16px',
+      padding: '8px 12px',
+      backgroundColor: 'var(--color-bg-card, #1f2937)',
+      color: 'var(--color-text, #f3f4f6)',
+      borderRadius: 'var(--radius-sm, 6px)',
+      boxShadow: 'var(--shadow-md, 0 4px 6px rgba(0,0,0,0.15))',
+      border: '1px solid var(--color-border, #374151)',
+      fontSize: '0.75rem',
+      fontWeight: '600',
+      zIndex: '9999',
+      transition: 'opacity 0.3s ease'
+    });
+    document.body.appendChild(indicator);
+  }
+  indicator.classList.remove('hidden');
+  indicator.textContent = `ハッシュ検証 ${current} / ${total}`;
+}
+
 async function processBackgroundHashingQueue() {
-  const videos = db.getVideos().filter(v => v.sourceType === 'directory' && v.hashStatus === 'pending');
-  if (videos.length === 0) return;
+  const provisionalLocs = db.fileLocations.filter(loc => loc.verificationStatus === 'provisional');
+  if (provisionalLocs.length === 0) {
+    updateBackgroundHashingUI(0, 0);
+    return;
+  }
 
   const sources = db.getDirectorySources();
   if (sources.length === 0) return;
 
-  for (const video of videos) {
+  bgHashTotal = provisionalLocs.length;
+  bgHashCurrent = 0;
+  updateBackgroundHashingUI(bgHashCurrent, bgHashTotal);
+
+  for (const loc of provisionalLocs) {
     globalHashQueue.enqueue(async () => {
       try {
-        const currentVideo = db.getVideo(video.id);
-        if (!currentVideo || currentVideo.hashStatus !== 'pending') return;
+        const freshLoc = db.fileLocations.find(l => l.id === loc.id);
+        if (!freshLoc || freshLoc.verificationStatus !== 'provisional') return;
 
-        const result = await db.performVerifiedVideoHashing(
-          video.id,
-          async (loc) => {
-            const source = sources.find(s => s.id === loc.directoryId);
-            if (!source) return null;
-            const handle = await db.getDirectoryHandle(source.handleKey);
-            if (!handle) return null;
-            const perm = await handle.queryPermission({ mode: 'read' });
-            if (perm !== 'granted') return null;
-            const fileHandle = await getFileHandleFromRelativePath(handle, loc.relativePath);
-            return await fileHandle.getFile();
-          },
-          computeFileSHA256
-        );
+        const source = sources.find(s => s.id === freshLoc.directoryId);
+        if (!source) return;
 
-        if (result.status === 'success') {
-          if (result.merged) {
-            console.log(`Merged duplicate asset in background: ${video.id} -> ${result.targetAssetId}`);
-          } else if (result.conflict) {
-            console.log(`Conflict detected for contentHash ${result.hash}. Group ID: ${result.conflictGroupId}`);
-          } else {
-            console.log(`Successfully hashed video ${video.id} -> ${result.hash}`);
-          }
-        } else {
-          console.warn(`Background hashing finished with status: ${result.status}, reason: ${result.reason}`);
-        }
-        renderLibrary();
+        const handle = await db.getDirectoryHandle(source.handleKey);
+        if (!handle) return;
+
+        const perm = await handle.queryPermission({ mode: 'read' });
+        if (perm !== 'granted') return;
+
+        const fileHandle = await getFileHandleFromRelativePath(handle, freshLoc.relativePath);
+        const fileObj = await fileHandle.getFile();
+
+        // 1. Calculate full SHA-256
+        const hash = await computeFileSHA256(fileObj);
+
+        // 2. Complete verification
+        const result = await db.completeLocationProvisionalVerification(freshLoc.id, hash);
+        console.log(`Background verification completed for ${freshLoc.relativePath}:`, result);
+
       } catch (err) {
-        console.error(`Failed background hashing for video ${video.id}:`, err);
+        console.error(`Failed background verification for location ${loc.relativePath}:`, err);
+      } finally {
+        bgHashCurrent++;
+        updateBackgroundHashingUI(bgHashCurrent, bgHashTotal);
+        renderLibrary();
       }
     }).catch(err => {
-      console.error(`Queue error for video ${video.id}:`, err);
+      console.error(`Queue error for location ${loc.relativePath}:`, err);
     });
   }
 }
@@ -2574,28 +2610,19 @@ async function startFolderScanning(source, handle) {
       return;
     }
 
-    // Apply differentials
+    // Apply differentials (now extremely fast, no synchronous full hashing)
     const summary = await applyScanDifferentials({
       db,
       directoryId: source.id,
       scanResult,
-      recursive,
-      directoryHandle: handle,
-      getFileHandleFromRelativePathFn: getFileHandleFromRelativePath,
-      computeFileSHA256Fn: computeFileSHA256,
-      onProgress: (current, total) => {
-        els.scanProgressBox.classList.remove('hidden');
-        els.scanProgressFiles.textContent = `${current} / ${total} 件のハッシュを検証中...`;
-        els.scanProgressVideos.textContent = '照合中';
-      }
+      recursive
     });
-
-    els.scanProgressBox.classList.add('hidden');
 
     // Save scan timestamp
     await db.updateDirectorySource(source.id, { lastScannedAt: new Date().toISOString() });
 
-    alert(`スキャン完了\n\n新規：${summary.added}本\n更新：${summary.updated}本\n変更なし：${summary.unchanged}本\n見つからない：${summary.missing}本\n判定保留：${summary.pending}本\nエラー：${summary.error}件`);
+    const pendingValidationCount = db.fileLocations.filter(loc => loc.verificationStatus === 'provisional').length;
+    alert(`スキャン完了\n\n新規：${summary.added}本\n更新：${summary.updated}本\n変更なし：${summary.unchanged}本\n見つからない：${summary.missing}本\n判定保留：${summary.pending}本\nエラー：${summary.error}件\nバックグラウンド検証待ち：${pendingValidationCount}件`);
 
     renderFolderSettingsPanel();
     renderLibrary();
