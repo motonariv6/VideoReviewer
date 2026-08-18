@@ -755,9 +755,9 @@ async function syncActiveDirectoryPermissions() {
 }
 
 export let bgHashState = {
-  current: 0,
-  failed: 0,
-  skipped: 0,
+  completedKeys: new Set(),
+  failedKeys: new Set(),
+  skippedKeys: new Set(),
   activeId: null,
   activeName: '',
   activePercent: null,
@@ -768,11 +768,32 @@ export let bgHashState = {
 let bgHashCloseTimeout = null;
 
 export function updateBackgroundHashingProgress(force = false) {
-  const queuedSize = globalHashQueue.queuedKeys.size;
-  const runningSize = globalHashQueue.runningKeys.size;
+  const queued = new Set(globalHashQueue.queuedKeys);
+  const running = new Set(globalHashQueue.runningKeys);
 
-  const total = queuedSize + runningSize + bgHashState.current + bgHashState.failed + bgHashState.skipped;
-  const completed = bgHashState.current + bgHashState.failed + bgHashState.skipped;
+  const completed = new Set();
+  for (const id of bgHashState.completedKeys) {
+    if (!queued.has(id) && !running.has(id)) {
+      completed.add(id);
+    }
+  }
+
+  const failed = new Set();
+  for (const id of bgHashState.failedKeys) {
+    if (!queued.has(id) && !running.has(id) && !completed.has(id)) {
+      failed.add(id);
+    }
+  }
+
+  const skipped = new Set();
+  for (const id of bgHashState.skippedKeys) {
+    if (!queued.has(id) && !running.has(id) && !completed.has(id) && !failed.has(id)) {
+      skipped.add(id);
+    }
+  }
+
+  const total = queued.size + running.size + completed.size + failed.size + skipped.size;
+  const completedCount = completed.size + failed.size + skipped.size;
 
   if (total === 0) {
     if (bgHashCloseTimeout) {
@@ -783,13 +804,13 @@ export function updateBackgroundHashingProgress(force = false) {
     return;
   }
 
-  if (queuedSize === 0 && runningSize === 0) {
+  if (queued.size === 0 && running.size === 0) {
     if (!bgHashCloseTimeout) {
       bgHashCloseTimeout = setTimeout(() => {
         bgHashCloseTimeout = null;
-        bgHashState.current = 0;
-        bgHashState.failed = 0;
-        bgHashState.skipped = 0;
+        bgHashState.completedKeys.clear();
+        bgHashState.failedKeys.clear();
+        bgHashState.skippedKeys.clear();
         updateBackgroundHashingUI(0, 0);
       }, 3000);
     }
@@ -800,7 +821,7 @@ export function updateBackgroundHashingProgress(force = false) {
     }
   }
 
-  triggerUIUpdate(completed, total, force);
+  triggerUIUpdate(completedCount, total, force);
 }
 
 let bgHashLastUpdateTime = 0;
@@ -880,11 +901,28 @@ function updateBackgroundHashingUI(current, total) {
 
   let headerText = `フルハッシュ検証中 ${current} / ${total}`;
   const extraStats = [];
-  if (bgHashState.failed > 0) {
-    extraStats.push(`失敗: ${bgHashState.failed}件`);
+
+  const queued = new Set(globalHashQueue.queuedKeys);
+  const running = new Set(globalHashQueue.runningKeys);
+
+  const completed = new Set();
+  for (const id of bgHashState.completedKeys) {
+    if (!queued.has(id) && !running.has(id)) completed.add(id);
   }
-  if (bgHashState.skipped > 0) {
-    extraStats.push(`スキップ: ${bgHashState.skipped}件`);
+  const failed = new Set();
+  for (const id of bgHashState.failedKeys) {
+    if (!queued.has(id) && !running.has(id) && !completed.has(id)) failed.add(id);
+  }
+  const skipped = new Set();
+  for (const id of bgHashState.skippedKeys) {
+    if (!queued.has(id) && !running.has(id) && !completed.has(id) && !failed.has(id)) skipped.add(id);
+  }
+
+  if (failed.size > 0) {
+    extraStats.push(`失敗: ${failed.size}件`);
+  }
+  if (skipped.size > 0) {
+    extraStats.push(`スキップ: ${skipped.size}件`);
   }
   if (extraStats.length > 0) {
     headerText += ` (${extraStats.join(', ')})`;
@@ -1032,22 +1070,7 @@ export async function processBackgroundHashingQueue() {
     eligibleLocs.push(loc);
   }
 
-  // 2. Resolve same asset location choice (prefer active/connected source, pick one per mediaAssetId)
-  const locsByAsset = new Map();
-  for (const loc of eligibleLocs) {
-    if (!locsByAsset.has(loc.mediaAssetId)) {
-      locsByAsset.set(loc.mediaAssetId, loc);
-    } else {
-      const existingLoc = locsByAsset.get(loc.mediaAssetId);
-      const existingIdx = sources.findIndex(s => s.id === existingLoc.directoryId);
-      const currentIdx = sources.findIndex(s => s.id === loc.directoryId);
-      if (currentIdx !== -1 && currentIdx < existingIdx) {
-        locsByAsset.set(loc.mediaAssetId, loc);
-      }
-    }
-  }
-
-  const finalLocsToProcess = Array.from(locsByAsset.values());
+  const finalLocsToProcess = eligibleLocs;
 
   if (finalLocsToProcess.length === 0) {
     updateBackgroundHashingProgress(true);
@@ -1055,9 +1078,9 @@ export async function processBackgroundHashingQueue() {
   }
 
   if (globalHashQueue.queuedKeys.size === 0 && globalHashQueue.runningKeys.size === 0) {
-    bgHashState.current = 0;
-    bgHashState.failed = 0;
-    bgHashState.skipped = 0;
+    bgHashState.completedKeys.clear();
+    bgHashState.failedKeys.clear();
+    bgHashState.skippedKeys.clear();
   }
 
   const newLocs = finalLocsToProcess.filter(loc => {
@@ -1077,17 +1100,6 @@ export async function processBackgroundHashingQueue() {
       const freshLoc = db.fileLocations.find(l => l.id === loc.id);
       if (!freshLoc || freshLoc.verificationStatus !== 'provisional') {
         updateBackgroundHashingProgress();
-        return;
-      }
-
-      // Check if another location for the same media asset is already verified, or if the asset has a completed hash
-      const asset = db.getMediaAsset(freshLoc.mediaAssetId);
-      if (asset && asset.hashStatus === 'completed' && asset.contentHash && asset.contentHash.length === 64) {
-        // Reuse hash immediately without performing full hash computation
-        await db.completeLocationProvisionalVerification(freshLoc.id, asset.contentHash);
-        bgHashState.current++;
-        updateBackgroundHashingProgress(true);
-        renderLibrary();
         return;
       }
 
@@ -1135,10 +1147,10 @@ export async function processBackgroundHashingQueue() {
             });
           }
         );
-        bgHashState.current++;
+        bgHashState.completedKeys.add(loc.id);
       } catch (err) {
         console.error(`Failed background verification for location ${loc.relativePath}:`, err);
-        bgHashState.failed++;
+        bgHashState.failedKeys.add(loc.id);
       } finally {
         if (bgHashState.activeId === loc.id) {
           bgHashState.activeId = null;
@@ -2977,9 +2989,9 @@ async function handleFolderDisconnect() {
 
   try {
     globalHashQueue.cancelPending();
-    bgHashState.current = 0;
-    bgHashState.failed = 0;
-    bgHashState.skipped = 0;
+    bgHashState.completedKeys.clear();
+    bgHashState.failedKeys.clear();
+    bgHashState.skippedKeys.clear();
     bgHashState.activeId = null;
     bgHashState.activeName = '';
     bgHashState.activePercent = null;

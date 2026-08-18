@@ -4482,32 +4482,60 @@ export async function runTests() {
   await runTest('11-20. Hashing UI progress calculation, failure, and state cleanup', async () => {
     globalHashQueue.cancelPending();
 
-    bgHashState.current = 0;
-    bgHashState.failed = 0;
-    bgHashState.skipped = 0;
+    bgHashState.completedKeys.clear();
+    bgHashState.failedKeys.clear();
+    bgHashState.skippedKeys.clear();
     bgHashState.activeId = null;
     bgHashState.activeName = '';
     bgHashState.activePercent = null;
 
     globalHashQueue.queuedKeys.add('loc-1');
     globalHashQueue.runningKeys.add('loc-2');
-    bgHashState.current = 1;
-    bgHashState.failed = 1;
-    bgHashState.skipped = 1;
+    
+    bgHashState.completedKeys.add('loc-3');
+    bgHashState.failedKeys.add('loc-4');
+    bgHashState.skippedKeys.add('loc-5');
 
-    const queuedSize = globalHashQueue.queuedKeys.size;
-    const runningSize = globalHashQueue.runningKeys.size;
-    const total = queuedSize + runningSize + bgHashState.current + bgHashState.failed + bgHashState.skipped;
-    const completed = bgHashState.current + bgHashState.failed + bgHashState.skipped;
+    const queued = new Set(globalHashQueue.queuedKeys);
+    const running = new Set(globalHashQueue.runningKeys);
+
+    const completed = new Set();
+    for (const id of bgHashState.completedKeys) {
+      if (!queued.has(id) && !running.has(id)) completed.add(id);
+    }
+    const failed = new Set();
+    for (const id of bgHashState.failedKeys) {
+      if (!queued.has(id) && !running.has(id) && !completed.has(id)) failed.add(id);
+    }
+    const skipped = new Set();
+    for (const id of bgHashState.skippedKeys) {
+      if (!queued.has(id) && !running.has(id) && !completed.has(id) && !failed.has(id)) skipped.add(id);
+    }
+
+    let total = queued.size + running.size + completed.size + failed.size + skipped.size;
+    let completedCount = completed.size + failed.size + skipped.size;
 
     assert(total === 5, 'Total progress count is calculated correctly: 5');
-    assert(completed === 3, 'Completed count is 3');
+    assert(completedCount === 3, 'Completed count is 3');
+
+    // 6. Test running/current double count prevention
+    bgHashState.completedKeys.add('loc-2');
+    
+    const completed2 = new Set();
+    for (const id of bgHashState.completedKeys) {
+      if (!queued.has(id) && !running.has(id)) completed2.add(id);
+    }
+    
+    assert(!completed2.has('loc-2'), 'Completed keys excludes running keys to prevent double counting');
+    
+    let total2 = queued.size + running.size + completed2.size + failed.size + skipped.size;
+    assert(total2 === 5, 'Total remains 5 (no double counting of loc-2)');
 
     globalHashQueue.queuedKeys.clear();
     globalHashQueue.runningKeys.clear();
-    bgHashState.current = 0;
-    bgHashState.failed = 0;
-    bgHashState.skipped = 0;
+    bgHashState.completedKeys.clear();
+    bgHashState.failedKeys.clear();
+    bgHashState.skippedKeys.clear();
   });
 
   await runTest('11-21. processBackgroundHashingQueue integration, duplicate triggers, and safety rules', async () => {
@@ -4524,9 +4552,9 @@ export async function runTests() {
       clear: async function() { this.store = {}; }
     };
 
-    bgHashState.current = 0;
-    bgHashState.failed = 0;
-    bgHashState.skipped = 0;
+    bgHashState.completedKeys.clear();
+    bgHashState.failedKeys.clear();
+    bgHashState.skippedKeys.clear();
     bgHashState.activeId = null;
     bgHashState.activeName = '';
     bgHashState.activePercent = null;
@@ -4535,6 +4563,8 @@ export async function runTests() {
     setDbForTesting(testDb);
 
     try {
+      window.testComputeSHA256Hook = () => 'mock_hash';
+
       const source = await testDb.addDirectorySource({ name: 'FolderA' });
       await testDb.updateDirectorySource(source.id, { permissionStatus: 'granted' });
       const mockHandle = new MockFileSystemDirectoryHandle('FolderA', {
@@ -4578,8 +4608,22 @@ export async function runTests() {
       await processBackgroundHashingQueue();
       await processBackgroundHashingQueue();
 
-      let queuedSize = globalHashQueue.queuedKeys.size;
-      let total = queuedSize + globalHashQueue.runningKeys.size + bgHashState.current + bgHashState.failed + bgHashState.skipped;
+      const queued = new Set(globalHashQueue.queuedKeys);
+      const running = new Set(globalHashQueue.runningKeys);
+      const completed = new Set();
+      for (const id of bgHashState.completedKeys) {
+        if (!queued.has(id) && !running.has(id)) completed.add(id);
+      }
+      const failed = new Set();
+      for (const id of bgHashState.failedKeys) {
+        if (!queued.has(id) && !running.has(id) && !completed.has(id)) failed.add(id);
+      }
+      const skipped = new Set();
+      for (const id of bgHashState.skippedKeys) {
+        if (!queued.has(id) && !running.has(id) && !completed.has(id) && !failed.has(id)) skipped.add(id);
+      }
+
+      let total = queued.size + running.size + completed.size + failed.size + skipped.size;
       assert(total === 2, 'Total Y limit does not exceed 2 even after calling 3 times');
       assert(globalHashQueue.queue.length === 2, 'Only 2 tasks are enqueued');
 
@@ -4591,6 +4635,7 @@ export async function runTests() {
       assert(globalHashQueue.runningKeys.size === 0, 'Running keys cleared');
 
     } finally {
+      window.testComputeSHA256Hook = undefined;
       setDbForTesting(originalDb);
       globalHashQueue.cancelPending();
     }
@@ -4610,9 +4655,9 @@ export async function runTests() {
       clear: async function() { this.store = {}; }
     };
 
-    bgHashState.current = 0;
-    bgHashState.failed = 0;
-    bgHashState.skipped = 0;
+    bgHashState.completedKeys.clear();
+    bgHashState.failedKeys.clear();
+    bgHashState.skippedKeys.clear();
     bgHashState.activeId = null;
     bgHashState.activeName = '';
     bgHashState.activePercent = null;
@@ -4626,6 +4671,15 @@ export async function runTests() {
 
       const newSource = await testDb.addDirectorySource({ name: 'NewFolder' });
       await testDb.updateDirectorySource(newSource.id, { permissionStatus: 'granted' });
+      
+      let computeSHA256CallCount = 0;
+      window.testComputeSHA256Hook = (fileObj) => {
+        computeSHA256CallCount++;
+        if (fileObj.name === 'video1.mp4') return 'hash_asset_1';
+        if (fileObj.name === 'video2.mp4') return 'different_hash_for_asset_2';
+        return 'dummy_hash';
+      };
+
       const newHandle = new MockFileSystemDirectoryHandle('NewFolder', {
         'video1.mp4': new MockFileSystemFileHandle('video1.mp4', 100, 100),
         'video2.mp4': new MockFileSystemFileHandle('video2.mp4', 200, 200)
@@ -4634,9 +4688,31 @@ export async function runTests() {
 
       await testDb.deleteDirectorySource(oldSource.id);
 
+      const asset1 = await testDb.addVideo({
+        fileName: 'video1.mp4',
+        fileSize: 100,
+        lastModified: 100,
+        quickHash: 'qh_1',
+        hashStatus: 'completed',
+        identityStatus: 'verified'
+      });
+      asset1.contentHash = 'hash_asset_1';
+      await testDb._saveTable('media_assets', testDb.mediaAssets);
+
+      const asset2 = await testDb.addVideo({
+        fileName: 'video2.mp4',
+        fileSize: 200,
+        lastModified: 200,
+        quickHash: 'qh_2',
+        hashStatus: 'completed',
+        identityStatus: 'verified'
+      });
+      asset2.contentHash = 'hash_asset_2_original';
+      await testDb._saveTable('media_assets', testDb.mediaAssets);
+
       const locOld1 = {
         id: 'loc-old-1',
-        mediaAssetId: 'asset-1',
+        mediaAssetId: asset1.id,
         directoryId: oldSource.id,
         relativePath: 'video1.mp4',
         fileName: 'video1.mp4',
@@ -4649,7 +4725,7 @@ export async function runTests() {
       };
       const locNew1 = {
         id: 'loc-new-1',
-        mediaAssetId: 'asset-1',
+        mediaAssetId: asset1.id,
         directoryId: newSource.id,
         relativePath: 'video1.mp4',
         fileName: 'video1.mp4',
@@ -4663,7 +4739,7 @@ export async function runTests() {
 
       const locOld2 = {
         id: 'loc-old-2',
-        mediaAssetId: 'asset-2',
+        mediaAssetId: asset2.id,
         directoryId: oldSource.id,
         relativePath: 'video2.mp4',
         fileName: 'video2.mp4',
@@ -4676,7 +4752,7 @@ export async function runTests() {
       };
       const locNew2 = {
         id: 'loc-new-2',
-        mediaAssetId: 'asset-2',
+        mediaAssetId: asset2.id,
         directoryId: newSource.id,
         relativePath: 'video2.mp4',
         fileName: 'video2.mp4',
@@ -4695,8 +4771,22 @@ export async function runTests() {
       await processBackgroundHashingQueue();
       await processBackgroundHashingQueue();
 
-      let queuedSize = globalHashQueue.queuedKeys.size;
-      let total = queuedSize + globalHashQueue.runningKeys.size + bgHashState.current + bgHashState.failed + bgHashState.skipped;
+      const queued = new Set(globalHashQueue.queuedKeys);
+      const running = new Set(globalHashQueue.runningKeys);
+      const completed = new Set();
+      for (const id of bgHashState.completedKeys) {
+        if (!queued.has(id) && !running.has(id)) completed.add(id);
+      }
+      const failed = new Set();
+      for (const id of bgHashState.failedKeys) {
+        if (!queued.has(id) && !running.has(id) && !completed.has(id)) failed.add(id);
+      }
+      const skipped = new Set();
+      for (const id of bgHashState.skippedKeys) {
+        if (!queued.has(id) && !running.has(id) && !completed.has(id) && !failed.has(id)) skipped.add(id);
+      }
+
+      let total = queued.size + running.size + completed.size + failed.size + skipped.size;
       
       assert(total === 2, `Total must be 2, got ${total}`);
       assert(globalHashQueue.queue.length === 2, `Queue length must be 2, got ${globalHashQueue.queue.length}`);
@@ -4710,7 +4800,25 @@ export async function runTests() {
       assert(globalHashQueue.queuedKeys.size === 0, 'All enqueued tasks complete');
       assert(globalHashQueue.runningKeys.size === 0, 'All running tasks complete');
 
+      // 1. Confirm that full SHA-256 function was called for loc-new-1 despite asset1.contentHash being pre-verified
+      assert(computeSHA256CallCount >= 2, 'Full hash computed for all provisional locations, even if contentHash is completed');
+
+      // 2. Confirm loc-new-1 is verified (matches hash)
+      const freshNew1 = testDb.fileLocations.find(l => l.id === 'loc-new-1');
+      assert(freshNew1.verificationStatus === 'verified', 'Matches contentHash -> verified');
+
+      // 3. Confirm loc-new-2 got separated because of hash mismatch
+      const freshNew2 = testDb.fileLocations.find(l => l.id === 'loc-new-2');
+      assert(freshNew2.verificationStatus === 'verified', 'Separated loc is also verified');
+      assert(freshNew2.mediaAssetId !== asset2.id, 'Mismatch -> separated to a new asset');
+
+      // 5. Confirm separated asset does not have duplicated ratings or reviews
+      const originalAssetReviews = testDb.reviews.filter(r => r.mediaAssetId === asset2.id);
+      const separatedAssetReviews = testDb.reviews.filter(r => r.mediaAssetId === freshNew2.mediaAssetId);
+      assert(separatedAssetReviews.length === 0, 'Separated asset reviews are empty');
+
     } finally {
+      window.testComputeSHA256Hook = undefined;
       setDbForTesting(originalDb);
       globalHashQueue.cancelPending();
     }

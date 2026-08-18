@@ -221,6 +221,13 @@ export async function computeQuickHash(file) {
  */
 export async function computeFileSHA256(file, { onProgress = null, signal = null, chunkSize = 1024 * 1024, useWorker = true } = {}) {
   if (!file) throw new Error('No file provided for hashing');
+  if (typeof window !== 'undefined' && window.testComputeSHA256Hook) {
+    const result = window.testComputeSHA256Hook(file);
+    if (onProgress) {
+      onProgress({ processedBytes: file.size, totalBytes: file.size, percent: 100 });
+    }
+    return result;
+  }
   const startTime = Date.now();
   const totalBytes = file.size;
 
