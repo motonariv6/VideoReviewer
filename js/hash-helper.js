@@ -380,11 +380,18 @@ export class HashQueue {
     this.runningCount = 0;
     this.queue = [];
     this.isPaused = false;
+    this.queuedKeys = new Set();
+    this.runningKeys = new Set();
   }
 
-  enqueue(taskFn) {
+  enqueue(key, taskFn) {
+    if (this.queuedKeys.has(key) || this.runningKeys.has(key)) {
+      return Promise.resolve(null);
+    }
+    this.queuedKeys.add(key);
+
     return new Promise((resolve, reject) => {
-      this.queue.push({ taskFn, resolve, reject });
+      this.queue.push({ key, taskFn, resolve, reject });
       this.processNext();
     });
   }
@@ -401,6 +408,7 @@ export class HashQueue {
   cancelPending() {
     const oldQueue = this.queue;
     this.queue = [];
+    this.queuedKeys.clear();
     for (const item of oldQueue) {
       item.reject(new Error('Hashing queue cancelled'));
     }
@@ -416,7 +424,10 @@ export class HashQueue {
     }
 
     this.runningCount++;
-    const { taskFn, resolve, reject } = this.queue.shift();
+    const { key, taskFn, resolve, reject } = this.queue.shift();
+
+    this.queuedKeys.delete(key);
+    this.runningKeys.add(key);
 
     try {
       const result = await taskFn();
@@ -424,6 +435,7 @@ export class HashQueue {
     } catch (err) {
       reject(err);
     } finally {
+      this.runningKeys.delete(key);
       this.runningCount--;
       this.processNext();
     }

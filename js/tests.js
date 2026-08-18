@@ -2,8 +2,8 @@ import { AppDatabase } from './db.js';
 import { generateFileSignature, formatTime, parseTime, validateVideoUrl, normalizePath, filterVideosByTag } from './video-helper.js';
 import { isSupportedVideoFile, isPathCoveredByFailedDirectory, scanDirectory, classifyScanResults, applyScanDifferentials, isIgnoredSystemEntry } from './directory-scanner.js';
 import { RadarChart } from './radar.js';
-import { db, setDbForTesting, handleFolderSelect, handleFolderRequestPermission, processSingleLocationVerification } from './app.js';
-import { computeSHA256, computeQuickHash, computeFileSHA256, HashQueue } from './hash-helper.js';
+import { db, setDbForTesting, handleFolderSelect, handleFolderRequestPermission, processSingleLocationVerification, bgHashState, updateBackgroundHashingProgress, processBackgroundHashingQueue } from './app.js';
+import { computeSHA256, computeQuickHash, computeFileSHA256, HashQueue, globalHashQueue } from './hash-helper.js';
 
 export const VALID_HASH_A = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
 export const VALID_HASH_B = 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
@@ -4257,7 +4257,7 @@ export async function runTests() {
       throw new Error('Hash calculation failed');
     };
 
-    await testQueue.enqueue(async () => {
+    await testQueue.enqueue('task-1', async () => {
       try {
         await processSingleLocationVerification(
           testDb,
@@ -4274,7 +4274,7 @@ export async function runTests() {
       }
     });
 
-    await testQueue.enqueue(async () => {
+    await testQueue.enqueue('task-2', async () => {
       queueNextRan = true;
     });
 
@@ -4453,6 +4453,132 @@ export async function runTests() {
     });
     const notes = testDb.timelineNotes.filter(n => n.mediaAssetId === video.id);
     assert(notes.length === 1 && notes[0].comment === 'Provisional allowed note', 'Can add timeline note to provisional video');
+  });
+
+  await runTest('11-19. HashQueue key-based deduplication and state tracking', async () => {
+    const queue = new HashQueue(1);
+    let runCount1 = 0;
+    let runCount2 = 0;
+
+    queue.pause();
+
+    const p1 = queue.enqueue('loc-1', async () => { runCount1++; return 'res-1'; });
+    const p2 = queue.enqueue('loc-1', async () => { runCount1++; return 'res-2'; });
+    const p3 = queue.enqueue('loc-2', async () => { runCount2++; return 'res-3'; });
+
+    assert(queue.queue.length === 2, 'Queue has exactly 2 tasks (duplicates are ignored)');
+    assert(queue.queuedKeys.has('loc-1') && queue.queuedKeys.has('loc-2'), 'Keys are tracked as queued');
+
+    queue.resume();
+
+    await Promise.all([p1, p2, p3]);
+
+    assert(runCount1 === 1, 'Task 1 ran exactly once');
+    assert(runCount2 === 1, 'Task 2 ran exactly once');
+    assert(queue.queuedKeys.size === 0, 'No queued keys remain');
+    assert(queue.runningKeys.size === 0, 'No running keys remain');
+  });
+
+  await runTest('11-20. Hashing UI progress calculation, failure, and state cleanup', async () => {
+    globalHashQueue.cancelPending();
+
+    bgHashState.current = 0;
+    bgHashState.failed = 0;
+    bgHashState.skipped = 0;
+    bgHashState.activeId = null;
+    bgHashState.activeName = '';
+    bgHashState.activePercent = null;
+
+    globalHashQueue.queuedKeys.add('loc-1');
+    globalHashQueue.runningKeys.add('loc-2');
+    bgHashState.current = 1;
+    bgHashState.failed = 1;
+    bgHashState.skipped = 1;
+
+    const queuedSize = globalHashQueue.queuedKeys.size;
+    const runningSize = globalHashQueue.runningKeys.size;
+    const total = queuedSize + runningSize + bgHashState.current + bgHashState.failed + bgHashState.skipped;
+    const completed = bgHashState.current + bgHashState.failed + bgHashState.skipped;
+
+    assert(total === 5, 'Total progress count is calculated correctly: 5');
+    assert(completed === 3, 'Completed count is 3');
+
+    globalHashQueue.queuedKeys.clear();
+    globalHashQueue.runningKeys.clear();
+    bgHashState.current = 0;
+    bgHashState.failed = 0;
+    bgHashState.skipped = 0;
+  });
+
+  await runTest('11-21. processBackgroundHashingQueue integration, duplicate triggers, and safety rules', async () => {
+    globalHashQueue.cancelPending();
+    const testDb = new AppDatabase();
+
+    bgHashState.current = 0;
+    bgHashState.failed = 0;
+    bgHashState.skipped = 0;
+    bgHashState.activeId = null;
+    bgHashState.activeName = '';
+    bgHashState.activePercent = null;
+
+    const originalDb = db;
+    setDbForTesting(testDb);
+
+    try {
+      const source = await testDb.addDirectorySource({ name: 'FolderA' });
+      await testDb.updateDirectorySource(source.id, { permissionStatus: 'granted' });
+
+      const loc1 = {
+        id: 'loc-test-1',
+        mediaAssetId: 'asset-1',
+        directoryId: source.id,
+        relativePath: 'video1.mp4',
+        fileName: 'video1.mp4',
+        fileSize: 100,
+        lastModified: 100,
+        availabilityStatus: 'available',
+        verificationStatus: 'provisional',
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      };
+      const loc2 = {
+        id: 'loc-test-2',
+        mediaAssetId: 'asset-2',
+        directoryId: source.id,
+        relativePath: 'video2.mp4',
+        fileName: 'video2.mp4',
+        fileSize: 200,
+        lastModified: 200,
+        availabilityStatus: 'available',
+        verificationStatus: 'provisional',
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      };
+      testDb.fileLocations.push(loc1);
+      testDb.fileLocations.push(loc2);
+
+      globalHashQueue.pause();
+      
+      await processBackgroundHashingQueue();
+      await processBackgroundHashingQueue();
+      await processBackgroundHashingQueue();
+
+      let queuedSize = globalHashQueue.queuedKeys.size;
+      let total = queuedSize + globalHashQueue.runningKeys.size + bgHashState.current + bgHashState.failed + bgHashState.skipped;
+      assert(total === 2, 'Total Y limit does not exceed 2 even after calling 3 times');
+      assert(globalHashQueue.queue.length === 2, 'Only 2 tasks are enqueued');
+
+      globalHashQueue.resume();
+
+      await new Promise(resolve => setTimeout(resolve, 50));
+
+      assert(globalHashQueue.queuedKeys.size === 0, 'Queued keys cleared');
+      assert(globalHashQueue.runningKeys.size === 0, 'Running keys cleared');
+
+    } finally {
+      setDbForTesting(originalDb);
+      globalHashQueue.cancelPending();
+    }
   });
 
   console.groupEnd();

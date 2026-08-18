@@ -754,15 +754,103 @@ async function syncActiveDirectoryPermissions() {
   }
 }
 
-let bgHashTotal = 0;
-let bgHashCurrent = 0;
+export let bgHashState = {
+  current: 0,
+  failed: 0,
+  skipped: 0,
+  activeId: null,
+  activeName: '',
+  activePercent: null,
+  lastUpdateTime: 0,
+  lastUpdatePercent: -1
+};
+
+let bgHashCloseTimeout = null;
+
+export function updateBackgroundHashingProgress(force = false) {
+  const queuedSize = globalHashQueue.queuedKeys.size;
+  const runningSize = globalHashQueue.runningKeys.size;
+
+  const total = queuedSize + runningSize + bgHashState.current + bgHashState.failed + bgHashState.skipped;
+  const completed = bgHashState.current + bgHashState.failed + bgHashState.skipped;
+
+  if (total === 0) {
+    if (bgHashCloseTimeout) {
+      clearTimeout(bgHashCloseTimeout);
+      bgHashCloseTimeout = null;
+    }
+    updateBackgroundHashingUI(0, 0);
+    return;
+  }
+
+  if (queuedSize === 0 && runningSize === 0) {
+    if (!bgHashCloseTimeout) {
+      bgHashCloseTimeout = setTimeout(() => {
+        bgHashCloseTimeout = null;
+        bgHashState.current = 0;
+        bgHashState.failed = 0;
+        bgHashState.skipped = 0;
+        updateBackgroundHashingUI(0, 0);
+      }, 3000);
+    }
+  } else {
+    if (bgHashCloseTimeout) {
+      clearTimeout(bgHashCloseTimeout);
+      bgHashCloseTimeout = null;
+    }
+  }
+
+  triggerUIUpdate(completed, total, force);
+}
+
+let bgHashLastUpdateTime = 0;
+let bgHashLastPercent = -1;
+
+function triggerUIUpdate(completed, total, force) {
+  const now = Date.now();
+  const percent = bgHashState.activePercent;
+  const percentChanged = percent !== bgHashLastPercent;
+  const timeElapsed = now - bgHashLastUpdateTime > 100;
+
+  if (force || percentChanged || timeElapsed || completed === total) {
+    bgHashLastUpdateTime = now;
+    bgHashLastPercent = percent;
+    updateBackgroundHashingUI(completed, total);
+  }
+}
 
 function updateBackgroundHashingUI(current, total) {
   let indicator = document.getElementById('bg-hash-indicator');
-  if (total === 0 || current >= total) {
+  
+  if (total === 0 || (current >= total && !bgHashCloseTimeout)) {
     if (indicator) indicator.classList.add('hidden');
     return;
   }
+
+  if (!document.getElementById('bg-hash-styles')) {
+    const style = document.createElement('style');
+    style.id = 'bg-hash-styles';
+    style.textContent = `
+      @keyframes bg-hash-slide {
+        0% { left: -30%; }
+        100% { left: 100%; }
+      }
+      .bg-hash-indeterminate {
+        position: relative;
+        overflow: hidden;
+        background-color: var(--color-border, #374151) !important;
+      }
+      .bg-hash-indeterminate::after {
+        content: '';
+        position: absolute;
+        top: 0; left: -30%; width: 30%; height: 100%;
+        background: linear-gradient(90deg, transparent, var(--color-primary, #6366f1), transparent);
+        animation: bg-hash-slide 1.2s infinite linear;
+      }
+    `;
+    document.head.appendChild(style);
+  }
+
   if (!indicator) {
     indicator = document.createElement('div');
     indicator.id = 'bg-hash-indicator';
@@ -770,7 +858,7 @@ function updateBackgroundHashingUI(current, total) {
       position: 'fixed',
       bottom: '16px',
       right: '16px',
-      padding: '8px 12px',
+      padding: '12px 16px',
       backgroundColor: 'var(--color-bg-card, #1f2937)',
       color: 'var(--color-text, #f3f4f6)',
       borderRadius: 'var(--radius-sm, 6px)',
@@ -779,12 +867,102 @@ function updateBackgroundHashingUI(current, total) {
       fontSize: '0.75rem',
       fontWeight: '600',
       zIndex: '9999',
-      transition: 'opacity 0.3s ease'
+      transition: 'opacity 0.3s ease',
+      width: '260px',
+      display: 'flex',
+      flexDirection: 'column',
+      gap: '6px'
     });
     document.body.appendChild(indicator);
   }
+
   indicator.classList.remove('hidden');
-  indicator.textContent = `ハッシュ検証 ${current} / ${total}`;
+
+  let headerText = `フルハッシュ検証中 ${current} / ${total}`;
+  const extraStats = [];
+  if (bgHashState.failed > 0) {
+    extraStats.push(`失敗: ${bgHashState.failed}件`);
+  }
+  if (bgHashState.skipped > 0) {
+    extraStats.push(`スキップ: ${bgHashState.skipped}件`);
+  }
+  if (extraStats.length > 0) {
+    headerText += ` (${extraStats.join(', ')})`;
+  }
+
+  const clipName = (name) => {
+    if (!name) return '';
+    if (name.length > 25) {
+      return name.slice(0, 12) + '...' + name.slice(-10);
+    }
+    return name;
+  };
+
+  let titleEl = indicator.querySelector('.bg-hash-title');
+  if (!titleEl) {
+    titleEl = document.createElement('div');
+    titleEl.className = 'bg-hash-title';
+    titleEl.style.fontSize = '0.8125rem';
+    titleEl.style.color = 'var(--color-text, #f3f4f6)';
+    indicator.appendChild(titleEl);
+  }
+  titleEl.textContent = headerText;
+
+  let fileEl = indicator.querySelector('.bg-hash-file');
+  if (!fileEl) {
+    fileEl = document.createElement('div');
+    fileEl.className = 'bg-hash-file';
+    fileEl.style.fontSize = '0.75rem';
+    fileEl.style.color = 'var(--color-text-muted, #9ca3af)';
+    fileEl.style.whiteSpace = 'nowrap';
+    fileEl.style.overflow = 'hidden';
+    fileEl.style.textOverflow = 'ellipsis';
+    indicator.appendChild(fileEl);
+  }
+
+  let progressContainer = indicator.querySelector('.bg-hash-progress-container');
+  if (!progressContainer) {
+    progressContainer = document.createElement('div');
+    progressContainer.className = 'bg-hash-progress-container';
+    Object.assign(progressContainer.style, {
+      width: '100%',
+      backgroundColor: 'var(--color-border, #374151)',
+      height: '6px',
+      borderRadius: '3px',
+      overflow: 'hidden',
+      position: 'relative'
+    });
+    const fillEl = document.createElement('div');
+    fillEl.className = 'bg-hash-progress-fill';
+    Object.assign(fillEl.style, {
+      height: '100%',
+      backgroundColor: 'var(--color-primary, #6366f1)',
+      width: '0%',
+      transition: 'width 0.1s ease'
+    });
+    progressContainer.appendChild(fillEl);
+    indicator.appendChild(progressContainer);
+  }
+
+  const fillEl = progressContainer.querySelector('.bg-hash-progress-fill');
+
+  if (bgHashState.activeId) {
+    const pct = bgHashState.activePercent;
+    fileEl.textContent = `${clipName(bgHashState.activeName)} (${pct === null ? '検証中' : pct + '%'})`;
+    fileEl.style.display = '';
+    progressContainer.style.display = '';
+
+    if (pct === null) {
+      fillEl.className = 'bg-hash-progress-fill bg-hash-indeterminate';
+      fillEl.style.width = '100%';
+    } else {
+      fillEl.className = 'bg-hash-progress-fill';
+      fillEl.style.width = `${pct}%`;
+    }
+  } else {
+    fileEl.style.display = 'none';
+    progressContainer.style.display = 'none';
+  }
 }
 
 export async function processSingleLocationVerification(dbInstance, locId, sources, getDirectoryHandleFn, getFileHandleFn, computeHashFn) {
@@ -811,50 +989,108 @@ export async function processSingleLocationVerification(dbInstance, locId, sourc
   return result;
 }
 
-async function processBackgroundHashingQueue() {
+export async function processBackgroundHashingQueue() {
   const provisionalLocs = db.fileLocations.filter(loc => loc.verificationStatus === 'provisional');
   if (provisionalLocs.length === 0) {
-    updateBackgroundHashingUI(0, 0);
+    updateBackgroundHashingProgress(true);
     return;
   }
 
   const sources = db.getDirectorySources();
   if (sources.length === 0) return;
 
-  bgHashTotal = provisionalLocs.length;
-  bgHashCurrent = 0;
-  updateBackgroundHashingUI(bgHashCurrent, bgHashTotal);
+  if (globalHashQueue.queuedKeys.size === 0 && globalHashQueue.runningKeys.size === 0) {
+    bgHashState.current = 0;
+    bgHashState.failed = 0;
+    bgHashState.skipped = 0;
+  }
 
-  const queuedLocIds = new Set();
-  for (const loc of provisionalLocs) {
-    if (queuedLocIds.has(loc.id)) {
-      logMetric(`Duplicate queue check: Location ${loc.id} (${loc.relativePath}) is ALREADY queued!`);
-    } else {
-      queuedLocIds.add(loc.id);
-    }
+  const newLocs = provisionalLocs.filter(loc => {
+    return !globalHashQueue.queuedKeys.has(loc.id) && !globalHashQueue.runningKeys.has(loc.id);
+  });
+
+  if (newLocs.length === 0) {
+    updateBackgroundHashingProgress();
+    return;
+  }
+
+  for (const loc of newLocs) {
     logMetric(`Queue Enqueue: Name: ${loc.fileName}, Size: ${loc.fileSize}, LocId: ${loc.id}`);
 
-    globalHashQueue.enqueue(async () => {
+    globalHashQueue.enqueue(loc.id, async () => {
+      // 4. Execution check right before hashing starts
+      const freshLoc = db.fileLocations.find(l => l.id === loc.id);
+      if (!freshLoc || freshLoc.verificationStatus !== 'provisional') {
+        bgHashState.skipped++;
+        updateBackgroundHashingProgress();
+        return;
+      }
+
+      const source = sources.find(s => s.id === freshLoc.directoryId);
+      if (!source) {
+        bgHashState.skipped++;
+        updateBackgroundHashingProgress();
+        return;
+      }
+
       try {
+        const handle = await db.getDirectoryHandle(source.handleKey);
+        if (!handle) {
+          bgHashState.failed++;
+          updateBackgroundHashingProgress();
+          return;
+        }
+        const perm = await handle.queryPermission({ mode: 'read' });
+        if (perm !== 'granted') {
+          bgHashState.failed++;
+          updateBackgroundHashingProgress();
+          return;
+        }
+
+        bgHashState.activeId = loc.id;
+        bgHashState.activeName = loc.fileName;
+        bgHashState.activePercent = null;
+        updateBackgroundHashingProgress(true);
+
         await processSingleLocationVerification(
           db,
           loc.id,
           sources,
           (key) => db.getDirectoryHandle(key),
           getFileHandleFromRelativePath,
-          computeFileSHA256
+          (file, opts) => {
+            return computeFileSHA256(file, {
+              ...opts,
+              onProgress: (pInfo) => {
+                if (pInfo.percent < 100) {
+                  bgHashState.activePercent = pInfo.percent;
+                } else {
+                  bgHashState.activePercent = 100;
+                }
+                updateBackgroundHashingProgress();
+              }
+            });
+          }
         );
+        bgHashState.current++;
       } catch (err) {
         console.error(`Failed background verification for location ${loc.relativePath}:`, err);
+        bgHashState.failed++;
       } finally {
-        bgHashCurrent++;
-        updateBackgroundHashingUI(bgHashCurrent, bgHashTotal);
+        if (bgHashState.activeId === loc.id) {
+          bgHashState.activeId = null;
+          bgHashState.activeName = '';
+          bgHashState.activePercent = null;
+        }
+        updateBackgroundHashingProgress(true);
         renderLibrary();
       }
     }).catch(err => {
       console.error(`Queue error for location ${loc.relativePath}:`, err);
     });
   }
+
+  updateBackgroundHashingProgress(true);
 }
 
 // Reusable helper to filter videos
@@ -2677,6 +2913,15 @@ async function handleFolderDisconnect() {
   }
 
   try {
+    globalHashQueue.cancelPending();
+    bgHashState.current = 0;
+    bgHashState.failed = 0;
+    bgHashState.skipped = 0;
+    bgHashState.activeId = null;
+    bgHashState.activeName = '';
+    bgHashState.activePercent = null;
+    updateBackgroundHashingProgress(true);
+
     await db.deleteDirectorySource(source.id);
     showToast('動画フォルダの接続を解除しました。');
     renderFolderSettingsPanel();
