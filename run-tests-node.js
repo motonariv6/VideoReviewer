@@ -241,6 +241,8 @@ Candidates searched:
 
         if (pathname === '/api/group-start') {
           console.log(`\n${data.name}`);
+        } else if (pathname === '/api/metric') {
+          console.log(`[METRIC] ${data.message}`);
         } else if (pathname === '/api/group-end') {
           // No-op
         } else if (pathname === '/api/test-progress') {

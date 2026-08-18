@@ -1,8 +1,14 @@
-/**
- * js/hash-helper.js
- * Incremental SHA-256 Hashing, QuickHash Candidate Extraction,
- * and Concurrency-Controlled Hashing Queue for VideoReviewer.
- */
+export function logMetric(message) {
+  console.log(`[METRIC] ${message}`);
+  if (typeof fetch !== 'undefined') {
+    fetch('/api/metric', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message })
+    }).catch(() => {});
+  }
+}
+
 
 export class SHA256Hasher {
   constructor() {
@@ -161,31 +167,45 @@ export function computeSHA256(data) {
  */
 export async function computeQuickHash(file) {
   if (!file) return '';
+  const startTime = Date.now();
   const size = file.size || 0;
   const SAMPLE_SIZE = 1024 * 1024; // 1MB
 
-  const hasher = new SHA256Hasher();
-  hasher.update(`size:${size}|`);
+  const sizeStr = `size:${size}|`;
+  const sizeBuf = new TextEncoder().encode(sizeStr);
+  const parts = [sizeBuf];
 
   if (size <= SAMPLE_SIZE * 3) {
-    const buf = await file.arrayBuffer();
-    hasher.update(buf);
+    parts.push(file);
   } else {
     // Read head
-    const headBuf = await file.slice(0, SAMPLE_SIZE).arrayBuffer();
-    hasher.update(headBuf);
-
+    parts.push(file.slice(0, SAMPLE_SIZE));
     // Read middle
     const midStart = Math.floor((size - SAMPLE_SIZE) / 2);
-    const midBuf = await file.slice(midStart, midStart + SAMPLE_SIZE).arrayBuffer();
-    hasher.update(midBuf);
-
+    parts.push(file.slice(midStart, midStart + SAMPLE_SIZE));
     // Read tail
-    const tailBuf = await file.slice(size - SAMPLE_SIZE, size).arrayBuffer();
-    hasher.update(tailBuf);
+    parts.push(file.slice(size - SAMPLE_SIZE, size));
   }
 
-  return `q_${size}_${hasher.digest()}`;
+  const combinedBlob = new Blob(parts);
+  const buf = await combinedBlob.arrayBuffer();
+  const readBytes = buf.byteLength;
+
+  let hashStr;
+  if (typeof crypto !== 'undefined' && crypto.subtle) {
+    const hashBuffer = await crypto.subtle.digest('SHA-256', buf);
+    const hashArray = Array.from(new Uint8Array(hashBuffer));
+    hashStr = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+  } else {
+    const hasher = new SHA256Hasher();
+    hasher.update(buf);
+    hashStr = hasher.digest();
+  }
+
+  const hashResult = `q_${size}_${hashStr}`;
+  const endTime = Date.now();
+  logMetric(`Type: quickHash, Name: ${file.name || 'unknown'}, Size: ${size}, ReadBytes: ${readBytes}, Start: ${startTime}, End: ${endTime}, Elapsed: ${endTime - startTime}ms`);
+  return hashResult;
 }
 
 /**
@@ -201,98 +221,119 @@ export async function computeQuickHash(file) {
  */
 export async function computeFileSHA256(file, { onProgress = null, signal = null, chunkSize = 1024 * 1024, useWorker = true } = {}) {
   if (!file) throw new Error('No file provided for hashing');
-
+  const startTime = Date.now();
   const totalBytes = file.size;
-  if (totalBytes === 0) {
-    return computeSHA256(new Uint8Array(0));
-  }
 
-  // Check Web Worker availability
-  const canUseWorker = useWorker && typeof Worker !== 'undefined';
+  const runHashing = async () => {
+    if (totalBytes === 0) {
+      return computeSHA256(new Uint8Array(0));
+    }
 
-  if (canUseWorker) {
-    return new Promise((resolve, reject) => {
-      let worker;
-      try {
-        worker = new Worker(new URL('./sha256-worker.js', import.meta.url));
-      } catch {
-        // Fallback to in-thread calculation if worker instantiation fails
-        return computeFileSHA256InThread(file, { onProgress, signal, chunkSize }).then(resolve, reject);
+    if (totalBytes <= 250 * 1024 * 1024 && typeof crypto !== 'undefined' && crypto.subtle) {
+      const buf = await file.arrayBuffer();
+      if (signal && signal.aborted) {
+        throw new DOMException('Hashing aborted by signal', 'AbortError');
       }
-
-      let currentOffset = 0;
-
-      const cleanup = () => {
-        if (worker) {
-          worker.terminate();
-          worker = null;
-        }
-        if (signal) {
-          signal.removeEventListener('abort', onAbort);
-        }
-      };
-
-      const onAbort = () => {
-        cleanup();
-        reject(new DOMException('Hashing aborted by signal', 'AbortError'));
-      };
-
-      if (signal) {
-        if (signal.aborted) {
-          return onAbort();
-        }
-        signal.addEventListener('abort', onAbort);
+      const hashBuffer = await crypto.subtle.digest('SHA-256', buf);
+      const hashArray = Array.from(new Uint8Array(hashBuffer));
+      if (onProgress) {
+        onProgress({ processedBytes: totalBytes, totalBytes, percent: 100 });
       }
+      return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+    }
 
-      const readNextChunk = () => {
-        if (signal && signal.aborted) return;
-        if (currentOffset >= totalBytes) {
-          worker.postMessage({ type: 'digest' });
-          return;
+    // Check Web Worker availability
+    const canUseWorker = useWorker && typeof Worker !== 'undefined';
+
+    if (canUseWorker) {
+      return new Promise((resolve, reject) => {
+        let worker;
+        try {
+          worker = new Worker(new URL('./sha256-worker.js', import.meta.url));
+        } catch {
+          // Fallback to in-thread calculation if worker instantiation fails
+          return computeFileSHA256InThread(file, { onProgress, signal, chunkSize }).then(resolve, reject);
         }
 
-        const nextOffset = Math.min(currentOffset + chunkSize, totalBytes);
-        const slice = file.slice(currentOffset, nextOffset);
-        
-        slice.arrayBuffer().then(buffer => {
-          if (signal && signal.aborted) return;
-          worker.postMessage({ type: 'update', data: buffer }, [buffer]);
-          currentOffset = nextOffset;
-          if (onProgress) {
-            onProgress({
-              processedBytes: currentOffset,
-              totalBytes,
-              percent: Math.min(100, Math.round((currentOffset / totalBytes) * 100))
-            });
+        let currentOffset = 0;
+
+        const cleanup = () => {
+          if (worker) {
+            worker.terminate();
+            worker = null;
           }
-        }).catch(err => {
+          if (signal) {
+            signal.removeEventListener('abort', onAbort);
+          }
+        };
+
+        const onAbort = () => {
+          cleanup();
+          reject(new DOMException('Hashing aborted by signal', 'AbortError'));
+        };
+
+        if (signal) {
+          if (signal.aborted) {
+            return onAbort();
+          }
+          signal.addEventListener('abort', onAbort);
+        }
+
+        const readNextChunk = () => {
+          if (signal && signal.aborted) return;
+          if (currentOffset >= totalBytes) {
+            worker.postMessage({ type: 'digest' });
+            return;
+          }
+
+          const nextOffset = Math.min(currentOffset + chunkSize, totalBytes);
+          const slice = file.slice(currentOffset, nextOffset);
+          
+          slice.arrayBuffer().then(buffer => {
+            if (signal && signal.aborted) return;
+            worker.postMessage({ type: 'update', data: buffer }, [buffer]);
+            currentOffset = nextOffset;
+            if (onProgress) {
+              onProgress({
+                processedBytes: currentOffset,
+                totalBytes,
+                percent: Math.min(100, Math.round((currentOffset / totalBytes) * 100))
+              });
+            }
+          }).catch(err => {
+            cleanup();
+            reject(err);
+          });
+        };
+
+        worker.onmessage = (e) => {
+          const { type, hash } = e.data;
+          if (type === 'started') {
+            readNextChunk();
+          } else if (type === 'updated') {
+            readNextChunk();
+          } else if (type === 'result') {
+            cleanup();
+            resolve(hash);
+          }
+        };
+
+        worker.onerror = (err) => {
           cleanup();
           reject(err);
-        });
-      };
+        };
 
-      worker.onmessage = (e) => {
-        const { type, hash } = e.data;
-        if (type === 'started') {
-          readNextChunk();
-        } else if (type === 'updated') {
-          readNextChunk();
-        } else if (type === 'result') {
-          cleanup();
-          resolve(hash);
-        }
-      };
+        worker.postMessage({ type: 'start' });
+      });
+    }
 
-      worker.onerror = (err) => {
-        cleanup();
-        reject(err);
-      };
+    return computeFileSHA256InThread(file, { onProgress, signal, chunkSize });
+  };
 
-      worker.postMessage({ type: 'start' });
-    });
-  }
-
-  return computeFileSHA256InThread(file, { onProgress, signal, chunkSize });
+  const hashResult = await runHashing();
+  const endTime = Date.now();
+  logMetric(`Type: fullSHA256, Name: ${file.name || 'unknown'}, Size: ${totalBytes}, Start: ${startTime}, End: ${endTime}, Elapsed: ${endTime - startTime}ms`);
+  return hashResult;
 }
 
 /**

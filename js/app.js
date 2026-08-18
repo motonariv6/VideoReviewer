@@ -2,7 +2,7 @@ import { AppDatabase } from './db.js';
 import { formatTime, parseTime, generateFileSignature, captureVideoFrame, validateVideoUrl, getFileHandleFromRelativePath, filterVideosByTag } from './video-helper.js';
 import { RadarChart } from './radar.js';
 import { scanDirectory, classifyScanResults, applyScanDifferentials, isIgnoredSystemEntry } from './directory-scanner.js';
-import { computeQuickHash, computeFileSHA256, globalHashQueue } from './hash-helper.js';
+import { computeQuickHash, computeFileSHA256, globalHashQueue, logMetric } from './hash-helper.js';
 
 // Instantiate DB & components
 export let db = new AppDatabase();
@@ -276,10 +276,6 @@ function initEventListeners() {
   els.btnEditDisplayTitle.addEventListener('click', () => {
     const video = db.getVideo(state.currentVideoId);
     if (video) {
-      if (video.identityStatus === 'provisional') {
-        showToast('ハッシュ検証完了後に編集できます', 'error');
-        return;
-      }
       els.displayTitleInput.value = video.displayTitle || '';
       els.titleDisplayContainer.classList.add('hidden');
       els.titleEditContainer.classList.remove('hidden');
@@ -327,13 +323,6 @@ function initEventListeners() {
   els.videoGenreSelect.addEventListener('change', async () => {
     const videoId = state.currentVideoId;
     if (!videoId) return;
-
-    const video = db.getVideo(videoId);
-    if (video && video.identityStatus === 'provisional') {
-      showToast('ハッシュ検証完了後に編集できます', 'error');
-      els.videoGenreSelect.value = video.genreId || 'genre-default';
-      return;
-    }
 
     const genreId = els.videoGenreSelect.value;
     await db.updateVideo(videoId, { genreId });
@@ -543,11 +532,6 @@ function initEventListeners() {
   // Grade Ratings A-E Selector
   els.gradeButtons.forEach(btn => {
     btn.addEventListener('click', () => {
-      const video = db.getVideo(state.currentVideoId);
-      if (video && video.identityStatus === 'provisional') {
-        showToast('ハッシュ検証完了後に編集できます', 'error');
-        return;
-      }
       els.gradeButtons.forEach(b => b.classList.remove('active'));
       btn.classList.add('active');
       state.currentOverallGrade = btn.getAttribute('data-grade');
@@ -556,11 +540,6 @@ function initEventListeners() {
     });
   });
   els.btnClearGrade.addEventListener('click', () => {
-    const video = db.getVideo(state.currentVideoId);
-    if (video && video.identityStatus === 'provisional') {
-      showToast('ハッシュ検証完了後に編集できます', 'error');
-      return;
-    }
     els.gradeButtons.forEach(b => b.classList.remove('active'));
     state.currentOverallGrade = null;
     markDirty();
@@ -846,7 +825,15 @@ async function processBackgroundHashingQueue() {
   bgHashCurrent = 0;
   updateBackgroundHashingUI(bgHashCurrent, bgHashTotal);
 
+  const queuedLocIds = new Set();
   for (const loc of provisionalLocs) {
+    if (queuedLocIds.has(loc.id)) {
+      logMetric(`Duplicate queue check: Location ${loc.id} (${loc.relativePath}) is ALREADY queued!`);
+    } else {
+      queuedLocIds.add(loc.id);
+    }
+    logMetric(`Queue Enqueue: Name: ${loc.fileName}, Size: ${loc.fileSize}, LocId: ${loc.id}`);
+
     globalHashQueue.enqueue(async () => {
       try {
         await processSingleLocationVerification(
@@ -1437,22 +1424,6 @@ function switchScreenToEditor(videoId) {
     els.provisionalWarningBanner.classList.remove('hidden');
   } else {
     els.provisionalWarningBanner.classList.add('hidden');
-  }
-
-  els.commentEditor.disabled = isProvisional;
-  els.videoGenreSelect.disabled = isProvisional;
-  els.tagInputField.disabled = isProvisional;
-  els.timelineCommentField.disabled = isProvisional;
-  els.btnTimelineCapture.disabled = isProvisional;
-  els.btnTimelineAddNote.disabled = isProvisional;
-  els.btnSaveReview.disabled = isProvisional;
-  if (els.btnClearGrade) {
-    els.btnClearGrade.disabled = isProvisional;
-  }
-  if (isProvisional) {
-    els.btnEditDisplayTitle.style.display = 'none';
-  } else {
-    els.btnEditDisplayTitle.style.display = '';
   }
 
   // Draw chart
@@ -2064,23 +2035,19 @@ function renderVideoTagsList() {
       label.textContent = t.name;
       chip.appendChild(label);
       
-      const video = db.getVideo(state.currentVideoId);
-      const isProvisional = video && video.identityStatus === 'provisional';
-      if (!isProvisional) {
-        const removeBtn = document.createElement('button');
-        removeBtn.className = 'tag-chip-remove';
-        removeBtn.title = 'タグを削除';
-        removeBtn.innerHTML = `<svg fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clip-rule="evenodd" /></svg>`;
-        removeBtn.addEventListener('click', async () => {
-          try {
-            await db.removeTagFromVideo(state.currentVideoId, t.id);
-            renderVideoTagsList();
-          } catch (err) {
-            showToast(`タグの削除に失敗しました: ${err.message}`, 'error');
-          }
-        });
-        chip.appendChild(removeBtn);
-      }
+      const removeBtn = document.createElement('button');
+      removeBtn.className = 'tag-chip-remove';
+      removeBtn.title = 'タグを削除';
+      removeBtn.innerHTML = `<svg fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clip-rule="evenodd" /></svg>`;
+      removeBtn.addEventListener('click', async () => {
+        try {
+          await db.removeTagFromVideo(state.currentVideoId, t.id);
+          renderVideoTagsList();
+        } catch (err) {
+          showToast(`タグの削除に失敗しました: ${err.message}`, 'error');
+        }
+      });
+      chip.appendChild(removeBtn);
       
       els.tagsChipsList.appendChild(chip);
     });
@@ -2219,26 +2186,22 @@ function renderTimelineNotesList() {
     const actionsDiv = document.createElement('div');
     actionsDiv.className = 'timeline-note-actions';
     
-    const video = db.getVideo(state.currentVideoId);
-    const isProvisional = video && video.identityStatus === 'provisional';
-    if (!isProvisional) {
-      const delBtn = document.createElement('button');
-      delBtn.className = 'timeline-note-action-btn delete';
-      delBtn.title = 'メモを削除';
-      delBtn.innerHTML = `<svg fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>`;
-      delBtn.addEventListener('click', async () => {
-        if (confirm('タイムラインメモを削除しますか？')) {
-          try {
-            await db.deleteTimelineNote(note.id);
-            renderTimelineNotesList();
-            showToast('メモを削除しました');
-          } catch (err) {
-            showToast(`削除に失敗しました: ${err.message}`, 'error');
-          }
+    const delBtn = document.createElement('button');
+    delBtn.className = 'timeline-note-action-btn delete';
+    delBtn.title = 'メモを削除';
+    delBtn.innerHTML = `<svg fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>`;
+    delBtn.addEventListener('click', async () => {
+      if (confirm('タイムラインメモを削除しますか？')) {
+        try {
+          await db.deleteTimelineNote(note.id);
+          renderTimelineNotesList();
+          showToast('メモを削除しました');
+        } catch (err) {
+          showToast(`削除に失敗しました: ${err.message}`, 'error');
         }
-      });
-      actionsDiv.appendChild(delBtn);
-    }
+      }
+    });
+    actionsDiv.appendChild(delBtn);
     metaRow.appendChild(actionsDiv);
 
     const commentP = document.createElement('p');
@@ -2266,12 +2229,6 @@ function renderTimelineNotesList() {
 async function captureTimelineTimestamp() {
   if (!state.currentVideoId) return;
 
-  const video = db.getVideo(state.currentVideoId);
-  if (video && video.identityStatus === 'provisional') {
-    showToast('ハッシュ検証完了後に編集できます', 'error');
-    return;
-  }
-
   const currentSecs = els.video.currentTime || 0;
   state.capturedNoteTime = currentSecs;
   els.capturedTimestampLabel.textContent = `[${formatTime(currentSecs)}]`;
@@ -2286,12 +2243,6 @@ async function captureTimelineTimestamp() {
 async function addTimelineNote() {
   const comment = els.timelineCommentField.value.trim();
   if (!state.currentVideoId) return;
-
-  const video = db.getVideo(state.currentVideoId);
-  if (video && video.identityStatus === 'provisional') {
-    showToast('ハッシュ検証完了後に編集できます', 'error');
-    return;
-  }
 
   const label = formatTime(state.capturedNoteTime);
   
@@ -2318,14 +2269,6 @@ async function addTimelineNote() {
 // Save Ratings review data
 async function saveReviewForm(isAutosave = false) {
   if (!state.currentVideoId) return;
-
-  const video = db.getVideo(state.currentVideoId);
-  if (video && video.identityStatus === 'provisional') {
-    if (!isAutosave) {
-      showToast('ハッシュ検証完了後に編集できます', 'error');
-    }
-    return;
-  }
 
   try {
     await db.saveReview(state.currentVideoId, {

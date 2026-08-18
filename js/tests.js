@@ -4419,6 +4419,42 @@ export async function runTests() {
     assert(notesB.length === 0, 'New asset must not copy notes');
   });
 
+  await runTest('11-18. Provisional video editing is not blocked', async () => {
+    const testDb = new AppDatabase();
+
+    const video = await testDb.addVideo({
+      fileName: 'provisional.mp4',
+      fileSize: 100,
+      lastModified: 100,
+      hashStatus: 'pending',
+      identityStatus: 'provisional'
+    });
+
+    // Check we can save review
+    await testDb.saveReview(video.id, {
+      overallGrade: 'A',
+      comment: 'Provisional allowed comment',
+      ratings: {}
+    });
+
+    const review = testDb.getReviewForVideo(video.id);
+    assert(review && review.overallGrade === 'A' && review.comment === 'Provisional allowed comment', 'Can save review for provisional video');
+
+    // Check we can add tag
+    await testDb.addTagToVideo(video.id, 'TestTag');
+    const videoTags = testDb.getVideoTags(video.id);
+    assert(videoTags.length === 1 && videoTags[0].name === 'TestTag', 'Can add tag to provisional video');
+
+    // Check we can add timeline note
+    await testDb.addTimelineNote(video.id, {
+      timestampSeconds: 10,
+      timestampLabel: '[00:10]',
+      comment: 'Provisional allowed note'
+    });
+    const notes = testDb.timelineNotes.filter(n => n.mediaAssetId === video.id);
+    assert(notes.length === 1 && notes[0].comment === 'Provisional allowed note', 'Can add timeline note to provisional video');
+  });
+
   console.groupEnd();
 
   console.groupEnd();
