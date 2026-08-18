@@ -4512,7 +4512,17 @@ export async function runTests() {
 
   await runTest('11-21. processBackgroundHashingQueue integration, duplicate triggers, and safety rules', async () => {
     globalHashQueue.cancelPending();
-    const testDb = new AppDatabase();
+    const memory = new MemoryStorage();
+    const testDb = new AppDatabase(memory, 'test_vreview_g11_21_', 'TestVideoDB_G11_21');
+    await testDb.initAsync();
+    testDb.idbAvailable = true;
+    testDb.idb = {
+      store: {},
+      get: async function(key, storeName) { return this.store[key] || null; },
+      put: async function(key, val, storeName) { this.store[key] = val; },
+      delete: async function(key, storeName) { delete this.store[key]; },
+      clear: async function() { this.store = {}; }
+    };
 
     bgHashState.current = 0;
     bgHashState.failed = 0;
@@ -4527,6 +4537,11 @@ export async function runTests() {
     try {
       const source = await testDb.addDirectorySource({ name: 'FolderA' });
       await testDb.updateDirectorySource(source.id, { permissionStatus: 'granted' });
+      const mockHandle = new MockFileSystemDirectoryHandle('FolderA', {
+        'video1.mp4': new MockFileSystemFileHandle('video1.mp4', 100, 100),
+        'video2.mp4': new MockFileSystemFileHandle('video2.mp4', 200, 200)
+      });
+      await testDb.putDirectoryHandle(source.handleKey, mockHandle);
 
       const loc1 = {
         id: 'loc-test-1',
@@ -4574,6 +4589,126 @@ export async function runTests() {
 
       assert(globalHashQueue.queuedKeys.size === 0, 'Queued keys cleared');
       assert(globalHashQueue.runningKeys.size === 0, 'Running keys cleared');
+
+    } finally {
+      setDbForTesting(originalDb);
+      globalHashQueue.cancelPending();
+    }
+  });
+
+  await runTest('11-22. Verification of provisional locations exclusion for disconnected/unauthorized folder sources', async () => {
+    globalHashQueue.cancelPending();
+    const memory = new MemoryStorage();
+    const testDb = new AppDatabase(memory, 'test_vreview_g11_22_', 'TestVideoDB_G11_22');
+    await testDb.initAsync();
+    testDb.idbAvailable = true;
+    testDb.idb = {
+      store: {},
+      get: async function(key, storeName) { return this.store[key] || null; },
+      put: async function(key, val, storeName) { this.store[key] = val; },
+      delete: async function(key, storeName) { delete this.store[key]; },
+      clear: async function() { this.store = {}; }
+    };
+
+    bgHashState.current = 0;
+    bgHashState.failed = 0;
+    bgHashState.skipped = 0;
+    bgHashState.activeId = null;
+    bgHashState.activeName = '';
+    bgHashState.activePercent = null;
+
+    const originalDb = db;
+    setDbForTesting(testDb);
+
+    try {
+      const oldSource = await testDb.addDirectorySource({ name: 'OldFolder' });
+      await testDb.updateDirectorySource(oldSource.id, { permissionStatus: 'permission-required' });
+
+      const newSource = await testDb.addDirectorySource({ name: 'NewFolder' });
+      await testDb.updateDirectorySource(newSource.id, { permissionStatus: 'granted' });
+      const newHandle = new MockFileSystemDirectoryHandle('NewFolder', {
+        'video1.mp4': new MockFileSystemFileHandle('video1.mp4', 100, 100),
+        'video2.mp4': new MockFileSystemFileHandle('video2.mp4', 200, 200)
+      });
+      await testDb.putDirectoryHandle(newSource.handleKey, newHandle);
+
+      await testDb.deleteDirectorySource(oldSource.id);
+
+      const locOld1 = {
+        id: 'loc-old-1',
+        mediaAssetId: 'asset-1',
+        directoryId: oldSource.id,
+        relativePath: 'video1.mp4',
+        fileName: 'video1.mp4',
+        fileSize: 100,
+        lastModified: 100,
+        availabilityStatus: 'permission-required',
+        verificationStatus: 'provisional',
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      };
+      const locNew1 = {
+        id: 'loc-new-1',
+        mediaAssetId: 'asset-1',
+        directoryId: newSource.id,
+        relativePath: 'video1.mp4',
+        fileName: 'video1.mp4',
+        fileSize: 100,
+        lastModified: 100,
+        availabilityStatus: 'available',
+        verificationStatus: 'provisional',
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      };
+
+      const locOld2 = {
+        id: 'loc-old-2',
+        mediaAssetId: 'asset-2',
+        directoryId: oldSource.id,
+        relativePath: 'video2.mp4',
+        fileName: 'video2.mp4',
+        fileSize: 200,
+        lastModified: 200,
+        availabilityStatus: 'permission-required',
+        verificationStatus: 'provisional',
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      };
+      const locNew2 = {
+        id: 'loc-new-2',
+        mediaAssetId: 'asset-2',
+        directoryId: newSource.id,
+        relativePath: 'video2.mp4',
+        fileName: 'video2.mp4',
+        fileSize: 200,
+        lastModified: 200,
+        availabilityStatus: 'available',
+        verificationStatus: 'provisional',
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      };
+
+      testDb.fileLocations.push(locOld1, locNew1, locOld2, locNew2);
+
+      globalHashQueue.pause();
+
+      await processBackgroundHashingQueue();
+      await processBackgroundHashingQueue();
+
+      let queuedSize = globalHashQueue.queuedKeys.size;
+      let total = queuedSize + globalHashQueue.runningKeys.size + bgHashState.current + bgHashState.failed + bgHashState.skipped;
+      
+      assert(total === 2, `Total must be 2, got ${total}`);
+      assert(globalHashQueue.queue.length === 2, `Queue length must be 2, got ${globalHashQueue.queue.length}`);
+      assert(globalHashQueue.queuedKeys.has('loc-new-1') && globalHashQueue.queuedKeys.has('loc-new-2'), 'Only new locations are enqueued');
+      assert(!globalHashQueue.queuedKeys.has('loc-old-1') && !globalHashQueue.queuedKeys.has('loc-old-2'), 'Old locations are excluded');
+
+      globalHashQueue.resume();
+
+      await new Promise(resolve => setTimeout(resolve, 50));
+
+      assert(globalHashQueue.queuedKeys.size === 0, 'All enqueued tasks complete');
+      assert(globalHashQueue.runningKeys.size === 0, 'All running tasks complete');
 
     } finally {
       setDbForTesting(originalDb);

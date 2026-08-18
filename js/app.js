@@ -991,13 +991,68 @@ export async function processSingleLocationVerification(dbInstance, locId, sourc
 
 export async function processBackgroundHashingQueue() {
   const provisionalLocs = db.fileLocations.filter(loc => loc.verificationStatus === 'provisional');
+  const sources = db.getDirectorySources();
+
+  logMetric(`[DIAGNOSTIC] Total provisional locations found in DB: ${provisionalLocs.length}`);
+  for (const loc of provisionalLocs) {
+    const source = sources.find(s => s.id === loc.directoryId);
+    let hasHandle = false;
+    if (source) {
+      const handle = await db.getDirectoryHandle(source.handleKey);
+      hasHandle = !!handle;
+    }
+    const isQueued = globalHashQueue.queuedKeys.has(loc.id);
+    const isRunning = globalHashQueue.runningKeys.has(loc.id);
+    logMetric(`[DIAGNOSTIC_ITEM] location.id: ${loc.id}, mediaAssetId: ${loc.mediaAssetId}, sourceId: ${loc.directoryId}, relativePath: ${loc.relativePath}, verificationStatus: ${loc.verificationStatus}, sourceStatus: ${source ? 'present' : 'absent'}, hasHandle: ${hasHandle}, permissionStatus: ${source ? source.permissionStatus : 'N/A'}, isQueued: ${isQueued}, isRunning: ${isRunning}`);
+  }
+
   if (provisionalLocs.length === 0) {
     updateBackgroundHashingProgress(true);
     return;
   }
 
-  const sources = db.getDirectorySources();
   if (sources.length === 0) return;
+
+  // 1. Asynchronously filter only currently eligible/accessible locations
+  const eligibleLocs = [];
+  for (const loc of provisionalLocs) {
+    const source = sources.find(s => s.id === loc.directoryId);
+    if (!source || source.permissionStatus !== 'granted') continue;
+
+    const handle = await db.getDirectoryHandle(source.handleKey);
+    if (!handle) continue;
+
+    try {
+      const perm = await handle.queryPermission({ mode: 'read' });
+      if (perm !== 'granted') continue;
+    } catch (err) {
+      continue;
+    }
+
+    eligibleLocs.push(loc);
+  }
+
+  // 2. Resolve same asset location choice (prefer active/connected source, pick one per mediaAssetId)
+  const locsByAsset = new Map();
+  for (const loc of eligibleLocs) {
+    if (!locsByAsset.has(loc.mediaAssetId)) {
+      locsByAsset.set(loc.mediaAssetId, loc);
+    } else {
+      const existingLoc = locsByAsset.get(loc.mediaAssetId);
+      const existingIdx = sources.findIndex(s => s.id === existingLoc.directoryId);
+      const currentIdx = sources.findIndex(s => s.id === loc.directoryId);
+      if (currentIdx !== -1 && currentIdx < existingIdx) {
+        locsByAsset.set(loc.mediaAssetId, loc);
+      }
+    }
+  }
+
+  const finalLocsToProcess = Array.from(locsByAsset.values());
+
+  if (finalLocsToProcess.length === 0) {
+    updateBackgroundHashingProgress(true);
+    return;
+  }
 
   if (globalHashQueue.queuedKeys.size === 0 && globalHashQueue.runningKeys.size === 0) {
     bgHashState.current = 0;
@@ -1005,7 +1060,7 @@ export async function processBackgroundHashingQueue() {
     bgHashState.skipped = 0;
   }
 
-  const newLocs = provisionalLocs.filter(loc => {
+  const newLocs = finalLocsToProcess.filter(loc => {
     return !globalHashQueue.queuedKeys.has(loc.id) && !globalHashQueue.runningKeys.has(loc.id);
   });
 
@@ -1018,17 +1073,27 @@ export async function processBackgroundHashingQueue() {
     logMetric(`Queue Enqueue: Name: ${loc.fileName}, Size: ${loc.fileSize}, LocId: ${loc.id}`);
 
     globalHashQueue.enqueue(loc.id, async () => {
-      // 4. Execution check right before hashing starts
+      // Pre-execution validation check
       const freshLoc = db.fileLocations.find(l => l.id === loc.id);
       if (!freshLoc || freshLoc.verificationStatus !== 'provisional') {
-        bgHashState.skipped++;
         updateBackgroundHashingProgress();
+        return;
+      }
+
+      // Check if another location for the same media asset is already verified, or if the asset has a completed hash
+      const asset = db.getMediaAsset(freshLoc.mediaAssetId);
+      if (asset && asset.hashStatus === 'completed' && asset.contentHash && asset.contentHash.length === 64) {
+        // Reuse hash immediately without performing full hash computation
+        await db.completeLocationProvisionalVerification(freshLoc.id, asset.contentHash);
+        bgHashState.current++;
+        updateBackgroundHashingProgress(true);
+        renderLibrary();
         return;
       }
 
       const source = sources.find(s => s.id === freshLoc.directoryId);
       if (!source) {
-        bgHashState.skipped++;
+        // Disconnected - exclude from set (do not increment skipped)
         updateBackgroundHashingProgress();
         return;
       }
@@ -1036,13 +1101,11 @@ export async function processBackgroundHashingQueue() {
       try {
         const handle = await db.getDirectoryHandle(source.handleKey);
         if (!handle) {
-          bgHashState.failed++;
           updateBackgroundHashingProgress();
           return;
         }
         const perm = await handle.queryPermission({ mode: 'read' });
         if (perm !== 'granted') {
-          bgHashState.failed++;
           updateBackgroundHashingProgress();
           return;
         }
