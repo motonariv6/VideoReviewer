@@ -6,8 +6,36 @@ import { computeQuickHash, computeFileSHA256, globalHashQueue, logMetric } from 
 
 // Instantiate DB & components
 export let db = new AppDatabase();
+
+function wrapDbForDeletionCleanup(dbInstance) {
+  if (!dbInstance) return;
+  const originalDeleteVideoCascade = dbInstance.deleteVideoCascade;
+  dbInstance.deleteVideoCascade = async function(mediaAssetId) {
+    const locsToDelete = dbInstance.fileLocations.filter(l => l.mediaAssetId === mediaAssetId);
+    const locIds = locsToDelete.map(l => l.id);
+
+    const result = await originalDeleteVideoCascade.call(dbInstance, mediaAssetId);
+
+    if (result) {
+      for (const id of locIds) {
+        bgHashState.targetKeys.delete(id);
+        bgHashState.completedKeys.delete(id);
+        bgHashState.failedKeys.delete(id);
+        bgHashState.skippedKeys.delete(id);
+      }
+      updateBackgroundHashingProgress(true);
+    }
+    return result;
+  };
+}
+
+wrapDbForDeletionCleanup(db);
+
 export function setDbForTesting(mockDb) {
   db = mockDb;
+  if (db) {
+    wrapDbForDeletionCleanup(db);
+  }
 }
 let radar;
 
@@ -755,6 +783,9 @@ async function syncActiveDirectoryPermissions() {
 }
 
 export let bgHashState = {
+  batchId: '',
+  generation: 0,
+  targetKeys: new Set(),
   completedKeys: new Set(),
   failedKeys: new Set(),
   skippedKeys: new Set(),
@@ -768,32 +799,23 @@ export let bgHashState = {
 let bgHashCloseTimeout = null;
 
 export function updateBackgroundHashingProgress(force = false) {
-  const queued = new Set(globalHashQueue.queuedKeys);
-  const running = new Set(globalHashQueue.runningKeys);
+  const total = bgHashState.targetKeys.size;
 
-  const completed = new Set();
-  for (const id of bgHashState.completedKeys) {
-    if (!queued.has(id) && !running.has(id)) {
-      completed.add(id);
+  let completedCount = 0;
+  let failedCount = 0;
+  let skippedCount = 0;
+
+  for (const id of bgHashState.targetKeys) {
+    if (bgHashState.completedKeys.has(id)) {
+      completedCount++;
+    } else if (bgHashState.failedKeys.has(id)) {
+      failedCount++;
+    } else if (bgHashState.skippedKeys.has(id)) {
+      skippedCount++;
     }
   }
 
-  const failed = new Set();
-  for (const id of bgHashState.failedKeys) {
-    if (!queued.has(id) && !running.has(id) && !completed.has(id)) {
-      failed.add(id);
-    }
-  }
-
-  const skipped = new Set();
-  for (const id of bgHashState.skippedKeys) {
-    if (!queued.has(id) && !running.has(id) && !completed.has(id) && !failed.has(id)) {
-      skipped.add(id);
-    }
-  }
-
-  const total = queued.size + running.size + completed.size + failed.size + skipped.size;
-  const completedCount = completed.size + failed.size + skipped.size;
+  const current = completedCount + failedCount + skippedCount;
 
   if (total === 0) {
     if (bgHashCloseTimeout) {
@@ -804,13 +826,10 @@ export function updateBackgroundHashingProgress(force = false) {
     return;
   }
 
-  if (queued.size === 0 && running.size === 0) {
+  if (current === total) {
     if (!bgHashCloseTimeout) {
       bgHashCloseTimeout = setTimeout(() => {
         bgHashCloseTimeout = null;
-        bgHashState.completedKeys.clear();
-        bgHashState.failedKeys.clear();
-        bgHashState.skippedKeys.clear();
         updateBackgroundHashingUI(0, 0);
       }, 3000);
     }
@@ -821,7 +840,7 @@ export function updateBackgroundHashingProgress(force = false) {
     }
   }
 
-  triggerUIUpdate(completedCount, total, force);
+  triggerUIUpdate(current, total, force);
 }
 
 let bgHashLastUpdateTime = 0;
@@ -902,27 +921,18 @@ function updateBackgroundHashingUI(current, total) {
   let headerText = `フルハッシュ検証中 ${current} / ${total}`;
   const extraStats = [];
 
-  const queued = new Set(globalHashQueue.queuedKeys);
-  const running = new Set(globalHashQueue.runningKeys);
-
-  const completed = new Set();
-  for (const id of bgHashState.completedKeys) {
-    if (!queued.has(id) && !running.has(id)) completed.add(id);
-  }
-  const failed = new Set();
-  for (const id of bgHashState.failedKeys) {
-    if (!queued.has(id) && !running.has(id) && !completed.has(id)) failed.add(id);
-  }
-  const skipped = new Set();
-  for (const id of bgHashState.skippedKeys) {
-    if (!queued.has(id) && !running.has(id) && !completed.has(id) && !failed.has(id)) skipped.add(id);
+  let failedCount = 0;
+  let skippedCount = 0;
+  for (const id of bgHashState.targetKeys) {
+    if (bgHashState.failedKeys.has(id)) failedCount++;
+    else if (bgHashState.skippedKeys.has(id)) skippedCount++;
   }
 
-  if (failed.size > 0) {
-    extraStats.push(`失敗: ${failed.size}件`);
+  if (failedCount > 0) {
+    extraStats.push(`失敗: ${failedCount}件`);
   }
-  if (skipped.size > 0) {
-    extraStats.push(`スキップ: ${skipped.size}件`);
+  if (skippedCount > 0) {
+    extraStats.push(`スキップ: ${skippedCount}件`);
   }
   if (extraStats.length > 0) {
     headerText += ` (${extraStats.join(', ')})`;
@@ -1077,12 +1087,7 @@ export async function processBackgroundHashingQueue() {
     return;
   }
 
-  if (globalHashQueue.queuedKeys.size === 0 && globalHashQueue.runningKeys.size === 0) {
-    bgHashState.completedKeys.clear();
-    bgHashState.failedKeys.clear();
-    bgHashState.skippedKeys.clear();
-  }
-
+  // Start new batch if queued/running are empty and we have new locations to process
   const newLocs = finalLocsToProcess.filter(loc => {
     return !globalHashQueue.queuedKeys.has(loc.id) && !globalHashQueue.runningKeys.has(loc.id);
   });
@@ -1092,40 +1097,70 @@ export async function processBackgroundHashingQueue() {
     return;
   }
 
+  if (globalHashQueue.queuedKeys.size === 0 && globalHashQueue.runningKeys.size === 0) {
+    bgHashState.batchId = 'batch-' + Math.random().toString(36).slice(2);
+    bgHashState.generation++;
+    bgHashState.targetKeys.clear();
+    bgHashState.completedKeys.clear();
+    bgHashState.failedKeys.clear();
+    bgHashState.skippedKeys.clear();
+    if (bgHashCloseTimeout) {
+      clearTimeout(bgHashCloseTimeout);
+      bgHashCloseTimeout = null;
+    }
+  }
+
+  const currentGeneration = bgHashState.generation;
+  const currentBatchId = bgHashState.batchId;
+
   for (const loc of newLocs) {
     logMetric(`Queue Enqueue: Name: ${loc.fileName}, Size: ${loc.fileSize}, LocId: ${loc.id}`);
 
-    globalHashQueue.enqueue(loc.id, async () => {
-      // Pre-execution validation check
+    const promise = globalHashQueue.enqueue(loc.id, async () => {
+      // 4. Validate generation before starting execution
+      if (bgHashState.generation !== currentGeneration || bgHashState.batchId !== currentBatchId) {
+        return;
+      }
+
+      // Pre-execution DB validation check
       const freshLoc = db.fileLocations.find(l => l.id === loc.id);
       if (!freshLoc || freshLoc.verificationStatus !== 'provisional') {
-        updateBackgroundHashingProgress();
+        if (bgHashState.generation === currentGeneration) {
+          updateBackgroundHashingProgress();
+        }
         return;
       }
 
       const source = sources.find(s => s.id === freshLoc.directoryId);
       if (!source) {
-        // Disconnected - exclude from set (do not increment skipped)
-        updateBackgroundHashingProgress();
+        if (bgHashState.generation === currentGeneration) {
+          updateBackgroundHashingProgress();
+        }
         return;
       }
 
       try {
         const handle = await db.getDirectoryHandle(source.handleKey);
         if (!handle) {
-          updateBackgroundHashingProgress();
+          if (bgHashState.generation === currentGeneration) {
+            updateBackgroundHashingProgress();
+          }
           return;
         }
         const perm = await handle.queryPermission({ mode: 'read' });
         if (perm !== 'granted') {
-          updateBackgroundHashingProgress();
+          if (bgHashState.generation === currentGeneration) {
+            updateBackgroundHashingProgress();
+          }
           return;
         }
 
-        bgHashState.activeId = loc.id;
-        bgHashState.activeName = loc.fileName;
-        bgHashState.activePercent = null;
-        updateBackgroundHashingProgress(true);
+        if (bgHashState.generation === currentGeneration) {
+          bgHashState.activeId = loc.id;
+          bgHashState.activeName = loc.fileName;
+          bgHashState.activePercent = null;
+          updateBackgroundHashingProgress(true);
+        }
 
         await processSingleLocationVerification(
           db,
@@ -1137,32 +1172,52 @@ export async function processBackgroundHashingQueue() {
             return computeFileSHA256(file, {
               ...opts,
               onProgress: (pInfo) => {
-                if (pInfo.percent < 100) {
-                  bgHashState.activePercent = pInfo.percent;
-                } else {
-                  bgHashState.activePercent = 100;
+                // Validate generation in progress callback
+                if (bgHashState.generation === currentGeneration) {
+                  if (pInfo.percent < 100) {
+                    bgHashState.activePercent = pInfo.percent;
+                  } else {
+                    bgHashState.activePercent = 100;
+                  }
+                  updateBackgroundHashingProgress();
                 }
-                updateBackgroundHashingProgress();
               }
             });
           }
         );
-        bgHashState.completedKeys.add(loc.id);
+
+        if (bgHashState.generation === currentGeneration) {
+          // Double check targetKeys before marking completed
+          if (bgHashState.targetKeys.has(loc.id)) {
+            bgHashState.completedKeys.add(loc.id);
+          }
+        }
       } catch (err) {
         console.error(`Failed background verification for location ${loc.relativePath}:`, err);
-        bgHashState.failedKeys.add(loc.id);
-      } finally {
-        if (bgHashState.activeId === loc.id) {
-          bgHashState.activeId = null;
-          bgHashState.activeName = '';
-          bgHashState.activePercent = null;
+        if (bgHashState.generation === currentGeneration) {
+          if (bgHashState.targetKeys.has(loc.id)) {
+            bgHashState.failedKeys.add(loc.id);
+          }
         }
-        updateBackgroundHashingProgress(true);
-        renderLibrary();
+      } finally {
+        if (bgHashState.generation === currentGeneration) {
+          if (bgHashState.activeId === loc.id) {
+            bgHashState.activeId = null;
+            bgHashState.activeName = '';
+            bgHashState.activePercent = null;
+          }
+          updateBackgroundHashingProgress(true);
+          renderLibrary();
+        }
       }
-    }).catch(err => {
-      console.error(`Queue error for location ${loc.relativePath}:`, err);
     });
+
+    if (promise) {
+      bgHashState.targetKeys.add(loc.id);
+      promise.catch(err => {
+        console.error(`Queue error for location ${loc.relativePath}:`, err);
+      });
+    }
   }
 
   updateBackgroundHashingProgress(true);
@@ -2959,7 +3014,22 @@ async function startFolderScanning(source, handle) {
     // Save scan timestamp
     await db.updateDirectorySource(source.id, { lastScannedAt: new Date().toISOString() });
 
-    const pendingValidationCount = db.fileLocations.filter(loc => loc.verificationStatus === 'provisional').length;
+    const sourcesList = db.getDirectorySources();
+    let eligibleCount = 0;
+    for (const loc of db.fileLocations) {
+      if (loc.verificationStatus !== 'provisional') continue;
+      const src = sourcesList.find(s => s.id === loc.directoryId);
+      if (!src || src.permissionStatus !== 'granted') continue;
+      const handle = await db.getDirectoryHandle(src.handleKey);
+      if (!handle) continue;
+      try {
+        const perm = await handle.queryPermission({ mode: 'read' });
+        if (perm === 'granted') {
+          eligibleCount++;
+        }
+      } catch (e) {}
+    }
+    const pendingValidationCount = eligibleCount;
     alert(`スキャン完了\n\n新規：${summary.added}本\n更新：${summary.updated}本\n変更なし：${summary.unchanged}本\n見つからない：${summary.missing}本\n判定保留：${summary.pending}本\nエラー：${summary.error}件\nバックグラウンド検証待ち：${pendingValidationCount}件`);
 
     renderFolderSettingsPanel();
@@ -2989,6 +3059,7 @@ async function handleFolderDisconnect() {
 
   try {
     globalHashQueue.cancelPending();
+    bgHashState.targetKeys.clear();
     bgHashState.completedKeys.clear();
     bgHashState.failedKeys.clear();
     bgHashState.skippedKeys.clear();

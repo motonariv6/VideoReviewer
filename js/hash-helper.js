@@ -393,7 +393,7 @@ export class HashQueue {
 
   enqueue(key, taskFn) {
     if (this.queuedKeys.has(key) || this.runningKeys.has(key)) {
-      return Promise.resolve(null);
+      return null;
     }
     this.queuedKeys.add(key);
 

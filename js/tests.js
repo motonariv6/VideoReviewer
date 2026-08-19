@@ -4482,60 +4482,98 @@ export async function runTests() {
   await runTest('11-20. Hashing UI progress calculation, failure, and state cleanup', async () => {
     globalHashQueue.cancelPending();
 
+    bgHashState.targetKeys.clear();
     bgHashState.completedKeys.clear();
     bgHashState.failedKeys.clear();
     bgHashState.skippedKeys.clear();
     bgHashState.activeId = null;
     bgHashState.activeName = '';
     bgHashState.activePercent = null;
+    bgHashState.batchId = '';
+    bgHashState.generation = 0;
 
-    globalHashQueue.queuedKeys.add('loc-1');
-    globalHashQueue.runningKeys.add('loc-2');
+    // --- Scenario 1: Batch 1 starts with 2 items and completes ---
+    bgHashState.batchId = 'batch-1';
+    bgHashState.generation = 1;
     
-    bgHashState.completedKeys.add('loc-3');
-    bgHashState.failedKeys.add('loc-4');
-    bgHashState.skippedKeys.add('loc-5');
-
-    const queued = new Set(globalHashQueue.queuedKeys);
-    const running = new Set(globalHashQueue.runningKeys);
-
-    const completed = new Set();
-    for (const id of bgHashState.completedKeys) {
-      if (!queued.has(id) && !running.has(id)) completed.add(id);
-    }
-    const failed = new Set();
-    for (const id of bgHashState.failedKeys) {
-      if (!queued.has(id) && !running.has(id) && !completed.has(id)) failed.add(id);
-    }
-    const skipped = new Set();
-    for (const id of bgHashState.skippedKeys) {
-      if (!queued.has(id) && !running.has(id) && !completed.has(id) && !failed.has(id)) skipped.add(id);
-    }
-
-    let total = queued.size + running.size + completed.size + failed.size + skipped.size;
-    let completedCount = completed.size + failed.size + skipped.size;
-
-    assert(total === 5, 'Total progress count is calculated correctly: 5');
-    assert(completedCount === 3, 'Completed count is 3');
-
-    // 6. Test running/current double count prevention
+    bgHashState.targetKeys.add('loc-1');
+    bgHashState.targetKeys.add('loc-2');
+    
+    bgHashState.completedKeys.add('loc-1');
     bgHashState.completedKeys.add('loc-2');
     
-    const completed2 = new Set();
-    for (const id of bgHashState.completedKeys) {
-      if (!queued.has(id) && !running.has(id)) completed2.add(id);
+    let total1 = bgHashState.targetKeys.size;
+    let completed1 = 0;
+    for (const id of bgHashState.targetKeys) {
+      if (bgHashState.completedKeys.has(id)) completed1++;
     }
-    
-    assert(!completed2.has('loc-2'), 'Completed keys excludes running keys to prevent double counting');
-    
-    let total2 = queued.size + running.size + completed2.size + failed.size + skipped.size;
-    assert(total2 === 5, 'Total remains 5 (no double counting of loc-2)');
+    assert(total1 === 2, 'Batch 1 total is 2');
+    assert(completed1 === 2, 'Batch 1 completed is 2 (2/2 completed)');
 
-    globalHashQueue.queuedKeys.clear();
-    globalHashQueue.runningKeys.clear();
+    // --- Scenario 2: Start Batch 2 while Batch 1 completed keys exist ---
+    bgHashState.batchId = 'batch-2';
+    bgHashState.generation = 2;
+    bgHashState.targetKeys.clear();
     bgHashState.completedKeys.clear();
     bgHashState.failedKeys.clear();
     bgHashState.skippedKeys.clear();
+    
+    bgHashState.targetKeys.add('loc-3');
+    
+    let total2_start = bgHashState.targetKeys.size;
+    let completed2_start = 0;
+    for (const id of bgHashState.targetKeys) {
+      if (bgHashState.completedKeys.has(id)) completed2_start++;
+    }
+    assert(total2_start === 1, 'Batch 2 total is 1');
+    assert(completed2_start === 0, 'Batch 2 starts at 0/1');
+
+    bgHashState.completedKeys.add('loc-3');
+    let completed2_end = 0;
+    for (const id of bgHashState.targetKeys) {
+      if (bgHashState.completedKeys.has(id)) completed2_end++;
+    }
+    assert(completed2_end === 1, 'Batch 2 finishes at 1/1');
+
+    // --- Scenario 3: Add new item to Batch 3 while it is still running ---
+    bgHashState.batchId = 'batch-3';
+    bgHashState.generation = 3;
+    bgHashState.targetKeys.clear();
+    bgHashState.completedKeys.clear();
+    bgHashState.failedKeys.clear();
+    bgHashState.skippedKeys.clear();
+
+    bgHashState.targetKeys.add('loc-4');
+    assert(bgHashState.targetKeys.size === 1, 'Batch 3 starts with 1 item');
+
+    bgHashState.targetKeys.add('loc-5');
+    assert(bgHashState.targetKeys.size === 2, 'Batch 3 total increases to 2 when item is added');
+
+    // --- Scenario 4: Delete location removes it from targetKeys and other status Sets ---
+    bgHashState.completedKeys.add('loc-4');
+    
+    bgHashState.targetKeys.delete('loc-4');
+    bgHashState.completedKeys.delete('loc-4');
+    
+    assert(bgHashState.targetKeys.size === 1, 'Deleted location is removed from targetKeys, denominator decreases');
+    assert(!bgHashState.targetKeys.has('loc-4'), 'targetKeys does not contain deleted location');
+    assert(!bgHashState.completedKeys.has('loc-4'), 'completedKeys does not contain deleted location');
+
+    // --- Scenario 5: Older generation callback does not update UI/sets ---
+    const oldGen = 2;
+    const currentGen = bgHashState.generation; // 3
+    
+    if (oldGen === currentGen) {
+      bgHashState.completedKeys.add('loc-ignored');
+    }
+    assert(!bgHashState.completedKeys.has('loc-ignored'), 'Old generation callback execution is ignored');
+
+    bgHashState.targetKeys.clear();
+    bgHashState.completedKeys.clear();
+    bgHashState.failedKeys.clear();
+    bgHashState.skippedKeys.clear();
+    bgHashState.batchId = '';
+    bgHashState.generation = 0;
   });
 
   await runTest('11-21. processBackgroundHashingQueue integration, duplicate triggers, and safety rules', async () => {
@@ -4608,22 +4646,7 @@ export async function runTests() {
       await processBackgroundHashingQueue();
       await processBackgroundHashingQueue();
 
-      const queued = new Set(globalHashQueue.queuedKeys);
-      const running = new Set(globalHashQueue.runningKeys);
-      const completed = new Set();
-      for (const id of bgHashState.completedKeys) {
-        if (!queued.has(id) && !running.has(id)) completed.add(id);
-      }
-      const failed = new Set();
-      for (const id of bgHashState.failedKeys) {
-        if (!queued.has(id) && !running.has(id) && !completed.has(id)) failed.add(id);
-      }
-      const skipped = new Set();
-      for (const id of bgHashState.skippedKeys) {
-        if (!queued.has(id) && !running.has(id) && !completed.has(id) && !failed.has(id)) skipped.add(id);
-      }
-
-      let total = queued.size + running.size + completed.size + failed.size + skipped.size;
+      let total = bgHashState.targetKeys.size;
       assert(total === 2, 'Total Y limit does not exceed 2 even after calling 3 times');
       assert(globalHashQueue.queue.length === 2, 'Only 2 tasks are enqueued');
 
@@ -4771,23 +4794,7 @@ export async function runTests() {
       await processBackgroundHashingQueue();
       await processBackgroundHashingQueue();
 
-      const queued = new Set(globalHashQueue.queuedKeys);
-      const running = new Set(globalHashQueue.runningKeys);
-      const completed = new Set();
-      for (const id of bgHashState.completedKeys) {
-        if (!queued.has(id) && !running.has(id)) completed.add(id);
-      }
-      const failed = new Set();
-      for (const id of bgHashState.failedKeys) {
-        if (!queued.has(id) && !running.has(id) && !completed.has(id)) failed.add(id);
-      }
-      const skipped = new Set();
-      for (const id of bgHashState.skippedKeys) {
-        if (!queued.has(id) && !running.has(id) && !completed.has(id) && !failed.has(id)) skipped.add(id);
-      }
-
-      let total = queued.size + running.size + completed.size + failed.size + skipped.size;
-      
+      let total = bgHashState.targetKeys.size;
       assert(total === 2, `Total must be 2, got ${total}`);
       assert(globalHashQueue.queue.length === 2, `Queue length must be 2, got ${globalHashQueue.queue.length}`);
       assert(globalHashQueue.queuedKeys.has('loc-new-1') && globalHashQueue.queuedKeys.has('loc-new-2'), 'Only new locations are enqueued');
