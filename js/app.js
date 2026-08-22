@@ -827,7 +827,9 @@ export let bgHashState = {
   activeName: '',
   activePercent: null,
   lastUpdateTime: 0,
-  lastUpdatePercent: -1
+  lastUpdatePercent: -1,
+  panelMinimized: false,
+  panelClosed: false
 };
 
 let bgHashCloseTimeout = null;
@@ -893,9 +895,14 @@ function triggerUIUpdate(completed, total, force) {
   }
 }
 
-function updateBackgroundHashingUI(current, total) {
+export function updateBackgroundHashingUI(current, total) {
   let indicator = document.getElementById('bg-hash-indicator');
   
+  if (bgHashState.panelClosed) {
+    if (indicator) indicator.classList.add('hidden');
+    return;
+  }
+
   if (total === 0 || (current >= total && !bgHashCloseTimeout)) {
     if (indicator) indicator.classList.add('hidden');
     return;
@@ -921,6 +928,34 @@ function updateBackgroundHashingUI(current, total) {
         background: linear-gradient(90deg, transparent, var(--color-primary, #6366f1), transparent);
         animation: bg-hash-slide 1.2s infinite linear;
       }
+      #bg-hash-indicator {
+        position: fixed;
+        top: 76px;
+        right: 16px;
+        padding: 12px 16px;
+        background-color: var(--color-bg-card, #1f2937);
+        color: var(--color-text, #f3f4f6);
+        border-radius: var(--radius-sm, 6px);
+        box-shadow: var(--shadow-md, 0 4px 6px rgba(0,0,0,0.15));
+        border: 1px solid var(--color-border, #374151);
+        font-size: 0.75rem;
+        font-weight: 600;
+        z-index: 90;
+        transition: opacity 0.3s ease;
+        width: 260px;
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+        pointer-events: auto;
+      }
+      @media (max-width: 640px) {
+        #bg-hash-indicator {
+          left: 16px;
+          right: 16px;
+          width: auto;
+          max-width: calc(100vw - 32px);
+        }
+      }
     `;
     document.head.appendChild(style);
   }
@@ -928,67 +963,84 @@ function updateBackgroundHashingUI(current, total) {
   if (!indicator) {
     indicator = document.createElement('div');
     indicator.id = 'bg-hash-indicator';
-    Object.assign(indicator.style, {
-      position: 'fixed',
-      bottom: '16px',
-      right: '16px',
-      padding: '12px 16px',
-      backgroundColor: 'var(--color-bg-card, #1f2937)',
-      color: 'var(--color-text, #f3f4f6)',
-      borderRadius: 'var(--radius-sm, 6px)',
-      boxShadow: 'var(--shadow-md, 0 4px 6px rgba(0,0,0,0.15))',
-      border: '1px solid var(--color-border, #374151)',
-      fontSize: '0.75rem',
-      fontWeight: '600',
-      zIndex: '9999',
-      transition: 'opacity 0.3s ease',
-      width: '260px',
-      display: 'flex',
-      flexDirection: 'column',
-      gap: '6px'
-    });
     document.body.appendChild(indicator);
   }
 
   indicator.classList.remove('hidden');
 
-  let headerText = `フルハッシュ検証中 ${current} / ${total}`;
-  const extraStats = [];
-
-  let failedCount = 0;
-  let skippedCount = 0;
-  for (const id of bgHashState.targetKeys) {
-    if (bgHashState.failedKeys.has(id)) failedCount++;
-    else if (bgHashState.skippedKeys.has(id)) skippedCount++;
+  let headerRow = indicator.querySelector('.bg-hash-header-row');
+  if (!headerRow) {
+    headerRow = document.createElement('div');
+    headerRow.className = 'bg-hash-header-row';
+    headerRow.style.display = 'flex';
+    headerRow.style.justify = 'space-between';
+    headerRow.style.alignItems = 'center';
+    headerRow.style.width = '100%';
+    headerRow.style.gap = '8px';
+    indicator.appendChild(headerRow);
   }
 
-  if (failedCount > 0) {
-    extraStats.push(`失敗: ${failedCount}件`);
-  }
-  if (skippedCount > 0) {
-    extraStats.push(`スキップ: ${skippedCount}件`);
-  }
-  if (extraStats.length > 0) {
-    headerText += ` (${extraStats.join(', ')})`;
-  }
-
-  const clipName = (name) => {
-    if (!name) return '';
-    if (name.length > 25) {
-      return name.slice(0, 12) + '...' + name.slice(-10);
-    }
-    return name;
-  };
-
-  let titleEl = indicator.querySelector('.bg-hash-title');
+  let titleEl = headerRow.querySelector('.bg-hash-title');
   if (!titleEl) {
     titleEl = document.createElement('div');
     titleEl.className = 'bg-hash-title';
     titleEl.style.fontSize = '0.8125rem';
     titleEl.style.color = 'var(--color-text, #f3f4f6)';
-    indicator.appendChild(titleEl);
+    titleEl.style.flex = '1';
+    titleEl.style.whiteSpace = 'nowrap';
+    titleEl.style.overflow = 'hidden';
+    titleEl.style.textOverflow = 'ellipsis';
+    headerRow.appendChild(titleEl);
   }
-  titleEl.textContent = headerText;
+
+  let actionsEl = headerRow.querySelector('.bg-hash-actions');
+  if (!actionsEl) {
+    actionsEl = document.createElement('div');
+    actionsEl.className = 'bg-hash-actions';
+    actionsEl.style.display = 'flex';
+    actionsEl.style.gap = '8px';
+    actionsEl.style.alignItems = 'center';
+    headerRow.appendChild(actionsEl);
+  }
+
+  let minBtn = actionsEl.querySelector('.bg-hash-btn-min');
+  if (!minBtn) {
+    minBtn = document.createElement('button');
+    minBtn.className = 'bg-hash-btn-min';
+    minBtn.style.background = 'none';
+    minBtn.style.border = 'none';
+    minBtn.style.color = 'var(--color-text-muted, #9ca3af)';
+    minBtn.style.cursor = 'pointer';
+    minBtn.style.padding = '2px';
+    minBtn.style.fontSize = '0.75rem';
+    minBtn.style.lineHeight = '1';
+    minBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      bgHashState.panelMinimized = !bgHashState.panelMinimized;
+      updateBackgroundHashingProgress(true);
+    });
+    actionsEl.appendChild(minBtn);
+  }
+
+  let closeBtn = actionsEl.querySelector('.bg-hash-btn-close');
+  if (!closeBtn) {
+    closeBtn = document.createElement('button');
+    closeBtn.className = 'bg-hash-btn-close';
+    closeBtn.style.background = 'none';
+    closeBtn.style.border = 'none';
+    closeBtn.style.color = 'var(--color-text-muted, #9ca3af)';
+    closeBtn.style.cursor = 'pointer';
+    closeBtn.style.padding = '2px';
+    closeBtn.style.fontSize = '0.75rem';
+    closeBtn.style.lineHeight = '1';
+    closeBtn.textContent = '×';
+    closeBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      bgHashState.panelClosed = true;
+      indicator.classList.add('hidden');
+    });
+    actionsEl.appendChild(closeBtn);
+  }
 
   let fileEl = indicator.querySelector('.bg-hash-file');
   if (!fileEl) {
@@ -1028,22 +1080,57 @@ function updateBackgroundHashingUI(current, total) {
 
   const fillEl = progressContainer.querySelector('.bg-hash-progress-fill');
 
-  if (bgHashState.activeId) {
-    const pct = bgHashState.activePercent;
-    fileEl.textContent = `${clipName(bgHashState.activeName)} (${pct === null ? '検証中' : pct + '%'})`;
-    fileEl.style.display = '';
-    progressContainer.style.display = '';
-
-    if (pct === null) {
-      fillEl.className = 'bg-hash-progress-fill bg-hash-indeterminate';
-      fillEl.style.width = '100%';
-    } else {
-      fillEl.className = 'bg-hash-progress-fill';
-      fillEl.style.width = `${pct}%`;
-    }
-  } else {
+  if (bgHashState.panelMinimized) {
+    titleEl.textContent = `ハッシュ検証 ${current} / ${total}`;
+    minBtn.textContent = '＋';
     fileEl.style.display = 'none';
     progressContainer.style.display = 'none';
+    indicator.style.gap = '0px';
+    indicator.style.padding = '8px 12px';
+  } else {
+    let headerText = `フルハッシュ検証中 ${current} / ${total}`;
+    const extraStats = [];
+    let failedCount = 0;
+    let skippedCount = 0;
+    for (const id of bgHashState.targetKeys) {
+      if (bgHashState.failedKeys.has(id)) failedCount++;
+      else if (bgHashState.skippedKeys.has(id)) skippedCount++;
+    }
+
+    if (failedCount > 0) extraStats.push(`失敗: ${failedCount}件`);
+    if (skippedCount > 0) extraStats.push(`スキップ: ${skippedCount}件`);
+    if (extraStats.length > 0) headerText += ` (${extraStats.join(', ')})`;
+
+    titleEl.textContent = headerText;
+    minBtn.textContent = '－';
+    indicator.style.gap = '6px';
+    indicator.style.padding = '12px 16px';
+
+    const clipName = (name) => {
+      if (!name) return '';
+      if (name.length > 25) {
+        return name.slice(0, 12) + '...' + name.slice(-10);
+      }
+      return name;
+    };
+
+    if (bgHashState.activeId) {
+      const pct = bgHashState.activePercent;
+      fileEl.textContent = `${clipName(bgHashState.activeName)} (${pct === null ? '検証中' : pct + '%'})`;
+      fileEl.style.display = '';
+      progressContainer.style.display = '';
+
+      if (pct === null) {
+        fillEl.className = 'bg-hash-progress-fill bg-hash-indeterminate';
+        fillEl.style.width = '100%';
+      } else {
+        fillEl.className = 'bg-hash-progress-fill';
+        fillEl.style.width = `${pct}%`;
+      }
+    } else {
+      fileEl.style.display = 'none';
+      progressContainer.style.display = 'none';
+    }
   }
 }
 
@@ -1138,6 +1225,7 @@ export async function processBackgroundHashingQueue() {
     bgHashState.completedKeys.clear();
     bgHashState.failedKeys.clear();
     bgHashState.skippedKeys.clear();
+    bgHashState.panelClosed = false;
     if (bgHashCloseTimeout) {
       clearTimeout(bgHashCloseTimeout);
       bgHashCloseTimeout = null;

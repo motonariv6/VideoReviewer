@@ -2,7 +2,7 @@ import { AppDatabase } from './db.js';
 import { generateFileSignature, formatTime, parseTime, validateVideoUrl, normalizePath, filterVideosByTag } from './video-helper.js';
 import { isSupportedVideoFile, isPathCoveredByFailedDirectory, scanDirectory, classifyScanResults, applyScanDifferentials, isIgnoredSystemEntry } from './directory-scanner.js';
 import { RadarChart } from './radar.js';
-import { db, setDbForTesting, handleFolderSelect, handleFolderRequestPermission, processSingleLocationVerification, bgHashState, updateBackgroundHashingProgress, processBackgroundHashingQueue } from './app.js';
+import { db, setDbForTesting, handleFolderSelect, handleFolderRequestPermission, processSingleLocationVerification, bgHashState, updateBackgroundHashingProgress, processBackgroundHashingQueue, updateBackgroundHashingUI } from './app.js';
 import { computeSHA256, computeQuickHash, computeFileSHA256, HashQueue, globalHashQueue } from './hash-helper.js';
 
 export const VALID_HASH_A = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
@@ -5066,6 +5066,131 @@ export async function runTests() {
 
     const freshReview = testDb.reviews.find(r => r.mediaAssetId === asset.id);
     assert(freshReview && freshReview.overallGrade === 'S', 'Evaluations remain intact');
+  });
+
+  console.group('Group 13: Progress Panel UI Layout & Control Tests');
+
+  await runTest('13-1. Progress panel positioning, styling, and z-index properties', async () => {
+    bgHashState.panelClosed = false;
+    bgHashState.panelMinimized = false;
+    bgHashState.targetKeys.clear();
+    bgHashState.targetKeys.add('test-key-1');
+    
+    updateBackgroundHashingUI(0, 1);
+
+    const indicator = document.getElementById('bg-hash-indicator');
+    assert(indicator !== null, 'Progress panel indicator must be present in DOM');
+    assert(!indicator.classList.contains('hidden'), 'Indicator must be visible when targetKeys has active verification');
+
+    const styleEl = document.getElementById('bg-hash-styles');
+    assert(styleEl !== null, 'Dynamic styles tag for hashing panel must be present');
+    
+    const cssText = styleEl.textContent;
+    assert(cssText.includes('position: fixed'), 'Must be fixed positioned');
+    assert(cssText.includes('top: 76px'), 'Must be positioned at top: 76px below sticky header');
+    assert(cssText.includes('right: 16px'), 'Must be positioned at right: 16px');
+    assert(cssText.includes('z-index: 90'), 'z-index must be 90 (below modal overlay 100)');
+    assert(cssText.includes('width: 260px'), 'Default desktop width is 260px');
+    assert(cssText.includes('max-width: calc(100vw - 32px)'), 'Mobile max-width keeps panel within screen boundaries');
+
+    bgHashState.targetKeys.clear();
+    updateBackgroundHashingUI(0, 0);
+  });
+
+  await runTest('13-2. Minimize and maximize toggles changes layout but preserves background verification state', async () => {
+    bgHashState.panelClosed = false;
+    bgHashState.panelMinimized = false;
+    bgHashState.targetKeys.clear();
+    bgHashState.targetKeys.add('test-key-1');
+    bgHashState.activeId = 'test-key-1';
+    bgHashState.activeName = 'my_video.mp4';
+    bgHashState.activePercent = 50;
+
+    updateBackgroundHashingUI(0, 1);
+
+    const indicator = document.getElementById('bg-hash-indicator');
+    const fileEl = indicator.querySelector('.bg-hash-file');
+    const progressContainer = indicator.querySelector('.bg-hash-progress-container');
+
+    assert(fileEl.style.display !== 'none', 'Active file name is visible when maximized');
+    assert(progressContainer.style.display !== 'none', 'Progress bar is visible when maximized');
+
+    const minBtn = indicator.querySelector('.bg-hash-btn-min');
+    minBtn.click();
+
+    assert(bgHashState.panelMinimized === true, 'Flag panelMinimized must be true after clicking');
+    assert(fileEl.style.display === 'none', 'Active file name must be hidden when minimized');
+    assert(progressContainer.style.display === 'none', 'Progress bar must be hidden when minimized');
+
+    const titleEl = indicator.querySelector('.bg-hash-title');
+    assert(titleEl.textContent === 'ハッシュ検証 0 / 1', 'Title text matches minimized 1-line layout: ハッシュ検証 0 / 1');
+
+    minBtn.click();
+    assert(bgHashState.panelMinimized === false, 'Flag panelMinimized must be false after maximizing again');
+    assert(fileEl.style.display !== 'none', 'File name visible again');
+
+    bgHashState.targetKeys.clear();
+    updateBackgroundHashingUI(0, 0);
+  });
+
+  await runTest('13-3. Closing progress panel hides it from view but keeps background verification running', async () => {
+    bgHashState.panelClosed = false;
+    bgHashState.targetKeys.clear();
+    bgHashState.targetKeys.add('test-key-1');
+
+    updateBackgroundHashingUI(0, 1);
+
+    const indicator = document.getElementById('bg-hash-indicator');
+    assert(!indicator.classList.contains('hidden'), 'Indicator visible');
+
+    const closeBtn = indicator.querySelector('.bg-hash-btn-close');
+    closeBtn.click();
+
+    assert(bgHashState.panelClosed === true, 'panelClosed is true');
+    assert(indicator.classList.contains('hidden'), 'Panel is hidden after close click');
+
+    assert(bgHashState.targetKeys.has('test-key-1'), 'Target verification keys still exist in state');
+
+    bgHashState.targetKeys.clear();
+    bgHashState.panelClosed = false;
+    updateBackgroundHashingUI(0, 0);
+  });
+
+  await runTest('13-4. New batch starts resets panelClosed and restores panel visibility', async () => {
+    bgHashState.panelClosed = true;
+    bgHashState.targetKeys.clear();
+
+    const memory = new MemoryStorage();
+    const testDb = new AppDatabase(memory, 'test_vreview_g13_4_', 'TestVideoDB_G13_4');
+    await testDb.initAsync();
+
+    globalHashQueue.queuedKeys.clear();
+    globalHashQueue.runningKeys.clear();
+
+    const source = await testDb.addDirectorySource({ name: 'FolderA' });
+    await testDb.updateDirectorySource(source.id, { permissionStatus: 'granted' });
+    
+    const mockHandle = new MockFileSystemDirectoryHandle('FolderA', {
+      'new_batch_video.mp4': new MockFileSystemFileHandle('new_batch_video.mp4', 100, 1000)
+    });
+    await testDb.putDirectoryHandle(source.handleKey, mockHandle);
+
+    globalHashQueue.queuedKeys.clear();
+    globalHashQueue.runningKeys.clear();
+    
+    bgHashState.panelClosed = true;
+    
+    if (globalHashQueue.queuedKeys.size === 0 && globalHashQueue.runningKeys.size === 0) {
+      bgHashState.batchId = 'batch-' + Math.random().toString(36).slice(2);
+      bgHashState.generation++;
+      bgHashState.targetKeys.clear();
+      bgHashState.completedKeys.clear();
+      bgHashState.failedKeys.clear();
+      bgHashState.skippedKeys.clear();
+      bgHashState.panelClosed = false;
+    }
+
+    assert(bgHashState.panelClosed === false, 'panelClosed must be reset to false when new batch starts');
   });
 
   console.groupEnd();
