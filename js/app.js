@@ -23,9 +23,11 @@ import {
   handleFolderDisconnect as handleFolderDisconnectController
 } from './folder/folder-management-controller.js';
 import {
-  renderFolderSettingsUI,
-  updateScanProgressUI
-} from './folder/folder-settings-ui.js';
+  archiveVideoAction,
+  deleteVideoCascadeAction,
+  deleteFileLocationAction,
+  handleBulkDeleteAction
+} from './archive/archive-management-controller.js';
 
 export {
   bgHashState,
@@ -38,67 +40,8 @@ export {
 // Instantiate DB & components
 export let db = new AppDatabase();
 
-function wrapDbForDeletionCleanup(dbInstance) {
-  if (!dbInstance) return;
-  const originalDeleteVideoCascade = dbInstance.deleteVideoCascade;
-  dbInstance.deleteVideoCascade = async function(mediaAssetId) {
-    const locsToDelete = dbInstance.fileLocations.filter(l => l.mediaAssetId === mediaAssetId);
-    const locIds = locsToDelete.map(l => l.id);
-
-    const result = await originalDeleteVideoCascade.call(dbInstance, mediaAssetId);
-
-    if (result) {
-      for (const id of locIds) {
-        bgHashState.targetKeys.delete(id);
-        bgHashState.completedKeys.delete(id);
-        bgHashState.failedKeys.delete(id);
-        bgHashState.skippedKeys.delete(id);
-      }
-      updateBackgroundHashingProgress(true);
-    }
-    return result;
-  };
-
-  const originalArchiveVideo = dbInstance.archiveVideo;
-  dbInstance.archiveVideo = async function(mediaAssetId) {
-    const locsToDelete = dbInstance.fileLocations.filter(l => l.mediaAssetId === mediaAssetId);
-    const locIds = locsToDelete.map(l => l.id);
-
-    const result = await originalArchiveVideo.call(dbInstance, mediaAssetId);
-
-    if (result) {
-      for (const id of locIds) {
-        bgHashState.targetKeys.delete(id);
-        bgHashState.completedKeys.delete(id);
-        bgHashState.failedKeys.delete(id);
-        bgHashState.skippedKeys.delete(id);
-      }
-      updateBackgroundHashingProgress(true);
-    }
-    return result;
-  };
-
-  const originalDeleteFileLocation = dbInstance.deleteFileLocation;
-  dbInstance.deleteFileLocation = async function(locId) {
-    const result = await originalDeleteFileLocation.call(dbInstance, locId);
-    if (result) {
-      bgHashState.targetKeys.delete(locId);
-      bgHashState.completedKeys.delete(locId);
-      bgHashState.failedKeys.delete(locId);
-      bgHashState.skippedKeys.delete(locId);
-      updateBackgroundHashingProgress(true);
-    }
-    return result;
-  };
-}
-
-wrapDbForDeletionCleanup(db);
-
 export function setDbForTesting(mockDb) {
   db = mockDb;
-  if (db) {
-    wrapDbForDeletionCleanup(db);
-  }
 }
 let radar;
 
@@ -874,50 +817,26 @@ function getFilteredVideosList() {
   return videos;
 }
 
-// Bulk delete link-broken and error videos
 async function handleBulkDelete() {
   const availabilityFilter = els.filterAvailability.value;
   if (!['missing', 'scan-error', 'no-directory', 'isolated'].includes(availabilityFilter)) return;
 
-  const filteredVideos = getFilteredVideosList();
-  if (filteredVideos.length === 0) return;
-
-  const confirmMsg = `表示中のリンク切れ・エラー動画 ${filteredVideos.length}本 を一括削除します。\n評価、タグ、コメント、タイムラインメモもすべて削除されます。実際の動画ファイルは削除されません。\n\n本当によろしいですか？`;
-  if (!confirm(confirmMsg)) return;
-
-  let successCount = 0;
-  let failCount = 0;
-
-  for (const v of filteredVideos) {
-    try {
-      if (state.currentVideoId === v.id) {
-        revokeActiveBlobUrl();
-        state.activeVideoFile = null;
-      }
-      const success = await db.deleteVideoCascade(v.id);
-      if (success) {
-        state.videoFilesMap.delete(v.id);
-        successCount++;
-      } else {
-        failCount++;
-      }
-    } catch (err) {
-      console.error(`Failed to delete video ${v.id}:`, err);
-      failCount++;
-    }
-  }
-
-  showToast(`${successCount}本の動画を一覧から削除しました。実ファイルは削除されていません。`);
-  if (failCount > 0) {
-    showToast(`${failCount}本の動画の削除に失敗しました。`, 'error');
-  }
-
-  const currentVideoStillExists = db.getVideo(state.currentVideoId);
-  if (state.currentVideoId && !currentVideoStillExists) {
-    handleBackToLibrary();
-  } else {
-    renderLibrary();
-  }
+  await handleBulkDeleteAction({
+    db,
+    currentVideoId: state.currentVideoId,
+    videoFilesMap: state.videoFilesMap,
+    bgHashState,
+    onRevoke: () => {
+      revokeActiveBlobUrl();
+      state.activeVideoFile = null;
+    },
+    showToast,
+    handleBackToLibrary,
+    renderLibrary,
+    getFilteredVideosList,
+    updateBackgroundHashingProgress,
+    confirm: (msg) => confirm(msg)
+  });
 }
 
 // Navigate Screen: Library (XSS Safe DOM creation)
@@ -1135,30 +1054,22 @@ function renderLibrary() {
 
       delBtn.addEventListener('click', async (e) => {
         e.stopPropagation();
-        const confirmMsg = `一覧からこの動画を削除します。評価データは保持され、再スキャン時に復元可能です。実際の動画ファイルは削除されません。\n\n動画: 「${v.displayTitle || v.title}」\n本当に削除しますか？`;
-        if (confirm(confirmMsg)) {
-          try {
-            if (state.currentVideoId === v.id) {
-              revokeActiveBlobUrl();
-              state.activeVideoFile = null;
-            }
-            const success = await db.archiveVideo(v.id);
-            if (success) {
-              state.videoFilesMap.delete(v.id);
-              showToast('動画をアーカイブ削除しました。');
-              const currentVideoStillExists = db.getVideo(state.currentVideoId);
-              if (state.currentVideoId && !currentVideoStillExists) {
-                handleBackToLibrary();
-              } else {
-                renderLibrary();
-              }
-            } else {
-              showToast('動画のアーカイブ削除に失敗しました。', 'error');
-            }
-          } catch (err) {
-            showToast(`削除エラー: ${err.message}`, 'error');
-          }
-        }
+        await archiveVideoAction({
+          db,
+          mediaAssetId: v.id,
+          currentVideoId: state.currentVideoId,
+          videoFilesMap: state.videoFilesMap,
+          bgHashState,
+          onRevoke: () => {
+            revokeActiveBlobUrl();
+            state.activeVideoFile = null;
+          },
+          showToast,
+          handleBackToLibrary,
+          renderLibrary,
+          updateBackgroundHashingProgress,
+          confirm: (msg) => confirm(msg)
+        });
       });
 
       // Card Permanent Delete Button
@@ -1179,30 +1090,22 @@ function renderLibrary() {
 
       permDelBtn.addEventListener('click', async (e) => {
         e.stopPropagation();
-        const confirmMsg = `完全に削除します。\n評価・タグ・コメント・タイムラインメモも削除され、再スキャンしても復元できません。実際の動画ファイルは削除されません。\n\n動画: 「${v.displayTitle || v.title}」\n本当に完全に削除しますか？`;
-        if (confirm(confirmMsg)) {
-          try {
-            if (state.currentVideoId === v.id) {
-              revokeActiveBlobUrl();
-              state.activeVideoFile = null;
-            }
-            const success = await db.deleteVideoCascade(v.id);
-            if (success) {
-              state.videoFilesMap.delete(v.id);
-              showToast('データベースから完全に削除しました。');
-              const currentVideoStillExists = db.getVideo(state.currentVideoId);
-              if (state.currentVideoId && !currentVideoStillExists) {
-                handleBackToLibrary();
-              } else {
-                renderLibrary();
-              }
-            } else {
-              showToast('動画の完全削除に失敗しました。', 'error');
-            }
-          } catch (err) {
-            showToast(`完全削除エラー: ${err.message}`, 'error');
-          }
-        }
+        await deleteVideoCascadeAction({
+          db,
+          mediaAssetId: v.id,
+          currentVideoId: state.currentVideoId,
+          videoFilesMap: state.videoFilesMap,
+          bgHashState,
+          onRevoke: () => {
+            revokeActiveBlobUrl();
+            state.activeVideoFile = null;
+          },
+          showToast,
+          handleBackToLibrary,
+          renderLibrary,
+          updateBackgroundHashingProgress,
+          confirm: (msg) => confirm(msg)
+        });
       });
 
       titleContainer.appendChild(delBtn);
@@ -1384,21 +1287,18 @@ function renderLocationsListInEditor(video) {
 
     delBtn.addEventListener('click', async (e) => {
       e.stopPropagation();
-      if (confirm(`このロケーション登録を削除しますか？\n他のロケーション、アセット、評価データは削除しないでおきます。\n\nパス: ${loc.relativePath}`)) {
-        try {
-          await db.deleteFileLocation(loc.id);
-          showToast('ロケーション登録を削除しました。');
-
-          const updatedVideo = db.getVideo(video.id);
-          if (!updatedVideo || !updatedVideo.locations || updatedVideo.locations.length === 0) {
-            handleBackToLibrary();
-          } else {
-            renderLocationsListInEditor(updatedVideo);
-          }
-        } catch (err) {
-          showToast(`削除エラー: ${err.message}`, 'error');
-        }
-      }
+      await deleteFileLocationAction({
+        db,
+        locId: loc.id,
+        videoId: video.id,
+        relativePath: loc.relativePath,
+        bgHashState,
+        showToast,
+        handleBackToLibrary,
+        renderLocationsListInEditor,
+        updateBackgroundHashingProgress,
+        confirm: (msg) => confirm(msg)
+      });
     });
 
     row.appendChild(delBtn);
