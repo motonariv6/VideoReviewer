@@ -1,5 +1,5 @@
 import { AppDatabase } from './db.js';
-import { generateFileSignature, formatTime, parseTime, validateVideoUrl, normalizePath, filterVideosByTag } from './video-helper.js';
+import { generateFileSignature, formatTime, parseTime, normalizePath, filterVideosByTag } from './video-helper.js';
 import { isSupportedVideoFile, isPathCoveredByFailedDirectory, scanDirectory, classifyScanResults, applyScanDifferentials, isIgnoredSystemEntry } from './directory-scanner.js';
 import { RadarChart } from './radar.js';
 import { db, setDbForTesting, handleFolderSelect, handleFolderRequestPermission, processSingleLocationVerification, bgHashState, updateBackgroundHashingProgress, processBackgroundHashingQueue, updateBackgroundHashingUI } from './app.js';
@@ -426,8 +426,15 @@ export async function runTests(groupFilter = null) {
     const memoryStorage = new MemoryStorage();
     const testDb = new AppDatabase(memoryStorage, 'test_v7_title_');
     await testDb.initAsync();
-    const video = testDb.getVideos()[0];
-    assert(video !== undefined, 'Must have at least one sample video');
+    const video = await testDb.addVideo({
+      title: 'test_video.mp4',
+      fileName: 'test_video.mp4',
+      fileSize: 1024,
+      sourceType: 'directory',
+      directoryId: 'dir-1',
+      relativePath: 'test_video.mp4'
+    });
+    assert(video !== undefined, 'Must have at least one video');
     
     // 2. Set custom display title
     await testDb.updateVideo(video.id, { displayTitle: 'カスタムタイトル' });
@@ -514,7 +521,6 @@ export async function runTests(groupFilter = null) {
       displayTitle: 'バックアップテスト動画',
       genreId: customGenre.id,
       thumbnailId: '',
-      videoUrl: '',
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString()
     };
@@ -719,7 +725,7 @@ export async function runTests(groupFilter = null) {
     await testDb.initAsync();
     
     // Seed initial database state with distinct objects in all collections
-    testDb.mediaAssets = [{ id: 'vid-original', contentHash: 'hash-orig', hashAlgorithm: 'SHA-256', quickHash: 'qo', hashStatus: 'completed', fileSize: 100, duration: 10, displayTitle: 'Original', genreId: 'genre-original', thumbnailId: 'img-original', videoUrl: '', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }];
+    testDb.mediaAssets = [{ id: 'vid-original', contentHash: 'hash-orig', hashAlgorithm: 'SHA-256', quickHash: 'qo', hashStatus: 'completed', fileSize: 100, duration: 10, displayTitle: 'Original', genreId: 'genre-original', thumbnailId: 'img-original', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }];
     testDb.fileLocations = [{ id: 'loc-original', mediaAssetId: 'vid-original', directoryId: 'dir-original', relativePath: 'orig.mp4', fileName: 'orig.mp4', fileSize: 100, lastModified: 0, availabilityStatus: 'available', lastVerifiedAt: new Date().toISOString(), createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }];
     testDb.criteria = [{ id: 'crit-original', name: 'Original', description: 'Original' }];
     testDb.reviews = [{ id: 'rev-original', mediaAssetId: 'vid-original', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }];
@@ -1123,7 +1129,6 @@ export async function runTests(groupFilter = null) {
       title: 'video.mp4',
       fileName: 'video.mp4',
       fileSize: content.length,
-      videoUrl: '',
       duration: 10,
       sourceType: 'directory',
       directoryId: 'src-1',
@@ -1138,7 +1143,6 @@ export async function runTests(groupFilter = null) {
       title: 'video.mp4',
       fileName: 'video.mp4',
       fileSize: content.length,
-      videoUrl: '',
       duration: 10,
       sourceType: 'directory',
       directoryId: 'src-1',
@@ -1171,7 +1175,6 @@ export async function runTests(groupFilter = null) {
       title: 'video1.mp4',
       fileName: 'video1.mp4',
       fileSize: content.length,
-      videoUrl: '',
       duration: 10,
       sourceType: 'directory',
       directoryId: 'src-1',
@@ -1185,7 +1188,6 @@ export async function runTests(groupFilter = null) {
       title: 'video2.mp4',
       fileName: 'video2.mp4',
       fileSize: content.length,
-      videoUrl: '',
       duration: 10,
       sourceType: 'directory',
       directoryId: 'src-1',
@@ -1214,7 +1216,6 @@ export async function runTests(groupFilter = null) {
       title: 'vid.mp4',
       fileName: 'vid.mp4',
       fileSize: content.length,
-      videoUrl: '',
       duration: 10,
       sourceType: 'directory',
       directoryId: 'dir-A',
@@ -1228,7 +1229,6 @@ export async function runTests(groupFilter = null) {
       title: 'vid.mp4',
       fileName: 'vid.mp4',
       fileSize: content.length,
-      videoUrl: '',
       duration: 10,
       sourceType: 'directory',
       directoryId: 'dir-B',
@@ -1263,7 +1263,6 @@ export async function runTests(groupFilter = null) {
       title: 'vidA.mp4',
       fileName: 'vidA.mp4',
       fileSize: size,
-      videoUrl: '',
       duration: 5,
       sourceType: 'directory',
       directoryId: 'dir-1',
@@ -1277,7 +1276,6 @@ export async function runTests(groupFilter = null) {
       title: 'vidB.mp4',
       fileName: 'vidB.mp4',
       fileSize: size,
-      videoUrl: '',
       duration: 5,
       sourceType: 'directory',
       directoryId: 'dir-1',
@@ -1306,7 +1304,6 @@ export async function runTests(groupFilter = null) {
       title: 'original.mp4',
       fileName: 'original.mp4',
       fileSize: content.length,
-      videoUrl: '',
       duration: 60,
       sourceType: 'directory',
       directoryId: 'dir-1',
@@ -1326,7 +1323,6 @@ export async function runTests(groupFilter = null) {
       title: 'moved.mp4',
       fileName: 'moved.mp4',
       fileSize: content.length,
-      videoUrl: '',
       duration: 60,
       sourceType: 'directory',
       directoryId: 'dir-1',
@@ -1358,7 +1354,6 @@ export async function runTests(groupFilter = null) {
       title: 'test.mp4',
       fileName: 'test.mp4',
       fileSize: 500,
-      videoUrl: '',
       duration: 30,
       sourceType: 'directory',
       directoryId: 'dir-1',
@@ -1901,9 +1896,7 @@ export async function runTests(groupFilter = null) {
   await runTest('10-23. Revert calculating state to pending on startup for directory and local-file videos', async () => {
     const memory = new MemoryStorage();
     const mockAssets = [
-      { id: 'vid-dir-calc', contentHash: '', hashStatus: 'calculating', videoUrl: '' },
-      { id: 'vid-url-calc', contentHash: '', hashStatus: 'calculating', videoUrl: 'http://example.com/v.mp4' },
-      { id: 'vid-sample-calc', contentHash: '', hashStatus: 'calculating', videoUrl: '' }
+      { id: 'vid-dir-calc', contentHash: '', hashStatus: 'calculating' }
     ];
     memory.setItem('test_vreview_startup_calc_media_assets', JSON.stringify(mockAssets));
 
@@ -1911,12 +1904,8 @@ export async function runTests(groupFilter = null) {
     await testDb.initAsync();
 
     const vDir = testDb.getVideo('vid-dir-calc');
-    const vUrl = testDb.getVideo('vid-url-calc');
-    const vSample = testDb.getVideo('vid-sample-calc');
 
     assert(vDir.hashStatus === 'pending', 'Directory video calculating state reverted to pending');
-    assert(vUrl.hashStatus === 'calculating', 'URL video calculating state left untouched');
-    assert(vSample.hashStatus === 'calculating', 'Sample video calculating state left untouched');
   });
 
   await runTest('10-24. Same grade but different comments triggers conflict', async () => {
@@ -2680,6 +2669,206 @@ export async function runTests(groupFilter = null) {
 
   console.groupEnd(); // Group 13
   console.groupEnd(); // Group 12
+
+  console.group('Group 15: URL Video Feature Deprecation Tests');
+
+  await runTest('15-1. URL video feature deprecation and safety constraints', async () => {
+    // 1. URL video add UI elements do not exist
+    const btnAddUrlModal = document.getElementById('btn-add-url-modal');
+    const modalAddUrl = document.getElementById('modal-add-url');
+    assert(btnAddUrlModal === null, 'btn-add-url-modal should be removed');
+    assert(modalAddUrl === null, 'modal-add-url should be removed');
+
+    // 2. URL video register methods or handlers do not exist
+    assert(typeof window.handleAddUrlSubmit === 'undefined', 'handleAddUrlSubmit should not be globally exposed');
+
+    // 3. Setup test database
+    const memory = new MemoryStorage();
+    const testDb = new AppDatabase(memory, 'test_vreview_url_dep_');
+    await testDb.initAsync();
+
+    // 4. Verify new local asset does not have videoUrl property saved
+    const addedLocal = await testDb.addVideo({
+      title: 'test_local.mp4',
+      fileName: 'test_local.mp4',
+      fileSize: 100,
+      sourceType: 'local-file'
+    });
+    assert(addedLocal.videoUrl === undefined, 'New local asset should not have videoUrl property');
+
+    // 5. Verify addVideo() normal usage path does not accept videoUrl
+    const addedWithUrl = await testDb.addVideo({
+      title: 'test_local_url.mp4',
+      fileName: 'test_local_url.mp4',
+      fileSize: 100,
+      sourceType: 'local-file',
+      videoUrl: 'https://example.com/movie.mp4'
+    });
+    assert(addedWithUrl.videoUrl === undefined, 'addVideo should not save videoUrl even if passed');
+
+    // 6. Verify addVideo() throws error when sourceType: 'url' is passed
+    try {
+      await testDb.addVideo({
+        title: 'test_url.mp4',
+        fileName: 'test_url.mp4',
+        fileSize: 100,
+        sourceType: 'url'
+      });
+      assert(false, 'Should throw error when sourceType is url');
+    } catch (err) {
+      assert(err.message.includes('URL動画はサポートされていません'), 'Error message should mention URL videos are not supported');
+    }
+
+    // 7. Verify backup checks
+    const manifest = {
+      schemaVersion: 3,
+      createdAt: new Date().toISOString(),
+      counts: { media_assets: 1, file_locations: 0, reviews: 0, images: 0 }
+    };
+
+    // 7a. Backup with sourceType: 'url' is rejected even if videoUrl is empty
+    const backupUrlSource = {
+      media_assets: [{
+        id: 'vid-invalid-url-source',
+        contentHash: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+        hashAlgorithm: 'SHA-256',
+        quickHash: '',
+        hashStatus: 'completed',
+        fileSize: 100,
+        duration: 10,
+        displayTitle: 'Invalid URL Source Video',
+        genreId: 'genre-default',
+        thumbnailId: '',
+        videoUrl: '',
+        sourceType: 'url',
+        identityStatus: 'normal',
+        identityConflictGroupId: null,
+        isArchived: false,
+        archivedAt: null,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      }],
+      file_locations: [],
+      video_reviews: [],
+      criterion_ratings: [],
+      rating_criteria: [],
+      tags: [],
+      video_tags: [],
+      timeline_notes: [],
+      directory_sources: [],
+      genres: [{
+        id: 'genre-default',
+        name: 'Default',
+        displayTitle: 'Default Genre',
+        description: 'Default Genre',
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      }],
+      evaluation_templates: []
+    };
+    const resUrlSource = testDb.validateBackupData(backupUrlSource, manifest, []);
+    assert(resUrlSource.isValid === false, 'Backup with sourceType url must be rejected');
+    assert(resUrlSource.fatalErrors.some(e => e.includes("sourceType: 'url'")), 'Error message must mention sourceType: url');
+
+    // 7b. Backup with non-empty videoUrl is rejected
+    const backupNonEmptyUrl = {
+      media_assets: [{
+        id: 'vid-invalid-url',
+        contentHash: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+        hashAlgorithm: 'SHA-256',
+        quickHash: '',
+        hashStatus: 'completed',
+        fileSize: 100,
+        duration: 10,
+        displayTitle: 'Invalid URL Video',
+        genreId: 'genre-default',
+        thumbnailId: '',
+        videoUrl: 'https://example.com/movie.mp4',
+        identityStatus: 'normal',
+        identityConflictGroupId: null,
+        isArchived: false,
+        archivedAt: null,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      }],
+      file_locations: [],
+      video_reviews: [],
+      criterion_ratings: [],
+      rating_criteria: [],
+      tags: [],
+      video_tags: [],
+      timeline_notes: [],
+      directory_sources: [],
+      genres: [{
+        id: 'genre-default',
+        name: 'Default',
+        displayTitle: 'Default Genre',
+        description: 'Default Genre',
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      }],
+      evaluation_templates: []
+    };
+    const resNonEmptyUrl = testDb.validateBackupData(backupNonEmptyUrl, manifest, []);
+    assert(resNonEmptyUrl.isValid === false, 'Backup with non-empty videoUrl must be rejected');
+    assert(resNonEmptyUrl.fatalErrors.some(e => e.includes('URL動画ソース')), 'Error message must mention URL video source rejection');
+
+    // 7c. Legacy backup containing only videoUrl: '' is accepted, and field is removed during restore
+    const legacyBackup = {
+      media_assets: [{
+        id: 'vid-legacy-empty-url',
+        contentHash: 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+        hashAlgorithm: 'SHA-256',
+        quickHash: '',
+        hashStatus: 'completed',
+        fileSize: 100,
+        duration: 10,
+        displayTitle: 'Legacy Empty URL Video',
+        genreId: 'genre-default',
+        thumbnailId: '',
+        videoUrl: '',
+        identityStatus: 'normal',
+        identityConflictGroupId: null,
+        isArchived: false,
+        archivedAt: null,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      }],
+      file_locations: [],
+      video_reviews: [],
+      criterion_ratings: [],
+      rating_criteria: [],
+      tags: [],
+      video_tags: [],
+      timeline_notes: [],
+      directory_sources: [],
+      genres: [{
+        id: 'genre-default',
+        name: 'Default',
+        displayTitle: 'Default Genre',
+        description: 'Default Genre',
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      }],
+      evaluation_templates: []
+    };
+    const resLegacy = testDb.validateBackupData(legacyBackup, manifest, []);
+    assert(resLegacy.isValid === true, 'Legacy backup with empty videoUrl must be accepted. Errors: ' + (resLegacy.fatalErrors || []).join(', '));
+    assert(resLegacy.repairedDb.media_assets[0].videoUrl === undefined, 'videoUrl must be removed in repairedDb');
+
+    // Check restoreWithRollback clears videoUrl
+    await testDb.restoreWithRollback(legacyBackup, []);
+    const restoredAsset = testDb.getVideo('vid-legacy-empty-url');
+    assert(restoredAsset !== null, 'Asset should be restored');
+    assert(restoredAsset.videoUrl === undefined, 'Restored asset must not have videoUrl property');
+
+    // 8. Local video Object URL playback is maintained
+    const testUrl = URL.createObjectURL(new Blob(['test'], { type: 'video/mp4' }));
+    assert(typeof testUrl === 'string' && testUrl.startsWith('blob:'), 'Object URL generation works normally');
+    URL.revokeObjectURL(testUrl);
+  });
+
+  console.groupEnd(); // Group 15
   } // ends if (runAll) for Group 12-13
 
   console.groupEnd(); // main suite

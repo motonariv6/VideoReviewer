@@ -1,5 +1,5 @@
 import { AppDatabase } from '../db.js';
-import { generateFileSignature, formatTime, parseTime, validateVideoUrl, normalizePath, filterVideosByTag } from '../video-helper.js';
+import { generateFileSignature, formatTime, parseTime, normalizePath, filterVideosByTag } from '../video-helper.js';
 import { isSupportedVideoFile, isPathCoveredByFailedDirectory, scanDirectory, classifyScanResults, applyScanDifferentials, isIgnoredSystemEntry } from '../directory-scanner.js';
 import { RadarChart } from '../radar.js';
 import { db, setDbForTesting, handleFolderSelect, handleFolderRequestPermission, processSingleLocationVerification } from '../app.js';
@@ -455,16 +455,6 @@ export async function runFolderManagementTests(runTest, assert) {
     assert(tempHandleCheck === null, 'Temporary verification handle must be deleted from IDB');
   });
 
-  await runTest('20. sourceType migration preservation', async () => {
-    const memory = new MemoryStorage();
-    const legacyVideo = { id: 'vid-mig-1', title: 'Mig Video', videoUrl: 'https://site.com/vid.mp4' };
-    memory.setItem('test_vreview_videos', JSON.stringify([legacyVideo]));
-
-    const testDb = new AppDatabase(memory, 'test_vreview_', 'TestVideoDB_Mig');
-    await testDb.initAsync();
-
-    assert(testDb.getVideo('vid-mig-1').sourceType === 'url', 'Legacy URLs must map to url sourceType');
-  });
 
   console.group('Group 9: Backup Restore Folder Handle Preservation Tests');
 
@@ -745,7 +735,6 @@ export async function runFolderManagementTests(runTest, assert) {
       title: 'video.mp4',
       fileName: 'video.mp4',
       fileSize: 5000,
-      videoUrl: '',
       duration: 10,
       sourceType: 'directory',
       directoryId: initialSource.id,

@@ -101,28 +101,7 @@ export function captureVideoFrame(videoElement, targetWidth = 160) {
   });
 }
 
-/**
- * Validates a video URL for security (http/https protocols only)
- * @param {string} urlStr 
- * @throws {Error} if validation fails
- */
-export function validateVideoUrl(urlStr) {
-  const trimmed = (urlStr || '').trim();
-  if (!trimmed) {
-    throw new Error('URLを入力してください。');
-  }
-  
-  let url;
-  try {
-    url = new URL(trimmed);
-  } catch (e) {
-    throw new Error('有効なURL形式で入力してください。');
-  }
-  
-  if (url.protocol !== 'http:' && url.protocol !== 'https:') {
-    throw new Error('http: または https: プロトコルのみ許可されています。');
-  }
-}
+
 
 /**
  * Helper to convert Base64 Data URL to Blob (used for data migration)
