@@ -735,7 +735,6 @@ export async function runFolderManagementTests(runTest, assert) {
       title: 'video.mp4',
       fileName: 'video.mp4',
       fileSize: 5000,
-      videoUrl: '',
       duration: 10,
       sourceType: 'directory',
       directoryId: initialSource.id,

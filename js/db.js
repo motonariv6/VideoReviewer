@@ -585,7 +585,6 @@ export class AppDatabase {
           displayTitle: v.displayTitle || v.title || v.fileName || '不明な動画',
           genreId: v.genreId || 'genre-default',
           thumbnailId: v.thumbnailId || '',
-          videoUrl: v.videoUrl || '',
           identityStatus: 'normal',
           identityConflictGroupId: null,
           createdAt: v.createdAt || new Date().toISOString(),
@@ -840,7 +839,6 @@ export class AppDatabase {
           displayTitle: v.displayTitle || v.title || v.fileName || '不明な動画',
           genreId: v.genreId || 'genre-default',
           thumbnailId: v.thumbnailId || '',
-          videoUrl: v.videoUrl || '',
           createdAt: v.createdAt || new Date().toISOString(),
           updatedAt: v.updatedAt || new Date().toISOString()
         };
@@ -944,7 +942,6 @@ export class AppDatabase {
       lastModified: firstLoc.lastModified,
       availabilityStatus: logicalStatus,
       sourceType: 'directory',
-      videoUrl: '',
       locations: scoredLocations.map(w => w.loc)
     };
   }
@@ -1013,7 +1010,6 @@ export class AppDatabase {
         title: sf.fileName,
         fileName: sf.fileName,
         fileSize: sf.fileSize,
-        videoUrl: '',
         duration: 0,
         sourceType: 'directory',
         directoryId,
@@ -1035,7 +1031,6 @@ export class AppDatabase {
         title: sf.fileName,
         fileName: sf.fileName,
         fileSize: sf.fileSize,
-        videoUrl: '',
         duration: 0,
         sourceType: 'directory',
         directoryId,
@@ -1110,7 +1105,6 @@ export class AppDatabase {
             displayTitle: loc.fileName,
             genreId: video.genreId || 'genre-default',
             thumbnailId: '',
-            videoUrl: '',
             identityStatus: 'verified',
             identityConflictGroupId: null,
             createdAt: new Date().toISOString(),
@@ -1232,7 +1226,6 @@ export class AppDatabase {
         title: sf.fileName,
         fileName: sf.fileName,
         fileSize: sf.fileSize,
-        videoUrl: '',
         duration: 0,
         sourceType: 'directory',
         directoryId,
@@ -1246,7 +1239,10 @@ export class AppDatabase {
     }
   }
 
-  async addVideo({ title, displayTitle, fileName, fileSize, videoUrl, duration, thumbnailBlob, sourceType, directoryId, relativePath, lastModified, contentHash, quickHash, hashStatus, identityStatus }) {
+  async addVideo({ title, displayTitle, fileName, fileSize, duration, thumbnailBlob, sourceType, directoryId, relativePath, lastModified, contentHash, quickHash, hashStatus, identityStatus }) {
+    if (sourceType === 'url') {
+      throw new Error('URL動画はサポートされていません。');
+    }
     const normalizedTitle = normalizeDisplayTitle(displayTitle !== undefined ? displayTitle : title);
     const normPath = normalizePath(relativePath);
 
@@ -1334,7 +1330,6 @@ export class AppDatabase {
       displayTitle: normalizedTitle,
       genreId: 'genre-default',
       thumbnailId: '',
-      videoUrl: videoUrl || '',
       identityStatus: identityStatus || 'normal',
       identityConflictGroupId: null,
       isArchived: false,
@@ -1700,7 +1695,7 @@ export class AppDatabase {
   async updateVideo(id, updates) {
     const asset = this.mediaAssets.find(a => a.id === id);
     if (asset) {
-      const assetKeys = ['contentHash', 'hashAlgorithm', 'quickHash', 'hashStatus', 'fileSize', 'duration', 'displayTitle', 'genreId', 'thumbnailId', 'videoUrl'];
+      const assetKeys = ['contentHash', 'hashAlgorithm', 'quickHash', 'hashStatus', 'fileSize', 'duration', 'displayTitle', 'genreId', 'thumbnailId'];
       const locKeys = ['directoryId', 'relativePath', 'fileName', 'fileSize', 'lastModified', 'availabilityStatus'];
       
       const assetUpdates = {};
@@ -2170,6 +2165,8 @@ export class AppDatabase {
         if (a.archivedAt === undefined) {
           a.archivedAt = null;
         }
+        delete a.videoUrl;
+        delete a.sourceType;
       });
     }
 
@@ -2182,10 +2179,21 @@ export class AppDatabase {
     return rawDb;
   }
 
-  // Production Backup integrity validator
   validateBackupData(parsedDb, manifest, imageIds = []) {
     const fatalErrors = [];
     const warnings = [];
+
+    // Pre-normalization URL video deprecation checks
+    if (parsedDb && Array.isArray(parsedDb.media_assets)) {
+      parsedDb.media_assets.forEach(v => {
+        if (v.sourceType === 'url') {
+          fatalErrors.push(`動画アセット ${v.id} の sourceType: 'url' はサポートされていません。`);
+        }
+        if (v.videoUrl !== undefined && v.videoUrl !== null && v.videoUrl !== '') {
+          fatalErrors.push(`動画アセット ${v.id} はURL動画ソース (${v.videoUrl}) ですが、URL動画機能は廃止されたためサポートされていません。`);
+        }
+      });
+    }
 
     const rawDb = this.normalizeBackupData(parsedDb);
 
@@ -2280,9 +2288,6 @@ export class AppDatabase {
       if (Array.isArray(rawDb.media_assets)) {
         const hashGroups = new Map();
         rawDb.media_assets.forEach(v => {
-          if (v.videoUrl && v.videoUrl.trim() !== '') {
-            fatalErrors.push(`動画アセット ${v.id} はURL動画ソース (${v.videoUrl}) ですが、URL動画機能は廃止されたためサポートされていません。`);
-          }
           if (v.hashStatus === 'completed') {
             if (!v.contentHash || !/^[0-9a-f]{64}$/.test(v.contentHash)) {
               fatalErrors.push(`動画アセット ${v.id} の contentHash が不正です (completed 状態では 64 文字の小文字 16 進数が必要です)。`);
@@ -2483,6 +2488,16 @@ export class AppDatabase {
 
   // Production Restore execution method with full transaction rollback (memory, storage, IndexedDB)
   async restoreWithRollback(parsedDb, images) {
+    if (parsedDb && Array.isArray(parsedDb.media_assets)) {
+      for (const v of parsedDb.media_assets) {
+        if (v.sourceType === 'url') {
+          throw new Error(`動画アセット ${v.id} の sourceType: 'url' はサポートされていません。`);
+        }
+        if (v.videoUrl !== undefined && v.videoUrl !== null && v.videoUrl !== '') {
+          throw new Error(`動画アセット ${v.id} はURL動画ソース (${v.videoUrl}) ですが、URL動画機能は廃止されたためサポートされていません。`);
+        }
+      }
+    }
     const normalizedDb = this.normalizeBackupData(parsedDb);
 
     // 1. Snapshot in-memory collections (deep copy)
