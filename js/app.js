@@ -27,6 +27,38 @@ function wrapDbForDeletionCleanup(dbInstance) {
     }
     return result;
   };
+
+  const originalArchiveVideo = dbInstance.archiveVideo;
+  dbInstance.archiveVideo = async function(mediaAssetId) {
+    const locsToDelete = dbInstance.fileLocations.filter(l => l.mediaAssetId === mediaAssetId);
+    const locIds = locsToDelete.map(l => l.id);
+
+    const result = await originalArchiveVideo.call(dbInstance, mediaAssetId);
+
+    if (result) {
+      for (const id of locIds) {
+        bgHashState.targetKeys.delete(id);
+        bgHashState.completedKeys.delete(id);
+        bgHashState.failedKeys.delete(id);
+        bgHashState.skippedKeys.delete(id);
+      }
+      updateBackgroundHashingProgress(true);
+    }
+    return result;
+  };
+
+  const originalDeleteFileLocation = dbInstance.deleteFileLocation;
+  dbInstance.deleteFileLocation = async function(locId) {
+    const result = await originalDeleteFileLocation.call(dbInstance, locId);
+    if (result) {
+      bgHashState.targetKeys.delete(locId);
+      bgHashState.completedKeys.delete(locId);
+      bgHashState.failedKeys.delete(locId);
+      bgHashState.skippedKeys.delete(locId);
+      updateBackgroundHashingProgress(true);
+    }
+    return result;
+  };
 }
 
 wrapDbForDeletionCleanup(db);
@@ -140,6 +172,8 @@ const els = {
   infoFileName: document.getElementById('info-file-name'),
   infoFileSize: document.getElementById('info-file-size'),
   infoDuration: document.getElementById('info-duration'),
+  infoLocationsContainer: document.getElementById('info-locations-container'),
+  infoLocationsList: document.getElementById('info-locations-list'),
   
   // Review inputs
   gradeButtons: document.querySelectorAll('.grade-btn[data-grade]'),
@@ -1528,10 +1562,10 @@ function renderLibrary() {
       titleH4.style.flex = '1';
       titleContainer.appendChild(titleH4);
 
-      // Card Delete Button
+      // Card Delete Button (Archive)
       const delBtn = document.createElement('button');
       delBtn.className = 'btn btn-icon btn-delete-card';
-      delBtn.title = 'ライブラリから削除';
+      delBtn.title = 'ライブラリからアーカイブ削除 (評価データは保持されます)';
       delBtn.style.padding = '2px';
       delBtn.style.color = 'var(--color-text-muted)';
       delBtn.style.cursor = 'pointer';
@@ -1540,15 +1574,56 @@ function renderLibrary() {
         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
       </svg>`;
 
-      // Hover styling
-      delBtn.addEventListener('mouseenter', () => { delBtn.style.color = 'var(--color-error)'; });
+      delBtn.addEventListener('mouseenter', () => { delBtn.style.color = 'var(--color-warning, #f59e0b)'; });
       delBtn.addEventListener('mouseleave', () => { delBtn.style.color = 'var(--color-text-muted)'; });
 
-      // Click event handles cascade delete safely
       delBtn.addEventListener('click', async (e) => {
-        e.stopPropagation(); // Avoid opening the editing workspace
-        
-        const confirmMsg = `一覧からこの動画を削除します。評価、タグ、コメント、タイムラインメモも削除されます。実際の動画ファイルは削除されません。\n\n動画: 「${v.displayTitle || v.title}」\n本当に削除しますか？`;
+        e.stopPropagation();
+        const confirmMsg = `一覧からこの動画を削除します。評価データは保持され、再スキャン時に復元可能です。実際の動画ファイルは削除されません。\n\n動画: 「${v.displayTitle || v.title}」\n本当に削除しますか？`;
+        if (confirm(confirmMsg)) {
+          try {
+            if (state.currentVideoId === v.id) {
+              revokeActiveBlobUrl();
+              state.activeVideoFile = null;
+            }
+            const success = await db.archiveVideo(v.id);
+            if (success) {
+              state.videoFilesMap.delete(v.id);
+              showToast('動画をアーカイブ削除しました。');
+              const currentVideoStillExists = db.getVideo(state.currentVideoId);
+              if (state.currentVideoId && !currentVideoStillExists) {
+                handleBackToLibrary();
+              } else {
+                renderLibrary();
+              }
+            } else {
+              showToast('動画のアーカイブ削除に失敗しました。', 'error');
+            }
+          } catch (err) {
+            showToast(`削除エラー: ${err.message}`, 'error');
+          }
+        }
+      });
+
+      // Card Permanent Delete Button
+      const permDelBtn = document.createElement('button');
+      permDelBtn.className = 'btn btn-icon btn-perm-delete-card';
+      permDelBtn.title = '完全に削除 (評価データも削除され、再スキャンしても復元できません)';
+      permDelBtn.style.padding = '2px';
+      permDelBtn.style.color = 'var(--color-text-muted)';
+      permDelBtn.style.cursor = 'pointer';
+      permDelBtn.style.flexShrink = '0';
+      permDelBtn.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" style="width:16px;height:16px" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 11l4 4m0-4l-4 4" />
+      </svg>`;
+
+      permDelBtn.addEventListener('mouseenter', () => { permDelBtn.style.color = 'var(--color-error)'; });
+      permDelBtn.addEventListener('mouseleave', () => { permDelBtn.style.color = 'var(--color-text-muted)'; });
+
+      permDelBtn.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        const confirmMsg = `完全に削除します。\n評価・タグ・コメント・タイムラインメモも削除され、再スキャンしても復元できません。実際の動画ファイルは削除されません。\n\n動画: 「${v.displayTitle || v.title}」\n本当に完全に削除しますか？`;
         if (confirm(confirmMsg)) {
           try {
             if (state.currentVideoId === v.id) {
@@ -1558,8 +1633,7 @@ function renderLibrary() {
             const success = await db.deleteVideoCascade(v.id);
             if (success) {
               state.videoFilesMap.delete(v.id);
-              showToast('一覧から削除しました。実ファイルは削除されていません。');
-              
+              showToast('データベースから完全に削除しました。');
               const currentVideoStillExists = db.getVideo(state.currentVideoId);
               if (state.currentVideoId && !currentVideoStillExists) {
                 handleBackToLibrary();
@@ -1567,15 +1641,16 @@ function renderLibrary() {
                 renderLibrary();
               }
             } else {
-              showToast('動画の削除に失敗しました。', 'error');
+              showToast('動画の完全削除に失敗しました。', 'error');
             }
           } catch (err) {
-            showToast(`削除エラー: ${err.message}`, 'error');
+            showToast(`完全削除エラー: ${err.message}`, 'error');
           }
         }
       });
 
       titleContainer.appendChild(delBtn);
+      titleContainer.appendChild(permDelBtn);
       bodyDiv.appendChild(titleContainer);
 
       // Display original title as subtitle if displayTitle is present
@@ -1713,6 +1788,73 @@ function handleBackToLibrary() {
   renderLibrary();
 }
 
+function renderLocationsListInEditor(video) {
+  if (video.sourceType === 'url') {
+    els.infoLocationsContainer.style.display = 'none';
+    return;
+  }
+  
+  els.infoLocationsContainer.style.display = 'block';
+  els.infoLocationsList.innerHTML = '';
+  
+  const locations = video.locations || [];
+  locations.forEach(loc => {
+    const row = document.createElement('div');
+    row.style.display = 'flex';
+    row.style.justify = 'space-between';
+    row.style.alignItems = 'center';
+    row.style.gap = '8px';
+    row.style.fontSize = '0.75rem';
+    row.style.padding = '4px 8px';
+    row.style.backgroundColor = 'rgba(255,255,255,0.05)';
+    row.style.borderRadius = '4px';
+
+    const source = db.getDirectorySource(loc.directoryId);
+    const folderName = source ? source.name : 'フォルダ不明';
+
+    const pathSpan = document.createElement('span');
+    pathSpan.style.wordBreak = 'break-all';
+    pathSpan.textContent = `📁 ${folderName} / ${loc.relativePath}`;
+    if (loc.verificationStatus === 'provisional') {
+      pathSpan.textContent += ' (ハッシュ検証前)';
+      pathSpan.style.color = 'var(--color-warning, #f59e0b)';
+    }
+    row.appendChild(pathSpan);
+
+    const delBtn = document.createElement('button');
+    delBtn.className = 'btn btn-icon';
+    delBtn.title = 'ロケーション登録を削除 (評価データは残ります)';
+    delBtn.style.color = 'var(--color-text-muted)';
+    delBtn.style.cursor = 'pointer';
+    delBtn.style.padding = '2px';
+    delBtn.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" style="width:14px;height:14px" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+    </svg>`;
+
+    delBtn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      if (confirm(`このロケーション登録を削除しますか？\n他のロケーション、アセット、評価データは削除しないでおきます。\n\nパス: ${loc.relativePath}`)) {
+        try {
+          await db.deleteFileLocation(loc.id);
+          showToast('ロケーション登録を削除しました。');
+          
+          const updatedVideo = db.getVideo(video.id);
+          if (!updatedVideo || !updatedVideo.locations || updatedVideo.locations.length === 0) {
+            handleBackToLibrary();
+          } else {
+            renderLocationsListInEditor(updatedVideo);
+          }
+        } catch (err) {
+          showToast(`削除エラー: ${err.message}`, 'error');
+        }
+      }
+    });
+
+    row.appendChild(delBtn);
+    els.infoLocationsList.appendChild(row);
+  });
+}
+
 // Switch Screen: Editor Workspace
 function switchScreenToEditor(videoId) {
   const video = db.getVideo(videoId);
@@ -1777,6 +1919,9 @@ function switchScreenToEditor(videoId) {
 
   // Render timeline notes
   renderTimelineNotesList();
+
+  // Render locations list
+  renderLocationsListInEditor(video);
   
   // Initialize dynamic captured timestamp label
   state.capturedNoteTime = 0;

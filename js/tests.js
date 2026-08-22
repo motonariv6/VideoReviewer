@@ -797,8 +797,8 @@ export async function runTests() {
     assert(deleteSuccess === true, 'Cascade delete operation must return true');
 
     // Assert Video A is deleted but Video B remains
-    assert(testDb.getVideo(vidA.id) === undefined, 'Video A must be removed from videos');
-    assert(testDb.getVideo(vidB.id) !== undefined, 'Video B must NOT be removed from videos');
+    assert(!testDb.getVideo(vidA.id), 'Video A must be removed from videos');
+    assert(!!testDb.getVideo(vidB.id), 'Video B must NOT be removed from videos');
 
     // Assert reviews and ratings are cascaded
     assert(testDb.getReviewForVideo(vidA.id) === undefined, 'Review for Video A must be removed');
@@ -4830,6 +4830,245 @@ export async function runTests() {
       globalHashQueue.cancelPending();
     }
   });
+
+  console.group('Group 12: Video Archiving, Rescanning, and Location Deletion');
+
+  await runTest('12-1. Archive video retains reviews in DB, hides it from getVideos, and recovers on rescan', async () => {
+    const memory = new MemoryStorage();
+    const testDb = new AppDatabase(memory, 'test_vreview_g12_1_', 'TestVideoDB_G12_1');
+    await testDb.initAsync();
+
+    const asset = await testDb.addVideo({
+      fileName: 'archive_test.mp4',
+      fileSize: 12345,
+      lastModified: 1000,
+      quickHash: 'qh_archive_test',
+      hashStatus: 'completed',
+      identityStatus: 'verified'
+    });
+    const realAsset = testDb.mediaAssets.find(a => a.id === asset.id);
+    realAsset.contentHash = 'hash_archive_test';
+    await testDb._saveTable('media_assets', testDb.mediaAssets);
+
+    const source = await testDb.addDirectorySource({ name: 'FolderA' });
+    await testDb.updateDirectorySource(source.id, { permissionStatus: 'granted' });
+
+    const loc = {
+      id: 'loc-archive-test',
+      mediaAssetId: asset.id,
+      directoryId: source.id,
+      relativePath: 'archive_test.mp4',
+      fileName: 'archive_test.mp4',
+      fileSize: 12345,
+      lastModified: 1000,
+      availabilityStatus: 'available',
+      verificationStatus: 'verified',
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    };
+    testDb.fileLocations.push(loc);
+    await testDb._saveTable('file_locations', testDb.fileLocations);
+
+    const review = await testDb.saveReview(asset.id, {
+      overallGrade: 'S',
+      comment: 'Excellent video'
+    });
+
+    let activeVideos = testDb.getVideos();
+    assert(activeVideos.some(v => v.id === asset.id), 'Asset is in active videos list');
+    assert(testDb.reviews.some(r => r.mediaAssetId === asset.id), 'Review exists in DB');
+
+    const archiveResult = await testDb.archiveVideo(asset.id);
+    assert(archiveResult === true, 'archiveVideo returns true');
+
+    const freshAsset = testDb.mediaAssets.find(a => a.id === asset.id);
+    assert(freshAsset.isArchived === true, 'Asset isArchived flag is set to true');
+    assert(freshAsset.archivedAt !== null, 'Asset archivedAt has a timestamp');
+
+    const assetLocs = testDb.fileLocations.filter(l => l.mediaAssetId === asset.id);
+    assert(assetLocs.length === 0, 'Active locations of archived video are removed from db');
+
+    activeVideos = testDb.getVideos();
+    assert(!activeVideos.some(v => v.id === asset.id), 'Archived video is hidden from active videos list');
+    assert(testDb.reviews.some(r => r.mediaAssetId === asset.id), 'Review data is preserved in DB');
+
+    const mockHandle = new MockFileSystemDirectoryHandle('FolderA', {
+      'archive_test.mp4': new MockFileSystemFileHandle('archive_test.mp4', 12345, 1000)
+    });
+    await testDb.putDirectoryHandle(source.handleKey, mockHandle);
+
+    const scanResult = {
+      relativePath: 'archive_test.mp4',
+      fileName: 'archive_test.mp4',
+      fileSize: 12345,
+      lastModified: 1000,
+      quickHash: 'qh_archive_test'
+    };
+
+    const rescanResult = await testDb.resolveAndRegisterNewScannedFileProvisional({
+      directoryId: source.id,
+      sf: scanResult
+    });
+
+    assert(rescanResult.status === 'merged', 'Provisional rescan maps to candidate');
+    assert(rescanResult.assetId === asset.id, 'Maps back to original asset ID');
+
+    const restoredAsset = testDb.mediaAssets.find(a => a.id === asset.id);
+    assert(restoredAsset.isArchived === false, 'Asset isArchived is restored to false');
+    assert(restoredAsset.archivedAt === null, 'Asset archivedAt is restored to null');
+
+    const restoredVideo = testDb.getVideo(asset.id);
+    assert(restoredVideo.isArchived === false, 'Virtual video shows not archived');
+    const restoredReview = testDb.getReviewForVideo(asset.id);
+    assert(restoredReview && restoredReview.overallGrade === 'S', 'Evaluation is visible during provisional restore');
+  });
+
+  await runTest('12-2. Mismatch full hash on provisional restore archives the original asset again', async () => {
+    const memory = new MemoryStorage();
+    const testDb = new AppDatabase(memory, 'test_vreview_g12_2_', 'TestVideoDB_G12_2');
+    await testDb.initAsync();
+
+    const asset = await testDb.addVideo({
+      fileName: 'mismatch.mp4',
+      fileSize: 500,
+      lastModified: 2000,
+      quickHash: 'qh_mismatch',
+      hashStatus: 'completed',
+      identityStatus: 'verified'
+    });
+    const realAsset = testDb.mediaAssets.find(a => a.id === asset.id);
+    realAsset.contentHash = 'original_correct_hash';
+    realAsset.isArchived = true;
+    realAsset.archivedAt = new Date().toISOString();
+    // Also remove the initially created file location to simulate being archived properly (locations cleared)
+    testDb.fileLocations = testDb.fileLocations.filter(l => l.mediaAssetId !== asset.id);
+    await testDb._saveTable('file_locations', testDb.fileLocations);
+    await testDb._saveTable('media_assets', testDb.mediaAssets);
+
+    await testDb.saveReview(asset.id, {
+      overallGrade: 'A',
+      comment: 'Good video'
+    });
+
+    const source = await testDb.addDirectorySource({ name: 'FolderA' });
+    await testDb.updateDirectorySource(source.id, { permissionStatus: 'granted' });
+
+    const scanResult = {
+      relativePath: 'mismatch.mp4',
+      fileName: 'mismatch.mp4',
+      fileSize: 500,
+      lastModified: 2000,
+      quickHash: 'qh_mismatch'
+    };
+    await testDb.resolveAndRegisterNewScannedFileProvisional({
+      directoryId: source.id,
+      sf: scanResult
+    });
+
+    const restoredAsset = testDb.mediaAssets.find(a => a.id === asset.id);
+    assert(restoredAsset.isArchived === false, 'Provisionally restored');
+
+    const newLoc = testDb.fileLocations.find(l => l.mediaAssetId === asset.id);
+    assert(newLoc && newLoc.verificationStatus === 'provisional', 'Location is provisional');
+
+    const mismatchHash = 'different_mismatch_hash';
+    const verifyResult = await testDb.completeLocationProvisionalVerification(newLoc.id, mismatchHash);
+    
+    assert(verifyResult.status === 'separated', 'Mismatch causes separation');
+    assert(verifyResult.newAssetId !== asset.id, 'Separated to new asset');
+
+    const reArchivedAsset = testDb.mediaAssets.find(a => a.id === asset.id);
+    assert(reArchivedAsset.isArchived === true, 'Original asset goes back to archived state');
+
+    const newAssetReviews = testDb.reviews.filter(r => r.mediaAssetId === verifyResult.newAssetId);
+    assert(newAssetReviews.length === 0, 'New separated asset has no ratings or reviews');
+  });
+
+  await runTest('12-3. Permanent deletion cascade removes all review details', async () => {
+    const memory = new MemoryStorage();
+    const testDb = new AppDatabase(memory, 'test_vreview_g12_3_', 'TestVideoDB_G12_3');
+    await testDb.initAsync();
+
+    const asset = await testDb.addVideo({
+      fileName: 'perm.mp4',
+      fileSize: 100,
+      lastModified: 3000,
+      quickHash: 'qh_perm',
+      hashStatus: 'completed',
+      identityStatus: 'verified'
+    });
+
+    await testDb.saveReview(asset.id, {
+      overallGrade: 'B'
+    });
+
+    const success = await testDb.deleteVideoCascade(asset.id);
+    assert(success === true, 'deleteVideoCascade returns true');
+
+    const freshAsset = testDb.mediaAssets.find(a => a.id === asset.id);
+    assert(!freshAsset, 'Asset completely removed from DB');
+
+    const freshReview = testDb.reviews.find(r => r.mediaAssetId === asset.id);
+    assert(!freshReview, 'Review completely removed from DB');
+  });
+
+  await runTest('12-4. Location deletion preserves other locations and asset evaluations', async () => {
+    const memory = new MemoryStorage();
+    const testDb = new AppDatabase(memory, 'test_vreview_g12_4_', 'TestVideoDB_G12_4');
+    await testDb.initAsync();
+
+    const asset = await testDb.addVideo({
+      fileName: 'multi.mp4',
+      fileSize: 100,
+      lastModified: 4000,
+      quickHash: 'qh_multi',
+      hashStatus: 'completed',
+      identityStatus: 'verified'
+    });
+
+    await testDb.saveReview(asset.id, {
+      overallGrade: 'S'
+    });
+
+    const loc1 = {
+      id: 'loc-1',
+      mediaAssetId: asset.id,
+      directoryId: 'dir-1',
+      relativePath: 'path1.mp4',
+      fileName: 'multi.mp4',
+      fileSize: 100,
+      lastModified: 4000,
+      availabilityStatus: 'available',
+      verificationStatus: 'verified',
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    };
+    const loc2 = {
+      id: 'loc-2',
+      mediaAssetId: asset.id,
+      directoryId: 'dir-2',
+      relativePath: 'path2.mp4',
+      fileName: 'multi.mp4',
+      fileSize: 100,
+      lastModified: 4000,
+      availabilityStatus: 'available',
+      verificationStatus: 'verified',
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    };
+    testDb.fileLocations.push(loc1, loc2);
+
+    const success = await testDb.deleteFileLocation('loc-1');
+    assert(success === true, 'deleteFileLocation returns true');
+
+    assert(!testDb.fileLocations.some(l => l.id === 'loc-1'), 'loc-1 is deleted');
+    assert(testDb.fileLocations.some(l => l.id === 'loc-2'), 'loc-2 remains');
+
+    const freshReview = testDb.reviews.find(r => r.mediaAssetId === asset.id);
+    assert(freshReview && freshReview.overallGrade === 'S', 'Evaluations remain intact');
+  });
+
+  console.groupEnd();
 
   console.groupEnd();
 

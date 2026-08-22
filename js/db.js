@@ -1038,11 +1038,14 @@ export class AppDatabase {
   }
 
   getVideos() {
-    return this.mediaAssets.map(asset => this._buildVirtualVideo(asset));
+    return this.mediaAssets
+      .filter(asset => !asset.isArchived)
+      .map(asset => this._buildVirtualVideo(asset));
   }
 
   getVideo(id) {
     const asset = this.mediaAssets.find(a => a.id === id);
+    if (!asset) return null;
     return this._buildVirtualVideo(asset);
   }
 
@@ -1056,6 +1059,13 @@ export class AppDatabase {
     if (candidates.length === 1) {
       // Exactly 1 candidate -> provisional match!
       const matchedAsset = candidates[0];
+      
+      if (matchedAsset.isArchived) {
+        matchedAsset.isArchived = false;
+        matchedAsset.archivedAt = null;
+        matchedAsset.updatedAt = new Date().toISOString();
+        this._saveTable('media_assets', this.mediaAssets);
+      }
       
       const normPath = normalizePath(sf.relativePath);
       let existingLoc = this.fileLocations.find(l => l.directoryId === directoryId && normalizePath(l.relativePath) === normPath);
@@ -1203,6 +1213,14 @@ export class AppDatabase {
         loc.verificationStatus = 'verified';
         this._saveTable('file_locations', this.fileLocations);
 
+        // If the original asset has no locations left, archive it again!
+        const remainingLocs = this.fileLocations.filter(l => l.mediaAssetId === video.id);
+        if (remainingLocs.length === 0) {
+          video.isArchived = true;
+          video.archivedAt = new Date().toISOString();
+          this._saveTable('media_assets', this.mediaAssets);
+        }
+
         return { status: 'separated', newAssetId: targetAsset.id };
       }
     }
@@ -1262,6 +1280,13 @@ export class AppDatabase {
     // 3. Find if any existing asset has the identical non-empty contentHash (exclude conflict assets)
     const matchedAsset = this.mediaAssets.find(a => a.contentHash === scannedHash && a.identityStatus !== 'conflict');
     if (matchedAsset) {
+      if (matchedAsset.isArchived) {
+        matchedAsset.isArchived = false;
+        matchedAsset.archivedAt = null;
+        matchedAsset.updatedAt = new Date().toISOString();
+        this._saveTable('media_assets', this.mediaAssets);
+      }
+
       // Check if location already exists for this directory and path (safety check)
       const normPath = normalizePath(sf.relativePath);
       let existingLoc = this.fileLocations.find(l => l.directoryId === directoryId && normalizePath(l.relativePath) === normPath);
@@ -1405,6 +1430,8 @@ export class AppDatabase {
       videoUrl: videoUrl || '',
       identityStatus: identityStatus || 'normal',
       identityConflictGroupId: null,
+      isArchived: false,
+      archivedAt: null,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString()
     };
@@ -1882,6 +1909,27 @@ export class AppDatabase {
     return true;
   }
 
+  async archiveVideo(mediaAssetId) {
+    const asset = this.mediaAssets.find(a => a.id === mediaAssetId);
+    if (!asset) return false;
+
+    asset.isArchived = true;
+    asset.archivedAt = new Date().toISOString();
+    this._saveTable('media_assets', this.mediaAssets);
+
+    // Remove active locations associated with this archived asset
+    this.fileLocations = this.fileLocations.filter(l => l.mediaAssetId !== mediaAssetId);
+    this._saveTable('file_locations', this.fileLocations);
+
+    return true;
+  }
+
+  async deleteFileLocation(locId) {
+    this.fileLocations = this.fileLocations.filter(l => l.id !== locId);
+    this._saveTable('file_locations', this.fileLocations);
+    return true;
+  }
+
   // --- CRITERIA OPERATIONS ---
 
   getCriteria() {
@@ -2208,6 +2256,12 @@ export class AppDatabase {
         }
         if (a.identityConflictGroupId === undefined) {
           a.identityConflictGroupId = null;
+        }
+        if (a.isArchived === undefined) {
+          a.isArchived = false;
+        }
+        if (a.archivedAt === undefined) {
+          a.archivedAt = null;
         }
       });
     }
@@ -2987,7 +3041,9 @@ export const BACKUP_SCHEMA = {
           "identityStatus": { "type": "string", "enum": ["normal", "conflict", "provisional", "verified"] },
           "identityConflictGroupId": { "type": ["string", "null"] },
           "createdAt": { "type": "string" },
-          "updatedAt": { "type": "string" }
+          "updatedAt": { "type": "string" },
+          "isArchived": { "type": "boolean" },
+          "archivedAt": { "type": ["string", "null"] }
         }
       }
     },
