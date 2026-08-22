@@ -30,96 +30,10 @@ const DEFAULT_CRITERIA = [
   { id: 'crit-replayability', name: '再視聴性', description: '何度も見たくなる魅力、見返した時の発見', displayOrder: 6, isActive: true, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }
 ];
 
-// Sample Videos with sourceType: 'url'
-const SAMPLE_MEDIA_ASSETS = [
-  {
-    id: 'vid-sample-bunny',
-    contentHash: '',
-    hashAlgorithm: 'SHA-256',
-    quickHash: '',
-    hashStatus: 'pending',
-    fileSize: 5510872,
-    duration: 596,
-    displayTitle: 'Big Buck Bunny (Sample)',
-    genreId: 'genre-default',
-    thumbnailId: '',
-    videoUrl: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4',
-    createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString()
-  },
-  {
-    id: 'vid-sample-sintel',
-    contentHash: '',
-    hashAlgorithm: 'SHA-256',
-    quickHash: '',
-    hashStatus: 'pending',
-    fileSize: 4238712,
-    duration: 52,
-    displayTitle: 'Sintel Trailer (Sample)',
-    genreId: 'genre-default',
-    thumbnailId: '',
-    videoUrl: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/Sintel.mp4',
-    createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString()
-  },
-  {
-    id: 'vid-sample-tears',
-    contentHash: '',
-    hashAlgorithm: 'SHA-256',
-    quickHash: '',
-    hashStatus: 'pending',
-    fileSize: 6734123,
-    duration: 734,
-    displayTitle: 'Tears of Steel (Sample)',
-    genreId: 'genre-default',
-    thumbnailId: '',
-    videoUrl: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/TearsOfSteel.mp4',
-    createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString()
-  }
-];
+// Sample Videos with sourceType: 'url' (removed)
+const SAMPLE_MEDIA_ASSETS = [];
 
-const SAMPLE_FILE_LOCATIONS = [
-  {
-    id: 'loc-sample-bunny',
-    mediaAssetId: 'vid-sample-bunny',
-    directoryId: '',
-    relativePath: '',
-    fileName: 'big_buck_bunny.mp4',
-    fileSize: 5510872,
-    lastModified: 0,
-    availabilityStatus: 'available',
-    lastVerifiedAt: new Date().toISOString(),
-    createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString()
-  },
-  {
-    id: 'loc-sample-sintel',
-    mediaAssetId: 'vid-sample-sintel',
-    directoryId: '',
-    relativePath: '',
-    fileName: 'sintel.mp4',
-    fileSize: 4238712,
-    lastModified: 0,
-    availabilityStatus: 'available',
-    lastVerifiedAt: new Date().toISOString(),
-    createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString()
-  },
-  {
-    id: 'loc-sample-tears',
-    mediaAssetId: 'vid-sample-tears',
-    directoryId: '',
-    relativePath: '',
-    fileName: 'tears_of_steel.mp4',
-    fileSize: 6734123,
-    lastModified: 0,
-    availabilityStatus: 'available',
-    lastVerifiedAt: new Date().toISOString(),
-    createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString()
-  }
-];
+const SAMPLE_FILE_LOCATIONS = [];
 
 // --- INDEXEDDB ADAPTER CLASS (Version 2 with handles store) ---
 export class IndexedDBStore {
@@ -410,7 +324,7 @@ export class AppDatabase {
         a.identityConflictGroupId = null;
         assetsModified = true;
       }
-      const isUrlOrSample = a.videoUrl || a.id.includes('sample');
+      const isUrlOrSample = false;
       if (!isUrlOrSample && a.hashStatus === 'calculating') {
         a.hashStatus = 'pending';
         assetsModified = true;
@@ -1019,8 +933,6 @@ export class AppDatabase {
 
     const displayTitle = asset.displayTitle;
     const title = displayTitle || firstLoc.fileName || '不明な動画';
-    const isUrl = !firstLoc.directoryId && (asset.videoUrl || asset.id.includes('sample'));
-
     return {
       ...asset,
       displayTitle,
@@ -1031,8 +943,8 @@ export class AppDatabase {
       relativePath: firstLoc.relativePath,
       lastModified: firstLoc.lastModified,
       availabilityStatus: logicalStatus,
-      sourceType: isUrl ? 'url' : 'directory',
-      videoUrl: asset.videoUrl || (isUrl ? `https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/${asset.id === 'vid-sample-bunny' ? 'BigBuckBunny' : asset.id === 'vid-sample-sintel' ? 'Sintel' : 'TearsOfSteel'}.mp4` : ''),
+      sourceType: 'directory',
+      videoUrl: '',
       locations: scoredLocations.map(w => w.loc)
     };
   }
@@ -1335,64 +1247,59 @@ export class AppDatabase {
   }
 
   async addVideo({ title, displayTitle, fileName, fileSize, videoUrl, duration, thumbnailBlob, sourceType, directoryId, relativePath, lastModified, contentHash, quickHash, hashStatus, identityStatus }) {
-    const sType = sourceType || (videoUrl ? 'url' : 'directory');
     const normalizedTitle = normalizeDisplayTitle(displayTitle !== undefined ? displayTitle : title);
     const normPath = normalizePath(relativePath);
 
     let existingAsset = null;
     let existingLoc = null;
 
-    if (sType === 'url') {
-      existingAsset = this.mediaAssets.find(a => a.videoUrl === videoUrl);
-    } else {
-      // 1. Check physical location match (directoryId + relativePath)
-      existingLoc = this.fileLocations.find(l => l.directoryId === directoryId && normalizePath(l.relativePath) === normPath);
-      if (existingLoc) {
-        existingAsset = this.mediaAssets.find(a => a.id === existingLoc.mediaAssetId);
-        if (existingAsset) {
-          let assetChanged = false;
-          if (contentHash && existingAsset.contentHash !== contentHash) {
-            existingAsset.contentHash = contentHash;
-            existingAsset.hashStatus = hashStatus || 'completed';
-            assetChanged = true;
-          }
-          if (quickHash && !existingAsset.quickHash) {
-            existingAsset.quickHash = quickHash;
-            assetChanged = true;
-          }
-          if (normalizedTitle !== undefined && normalizedTitle !== null && existingAsset.displayTitle !== normalizedTitle) {
-            existingAsset.displayTitle = normalizedTitle;
-            assetChanged = true;
-          }
-          if (assetChanged) {
-            existingAsset.updatedAt = new Date().toISOString();
-            this._saveTable('media_assets', this.mediaAssets);
-          }
-          if (existingLoc.availabilityStatus !== 'available' || (fileSize && existingLoc.fileSize !== fileSize)) {
-            const isSizeChanged = fileSize && existingLoc.fileSize !== fileSize;
-            existingLoc.availabilityStatus = 'available';
-            if (fileSize) existingLoc.fileSize = fileSize;
-            if (lastModified) existingLoc.lastModified = lastModified;
-            existingLoc.lastVerifiedAt = new Date().toISOString();
-            if (isSizeChanged) {
-              existingLoc.verificationStatus = 'provisional';
-            }
-            existingLoc.updatedAt = new Date().toISOString();
-            this._saveTable('file_locations', this.fileLocations);
-          }
-          return this._buildVirtualVideo(existingAsset);
+    // 1. Check physical location match (directoryId + relativePath)
+    existingLoc = this.fileLocations.find(l => l.directoryId === directoryId && normalizePath(l.relativePath) === normPath);
+    if (existingLoc) {
+      existingAsset = this.mediaAssets.find(a => a.id === existingLoc.mediaAssetId);
+      if (existingAsset) {
+        let assetChanged = false;
+        if (contentHash && existingAsset.contentHash !== contentHash) {
+          existingAsset.contentHash = contentHash;
+          existingAsset.hashStatus = hashStatus || 'completed';
+          assetChanged = true;
         }
+        if (quickHash && !existingAsset.quickHash) {
+          existingAsset.quickHash = quickHash;
+          assetChanged = true;
+        }
+        if (normalizedTitle !== undefined && normalizedTitle !== null && existingAsset.displayTitle !== normalizedTitle) {
+          existingAsset.displayTitle = normalizedTitle;
+          assetChanged = true;
+        }
+        if (assetChanged) {
+          existingAsset.updatedAt = new Date().toISOString();
+          this._saveTable('media_assets', this.mediaAssets);
+        }
+        if (existingLoc.availabilityStatus !== 'available' || (fileSize && existingLoc.fileSize !== fileSize)) {
+          const isSizeChanged = fileSize && existingLoc.fileSize !== fileSize;
+          existingLoc.availabilityStatus = 'available';
+          if (fileSize) existingLoc.fileSize = fileSize;
+          if (lastModified) existingLoc.lastModified = lastModified;
+          existingLoc.lastVerifiedAt = new Date().toISOString();
+          if (isSizeChanged) {
+            existingLoc.verificationStatus = 'provisional';
+          }
+          existingLoc.updatedAt = new Date().toISOString();
+          this._saveTable('file_locations', this.fileLocations);
+        }
+        return this._buildVirtualVideo(existingAsset);
       }
+    }
 
-      // 2. Check if another asset already exists with identical non-empty contentHash (exclude conflict assets)
-      if (contentHash) {
-        existingAsset = this.mediaAssets.find(a => a.contentHash === contentHash && a.identityStatus !== 'conflict');
-      }
+    // 2. Check if another asset already exists with identical non-empty contentHash (exclude conflict assets)
+    if (contentHash) {
+      existingAsset = this.mediaAssets.find(a => a.contentHash === contentHash && a.identityStatus !== 'conflict');
     }
 
     // 3. If matching media asset exists by contentHash, attach new location to it
     if (existingAsset) {
-      if (sType !== 'url' && !existingLoc) {
+      if (!existingLoc) {
         const newLoc = {
           id: 'loc-' + generateUUID(),
           mediaAssetId: existingAsset.id,
@@ -2373,6 +2280,9 @@ export class AppDatabase {
       if (Array.isArray(rawDb.media_assets)) {
         const hashGroups = new Map();
         rawDb.media_assets.forEach(v => {
+          if (v.videoUrl && v.videoUrl.trim() !== '') {
+            fatalErrors.push(`動画アセット ${v.id} はURL動画ソース (${v.videoUrl}) ですが、URL動画機能は廃止されたためサポートされていません。`);
+          }
           if (v.hashStatus === 'completed') {
             if (!v.contentHash || !/^[0-9a-f]{64}$/.test(v.contentHash)) {
               fatalErrors.push(`動画アセット ${v.id} の contentHash が不正です (completed 状態では 64 文字の小文字 16 進数が必要です)。`);

@@ -1,5 +1,5 @@
 import { AppDatabase } from '../db.js';
-import { generateFileSignature, formatTime, parseTime, validateVideoUrl, normalizePath, filterVideosByTag } from '../video-helper.js';
+import { generateFileSignature, formatTime, parseTime, normalizePath, filterVideosByTag } from '../video-helper.js';
 import { isSupportedVideoFile, isPathCoveredByFailedDirectory, scanDirectory, classifyScanResults, applyScanDifferentials, isIgnoredSystemEntry } from '../directory-scanner.js';
 import { RadarChart } from '../radar.js';
 import { db, setDbForTesting, handleFolderSelect, handleFolderRequestPermission, processSingleLocationVerification, bgHashState, updateBackgroundHashingProgress, processBackgroundHashingQueue, updateBackgroundHashingUI } from '../app.js';

@@ -1,5 +1,5 @@
 import { AppDatabase } from './db.js';
-import { formatTime, parseTime, generateFileSignature, captureVideoFrame, validateVideoUrl, getFileHandleFromRelativePath, filterVideosByTag } from './video-helper.js';
+import { formatTime, parseTime, generateFileSignature, captureVideoFrame, getFileHandleFromRelativePath, filterVideosByTag } from './video-helper.js';
 import { RadarChart } from './radar.js';
 import { scanDirectory, classifyScanResults, applyScanDifferentials, isIgnoredSystemEntry } from './directory-scanner.js';
 import { computeQuickHash, computeFileSHA256, globalHashQueue, logMetric } from './hash-helper.js';
@@ -130,7 +130,7 @@ const state = {
     tagId: '',
     overallGrade: '',
     status: '', // 'rated' | 'unrated'
-    sourceType: '', // 'directory' | 'local-file' | 'url' | ''
+    sourceType: '', // 'directory' | 'local-file' | ''
     availability: '', // 'available' | 'missing' | 'permission-required' | 'unsupported' | ''
     sort: 'updatedAt-desc'
   }
@@ -158,16 +158,6 @@ const els = {
   filterSort: document.getElementById('filter-sort'),
   btnBulkDelete: document.getElementById('btn-bulk-delete'),
   addLocalFileInput: document.getElementById('library-add-file'),
-  btnAddUrlModal: document.getElementById('btn-add-url-modal'),
-
-  // Add URL Modal
-  modalAddUrl: document.getElementById('modal-add-url'),
-  addUrlCloseX: document.getElementById('add-url-close-x'),
-  urlTitleInput: document.getElementById('url-title-input'),
-  urlPathInput: document.getElementById('url-path-input'),
-  urlDurationInput: document.getElementById('url-duration-input'),
-  btnAddUrlSubmit: document.getElementById('btn-add-url-submit'),
-  urlModalError: document.getElementById('url-modal-error'),
 
   // Editor Header
   editorBack: document.getElementById('editor-btn-back'),
@@ -317,15 +307,6 @@ function initEventListeners() {
   els.addLocalFileInput.addEventListener('change', handleAddLocalFile);
   els.reconnectFileInput.addEventListener('change', handleReconnectFile);
   els.playerFolderPermissionButton.addEventListener('click', handlePlayerFolderPermissionClick);
-  els.btnAddUrlModal.addEventListener('click', () => {
-    if (els.urlModalError) {
-      els.urlModalError.classList.add('hidden');
-      els.urlModalError.textContent = '';
-    }
-    openModal(els.modalAddUrl);
-  });
-  els.addUrlCloseX.addEventListener('click', () => closeModal(els.modalAddUrl));
-  els.btnAddUrlSubmit.addEventListener('click', handleAddUrlSubmit);
 
   // Library filters
   els.filterSearch.addEventListener('input', () => {
@@ -1364,11 +1345,6 @@ function handleBackToLibrary() {
 }
 
 function renderLocationsListInEditor(video) {
-  if (video.sourceType === 'url') {
-    els.infoLocationsContainer.style.display = 'none';
-    return;
-  }
-
   els.infoLocationsContainer.style.display = 'block';
   els.infoLocationsList.innerHTML = '';
 
@@ -1443,7 +1419,7 @@ function switchScreenToEditor(videoId) {
 
   // Set header details safely
   els.editorTitle.textContent = video.displayTitle || video.title;
-  els.infoFileName.textContent = video.fileName || (video.sourceType === 'url' ? 'URL動画' : 'フォルダ内動画');
+  els.infoFileName.textContent = video.fileName || 'フォルダ内動画';
   els.infoFileSize.textContent = video.fileSize ? (video.fileSize / 1024 / 1024).toFixed(1) + ' MB' : '-';
   els.infoDuration.textContent = formatTime(video.duration);
 
@@ -1696,9 +1672,6 @@ async function loadVideoMediaSource(video) {
       await db.updateVideo(video.id, { availabilityStatus: 'missing', directoryId: primaryLoc.directoryId, relativePath: primaryLoc.relativePath });
       renderLibrary();
     }
-  } else if (video.sourceType === 'url') {
-    els.video.src = video.videoUrl;
-    els.video.load();
   } else {
     // sourceType === 'local-file'
     const file = state.videoFilesMap.get(video.id);
@@ -1922,46 +1895,7 @@ function handleReconnectFile(e) {
   showToast('動画ファイルを再接続しました');
 }
 
-// Add Online Video URL (Strict Validation & error reporting)
-async function handleAddUrlSubmit() {
-  const title = els.urlTitleInput.value.trim();
-  const url = els.urlPathInput.value.trim();
-  const duration = parseInt(els.urlDurationInput.value, 10) || 0;
 
-  if (els.urlModalError) {
-    els.urlModalError.classList.add('hidden');
-    els.urlModalError.textContent = '';
-  }
-
-  try {
-    validateVideoUrl(url);
-
-    const added = await db.addVideo({
-      title: title || 'URL動画プロジェクト',
-      fileName: '',
-      fileSize: 0,
-      videoUrl: url,
-      duration: duration,
-      thumbnailBlob: null,
-      sourceType: 'url'
-    });
-
-    els.urlTitleInput.value = '';
-    els.urlPathInput.value = '';
-    els.urlDurationInput.value = '';
-
-    closeModal(els.modalAddUrl);
-    switchScreenToEditor(added.id);
-    showToast('URL動画を追加しました');
-  } catch (error) {
-    if (els.urlModalError) {
-      els.urlModalError.textContent = error.message;
-      els.urlModalError.classList.remove('hidden');
-    } else {
-      showToast(error.message, 'error');
-    }
-  }
-}
 
 // Navigate Adjacent Video
 function navigateAdjacentVideo(direction) {

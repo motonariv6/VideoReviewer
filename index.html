@@ -53,13 +53,6 @@
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" />
             </svg>
             ローカル動画を追加
-          </label>
-          <button id="btn-add-url-modal" class="btn btn-secondary">
-            <svg xmlns="http://www.w3.org/2000/svg" style="width:16px;height:16px" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" />
-            </svg>
-            URL動画を追加
-          </button>
         </div>
       </div>
 
@@ -101,7 +94,6 @@
             <option value="">すべて</option>
             <option value="directory">フォルダ</option>
             <option value="local-file">個別ファイル</option>
-            <option value="url">URL</option>
           </select>
         </div>
         <div class="input-group">
@@ -145,7 +137,7 @@
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M7 4v16M17 4v16M3 8h4m10 0h4M3 12h18M3 16h4m10 0h4M4 20h16a1 1 0 001-1V5a1 1 0 00-1-1H4a1 1 0 00-1 1v14a1 1 0 001 1z" />
         </svg>
         <h3>登録されている動画がありません</h3>
-        <p style="font-size:0.875rem;margin-top:8px">上のボタンからローカル動画ファイル、またはサンプルURL動画を追加してください。</p>
+        <p style="font-size:0.875rem;margin-top:8px">上のボタンからローカル動画を追加してください。</p>
       </div>
     </main>
 
@@ -574,39 +566,7 @@
     </div>
   </div>
 
-  <!-- ==============================================
-       ADD VIDEO BY URL MODAL OVERLAY
-       ============================================== -->
-  <div id="modal-add-url" class="modal-overlay">
-    <div class="modal-container glass-panel" style="max-width: 450px">
-      <div class="modal-header">
-        <h3>URL動画を追加</h3>
-        <button id="add-url-close-x" class="btn btn-icon" style="width:32px;height:32px">
-          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
-          </svg>
-        </button>
-      </div>
-      <div class="modal-body" style="gap: 16px">
-        <div class="input-group">
-          <label class="input-label" for="url-title-input">動画タイトル</label>
-          <input type="text" id="url-title-input" class="form-input" placeholder="動画タイトル...">
-        </div>
-        <div class="input-group">
-          <label class="input-label" for="url-path-input">動画URL (MP4など直接再生可能なリンク)</label>
-          <input type="url" id="url-path-input" class="form-input" placeholder="https://example.com/movie.mp4">
-        </div>
-        <div class="input-group">
-          <label class="input-label" for="url-duration-input">動画長（秒、省略可）</label>
-          <input type="number" id="url-duration-input" class="form-input" placeholder="例: 120" min="0">
-        </div>
-        <div id="url-modal-error" class="hidden" style="color:var(--color-error);font-size:0.8125rem;margin-top:-8px;padding: 0 4px;line-height:1.4"></div>
-      </div>
-      <div class="modal-footer">
-        <button id="btn-add-url-submit" class="btn btn-primary" style="width: 100%">動画を追加する</button>
-      </div>
-    </div>
-  </div>
+
 
   <!-- Toast Notification Container -->
   <div id="toast-container" class="toast-container"></div>

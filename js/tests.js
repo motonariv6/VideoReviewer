@@ -1,5 +1,5 @@
 import { AppDatabase } from './db.js';
-import { generateFileSignature, formatTime, parseTime, validateVideoUrl, normalizePath, filterVideosByTag } from './video-helper.js';
+import { generateFileSignature, formatTime, parseTime, normalizePath, filterVideosByTag } from './video-helper.js';
 import { isSupportedVideoFile, isPathCoveredByFailedDirectory, scanDirectory, classifyScanResults, applyScanDifferentials, isIgnoredSystemEntry } from './directory-scanner.js';
 import { RadarChart } from './radar.js';
 import { db, setDbForTesting, handleFolderSelect, handleFolderRequestPermission, processSingleLocationVerification, bgHashState, updateBackgroundHashingProgress, processBackgroundHashingQueue, updateBackgroundHashingUI } from './app.js';
@@ -426,8 +426,15 @@ export async function runTests(groupFilter = null) {
     const memoryStorage = new MemoryStorage();
     const testDb = new AppDatabase(memoryStorage, 'test_v7_title_');
     await testDb.initAsync();
-    const video = testDb.getVideos()[0];
-    assert(video !== undefined, 'Must have at least one sample video');
+    const video = await testDb.addVideo({
+      title: 'test_video.mp4',
+      fileName: 'test_video.mp4',
+      fileSize: 1024,
+      sourceType: 'directory',
+      directoryId: 'dir-1',
+      relativePath: 'test_video.mp4'
+    });
+    assert(video !== undefined, 'Must have at least one video');
     
     // 2. Set custom display title
     await testDb.updateVideo(video.id, { displayTitle: 'カスタムタイトル' });
@@ -1901,9 +1908,7 @@ export async function runTests(groupFilter = null) {
   await runTest('10-23. Revert calculating state to pending on startup for directory and local-file videos', async () => {
     const memory = new MemoryStorage();
     const mockAssets = [
-      { id: 'vid-dir-calc', contentHash: '', hashStatus: 'calculating', videoUrl: '' },
-      { id: 'vid-url-calc', contentHash: '', hashStatus: 'calculating', videoUrl: 'http://example.com/v.mp4' },
-      { id: 'vid-sample-calc', contentHash: '', hashStatus: 'calculating', videoUrl: '' }
+      { id: 'vid-dir-calc', contentHash: '', hashStatus: 'calculating', videoUrl: '' }
     ];
     memory.setItem('test_vreview_startup_calc_media_assets', JSON.stringify(mockAssets));
 
@@ -1911,12 +1916,8 @@ export async function runTests(groupFilter = null) {
     await testDb.initAsync();
 
     const vDir = testDb.getVideo('vid-dir-calc');
-    const vUrl = testDb.getVideo('vid-url-calc');
-    const vSample = testDb.getVideo('vid-sample-calc');
 
     assert(vDir.hashStatus === 'pending', 'Directory video calculating state reverted to pending');
-    assert(vUrl.hashStatus === 'calculating', 'URL video calculating state left untouched');
-    assert(vSample.hashStatus === 'calculating', 'Sample video calculating state left untouched');
   });
 
   await runTest('10-24. Same grade but different comments triggers conflict', async () => {
@@ -2680,6 +2681,72 @@ export async function runTests(groupFilter = null) {
 
   console.groupEnd(); // Group 13
   console.groupEnd(); // Group 12
+
+  console.group('Group 15: URL Video Feature Deprecation Tests');
+
+  await runTest('15-1. URL video feature deprecation and safety constraints', async () => {
+    // 1. URL video add UI elements do not exist
+    const btnAddUrlModal = document.getElementById('btn-add-url-modal');
+    const modalAddUrl = document.getElementById('modal-add-url');
+    assert(btnAddUrlModal === null, 'btn-add-url-modal should be removed');
+    assert(modalAddUrl === null, 'modal-add-url should be removed');
+
+    // 2. URL video register methods or handlers do not exist
+    assert(typeof window.handleAddUrlSubmit === 'undefined', 'handleAddUrlSubmit should not be globally exposed');
+
+    // 3. Backup data with sourceType: 'url' (or non-empty videoUrl) is rejected
+    const memory = new MemoryStorage();
+    const testDb = new AppDatabase(memory, 'test_vreview_url_dep_');
+    await testDb.initAsync();
+
+    const manifest = {
+      schemaVersion: 3,
+      createdAt: new Date().toISOString(),
+      counts: { media_assets: 1, file_locations: 0, reviews: 0, images: 0 }
+    };
+    const invalidBackup = {
+      media_assets: [{
+        id: 'vid-invalid-url',
+        contentHash: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+        hashAlgorithm: 'SHA-256',
+        quickHash: '',
+        hashStatus: 'completed',
+        fileSize: 100,
+        duration: 10,
+        displayTitle: 'Invalid URL Video',
+        genreId: 'genre-default',
+        thumbnailId: '',
+        videoUrl: 'https://example.com/movie.mp4',
+        identityStatus: 'normal',
+        identityConflictGroupId: null,
+        isArchived: false,
+        archivedAt: null,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      }],
+      file_locations: [],
+      video_reviews: [],
+      rating_criteria: [],
+      tags: [],
+      video_tags: [],
+      timeline_notes: [],
+      directory_sources: [],
+      genres: [],
+      evaluation_templates: []
+    };
+
+    const result = testDb.validateBackupData(invalidBackup, manifest, []);
+    assert(result.isValid === false, 'Backup with non-empty videoUrl must be rejected');
+    assert(result.fatalErrors.length > 0, 'Must have at least one fatal error');
+    assert(result.fatalErrors[0].includes('URL動画ソース'), 'Error message must mention URL video source rejection');
+
+    // 4. Local video playback is still fully functional
+    const testUrl = URL.createObjectURL(new Blob(['test'], { type: 'video/mp4' }));
+    assert(typeof testUrl === 'string' && testUrl.startsWith('blob:'), 'Object URL generation works normally');
+    URL.revokeObjectURL(testUrl);
+  });
+
+  console.groupEnd(); // Group 15
   } // ends if (runAll) for Group 12-13
 
   console.groupEnd(); // main suite
