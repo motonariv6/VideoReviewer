@@ -305,6 +305,24 @@ Candidates searched:
 
     logPhase('chrome-launch', `Launching Chrome Headless via: ${chromePath}`);
 
+    const args = process.argv.slice(2);
+    let testGroup = null;
+    for (let i = 0; i < args.length; i++) {
+      if (args[i] === '--group') {
+        testGroup = args[i + 1] || null;
+        i++;
+      } else if (args[i].startsWith('--group=')) {
+        testGroup = args[i].split('=')[1] || null;
+      } else if (args[i] === '--all') {
+        testGroup = 'all';
+      }
+    }
+
+    let targetUrl = `http://127.0.0.1:${serverPort}/test.html?automated=true`;
+    if (testGroup) {
+      targetUrl += `&group=${testGroup}`;
+    }
+
     const chromeArgs = [
       '--headless=new',
       '--no-first-run',
@@ -320,7 +338,7 @@ Candidates searched:
       '--remote-debugging-port=0',
       '--no-sandbox',
       `--user-data-dir=${tempProfileDir}`,
-      `http://127.0.0.1:${serverPort}/test.html?automated=true`
+      targetUrl
     ];
 
     try {

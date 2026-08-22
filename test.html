@@ -191,7 +191,9 @@
         document.getElementById('summary-passed').textContent = '0';
         document.getElementById('summary-failed').textContent = '0';
 
-        const results = await runTests();
+        const urlParams = new URLSearchParams(window.location.search);
+        const group = urlParams.get('group') || null;
+        const results = await runTests(group);
         
         if (isAutomated) {
           fetch('/api/report-results', {
