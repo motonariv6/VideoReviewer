@@ -13,6 +13,19 @@ import {
   updateBackgroundHashingUI,
   clearCloseTimeout
 } from './hashing/hash-progress-ui.js';
+import {
+  syncActiveDirectoryPermissions as syncActiveDirectoryPermissionsController,
+  handleFolderSelect as handleFolderSelectController,
+  handleFolderRequestPermission as handleFolderRequestPermissionController,
+  handleFolderRescan as handleFolderRescanController,
+  startFolderScanning as startFolderScanningController,
+  abortFolderScanning,
+  handleFolderDisconnect as handleFolderDisconnectController
+} from './folder/folder-management-controller.js';
+import {
+  renderFolderSettingsUI,
+  updateScanProgressUI
+} from './folder/folder-settings-ui.js';
 
 export {
   bgHashState,
@@ -110,7 +123,7 @@ const state = {
   capturedNoteThumb: null,    // Blob of screenshot frame
   scanAbort: false,           // Scan abort flag
   selectedSettingsGenreId: null, // Tracks selected genre in settings panel
-  
+
   // Filter & Sort state for library
   filters: {
     search: '',
@@ -128,11 +141,11 @@ const els = {
   // Screens
   viewLibrary: document.getElementById('view-library'),
   viewEditor: document.getElementById('view-editor'),
-  
+
   // Header controls
   btnBack: document.getElementById('header-btn-library'),
   btnSettings: document.getElementById('header-btn-settings'),
-  
+
   // Library components
   videoGrid: document.getElementById('video-grid'),
   libraryEmpty: document.getElementById('library-empty'),
@@ -146,7 +159,7 @@ const els = {
   btnBulkDelete: document.getElementById('btn-bulk-delete'),
   addLocalFileInput: document.getElementById('library-add-file'),
   btnAddUrlModal: document.getElementById('btn-add-url-modal'),
-  
+
   // Add URL Modal
   modalAddUrl: document.getElementById('modal-add-url'),
   addUrlCloseX: document.getElementById('add-url-close-x'),
@@ -155,13 +168,13 @@ const els = {
   urlDurationInput: document.getElementById('url-duration-input'),
   btnAddUrlSubmit: document.getElementById('btn-add-url-submit'),
   urlModalError: document.getElementById('url-modal-error'),
-  
+
   // Editor Header
   editorBack: document.getElementById('editor-btn-back'),
   editorTitle: document.getElementById('editor-video-title'),
   btnPrevVideo: document.getElementById('player-btn-prev'),
   btnNextVideo: document.getElementById('player-btn-next'),
-  
+
   // Video Player elements
   video: document.getElementById('video-element'),
   reconnectCard: document.getElementById('local-file-required-warning'),
@@ -169,7 +182,7 @@ const els = {
   warningFileName: document.getElementById('warning-file-name'),
   playerFolderPermissionButton: document.getElementById('player-folder-permission-button'),
   playerFileReconnectLabel: document.getElementById('player-file-reconnect-label'),
-  
+
   // Custom Controls
   progressBar: document.getElementById('player-progress-bar'),
   progressLoad: document.getElementById('player-progress-load'),
@@ -185,14 +198,14 @@ const els = {
   timeCurrent: document.getElementById('player-time-current'),
   timeTotal: document.getElementById('player-time-total'),
   btnFullscreen: document.getElementById('player-btn-fullscreen'),
-  
+
   // File details
   infoFileName: document.getElementById('info-file-name'),
   infoFileSize: document.getElementById('info-file-size'),
   infoDuration: document.getElementById('info-duration'),
   infoLocationsContainer: document.getElementById('info-locations-container'),
   infoLocationsList: document.getElementById('info-locations-list'),
-  
+
   // Review inputs
   gradeButtons: document.querySelectorAll('.grade-btn[data-grade]'),
   btnClearGrade: document.getElementById('btn-grade-clear'),
@@ -201,18 +214,18 @@ const els = {
   tagsChipsList: document.getElementById('tags-chips-list'),
   tagAutocomplete: document.getElementById('tag-autocomplete-dropdown'),
   commentEditor: document.getElementById('comment-editor'),
-  
+
   // Timeline editor
   capturedTimestampLabel: document.getElementById('captured-timestamp-label'),
   btnTimelineCapture: document.getElementById('btn-timeline-capture'),
   timelineCommentField: document.getElementById('timeline-comment-field'),
   btnTimelineAddNote: document.getElementById('btn-timeline-add-note'),
   timelineNotesList: document.getElementById('timeline-notes-list'),
-  
+
   // Save Review Bar
   btnSaveReview: document.getElementById('editor-btn-save'),
   autosaveIndicator: document.getElementById('autosave-indicator'),
-  
+
   // Settings Modal (Evaluation)
   modalSettings: document.getElementById('modal-settings'),
   settingsCloseX: document.getElementById('settings-close-x'),
@@ -220,7 +233,7 @@ const els = {
   settingsNewNameInput: document.getElementById('settings-new-name-input'),
   settingsBtnAdd: document.getElementById('settings-btn-add'),
   settingsBtnSave: document.getElementById('settings-btn-save'),
-  
+
   // Settings Modal (Video Folder additions)
   folderApiFallbackMsg: document.getElementById('folder-api-fallback-msg'),
   folderSettingsPanel: document.getElementById('folder-settings-panel'),
@@ -238,7 +251,7 @@ const els = {
   btnFolderRescan: document.getElementById('btn-folder-rescan'),
   btnFolderRequestPerm: document.getElementById('btn-folder-request-perm'),
   btnFolderDisconnect: document.getElementById('btn-folder-disconnect'),
-  
+
   // Toast notifications
   toastContainer: document.getElementById('toast-container'),
 
@@ -281,13 +294,13 @@ const els = {
 if (typeof window !== 'undefined' && !window.__TEST_ENV__) {
   document.addEventListener('DOMContentLoaded', async () => {
     radar = new RadarChart(document.getElementById('radar-chart-container'));
-    
+
     // Connect to IndexedDB and run legacy image migration
     await db.initAsync();
-    
+
     // Query permission for active directory sources on boot
     await syncActiveDirectoryPermissions();
-    
+
     initEventListeners();
     initAutosaveTimer();
     renderLibrary();
@@ -299,7 +312,7 @@ function initEventListeners() {
   // Navigation & Screen switching
   els.btnBack.addEventListener('click', () => handleBackToLibrary());
   els.editorBack.addEventListener('click', () => handleBackToLibrary());
-  
+
   // Add Media
   els.addLocalFileInput.addEventListener('change', handleAddLocalFile);
   els.reconnectFileInput.addEventListener('change', handleReconnectFile);
@@ -313,7 +326,7 @@ function initEventListeners() {
   });
   els.addUrlCloseX.addEventListener('click', () => closeModal(els.modalAddUrl));
   els.btnAddUrlSubmit.addEventListener('click', handleAddUrlSubmit);
-  
+
   // Library filters
   els.filterSearch.addEventListener('input', () => {
     state.filters.search = els.filterSearch.value;
@@ -344,7 +357,7 @@ function initEventListeners() {
     renderLibrary();
   });
   els.btnBulkDelete.addEventListener('click', handleBulkDelete);
-  
+
   // Settings triggers
   // Settings triggers
   els.btnSettings.addEventListener('click', openSettingsModal);
@@ -371,20 +384,20 @@ function initEventListeners() {
   els.btnSaveDisplayTitle.addEventListener('click', async () => {
     const video = db.getVideo(state.currentVideoId);
     if (!video) return;
-    
+
     // Sanitize input: strip HTML tags and trim
     let titleVal = els.displayTitleInput.value.replace(/<\/?[^>]+(>|$)/g, "").trim();
-    
+
     // Save to DB
     await db.updateVideo(video.id, { displayTitle: titleVal || null });
-    
+
     // Update UI headers
     els.editorTitle.textContent = titleVal || video.title;
     els.titleDisplayContainer.classList.remove('hidden');
     els.titleEditContainer.classList.add('hidden');
-    
+
     showToast('表示タイトルを更新しました。');
-    
+
     // Re-render library in background so it's correct when we go back
     renderLibrary();
   });
@@ -409,7 +422,7 @@ function initEventListeners() {
 
     // Reload ratings workspace
     const review = db.getReviewForVideo(videoId);
-    
+
     // Load individual ratings stars map
     const scores = review ? db.getCriterionRatingsForReview(review.id) : [];
     state.currentRatings = {};
@@ -515,7 +528,7 @@ function initEventListeners() {
       const temp = g1.displayOrder;
       g1.displayOrder = g2.displayOrder;
       g2.displayOrder = temp;
-      
+
       await db.updateGenre(g1.id, { displayOrder: g1.displayOrder });
       await db.updateGenre(g2.id, { displayOrder: g2.displayOrder });
 
@@ -535,7 +548,7 @@ function initEventListeners() {
       const temp = g1.displayOrder;
       g1.displayOrder = g2.displayOrder;
       g2.displayOrder = temp;
-      
+
       await db.updateGenre(g1.id, { displayOrder: g1.displayOrder });
       await db.updateGenre(g2.id, { displayOrder: g2.displayOrder });
 
@@ -575,21 +588,21 @@ function initEventListeners() {
   });
   els.backupRestoreFile.addEventListener('change', handleBackupRestore);
   els.btnCleanOrphanData.addEventListener('click', handleCleanOrphanData);
-  
+
   // Directory Settings Buttons
   els.btnFolderSelect.addEventListener('click', () => handleFolderSelect());
   els.btnFolderRescan.addEventListener('click', handleFolderRescan);
   els.btnFolderRequestPerm.addEventListener('click', handleFolderRequestPermission);
   els.btnFolderDisconnect.addEventListener('click', handleFolderDisconnect);
   els.btnFolderScanAbort.addEventListener('click', () => {
-    state.scanAbort = true;
+    abortFolderScanning();
     showToast('スキャンを中止しています...', 'error');
   });
 
   // Next / Prev Video buttons
   els.btnPrevVideo.addEventListener('click', () => navigateAdjacentVideo(-1));
   els.btnNextVideo.addEventListener('click', () => navigateAdjacentVideo(1));
-  
+
   // Video element controls
   els.video.addEventListener('click', togglePlay);
   els.btnPlay.addEventListener('click', togglePlay);
@@ -602,13 +615,13 @@ function initEventListeners() {
   els.btnFullscreen.addEventListener('click', toggleFullscreen);
   els.video.addEventListener('error', handleVideoError);
   els.video.addEventListener('playing', handleVideoPlaying);
-  
+
   // Progress bar seeking
   els.progressBar.addEventListener('click', handleProgressSeek);
-  
+
   // Keyboard Shortcuts Handler
   window.addEventListener('keydown', handleKeyboardShortcuts);
-  
+
   // Grade Ratings A-E Selector
   els.gradeButtons.forEach(btn => {
     btn.addEventListener('click', () => {
@@ -625,7 +638,7 @@ function initEventListeners() {
     markDirty();
     updateRadar();
   });
-  
+
   // Tags Input composition tracking
   els.tagInputField.addEventListener('compositionstart', () => {
     isTagInputComposing = true;
@@ -640,10 +653,10 @@ function initEventListeners() {
       els.tagAutocomplete.classList.add('hidden');
     }
   });
-  
+
   // Comments and ratings changes mark dirty
   els.commentEditor.addEventListener('input', markDirty);
-  
+
   // Timeline capturing & adding composition tracking
   els.timelineCommentField.addEventListener('compositionstart', () => {
     isTimelineCommentComposing = true;
@@ -695,7 +708,7 @@ function initEventListeners() {
       e.preventDefault();
     }
   });
-  
+
   // Manual Save button
   els.btnSaveReview.addEventListener('click', () => saveReviewForm());
 }
@@ -713,17 +726,17 @@ function closeModal(modal) {
 function showToast(message, type = 'success') {
   const toast = document.createElement('div');
   toast.className = `toast toast-${type}`;
-  
+
   const span = document.createElement('span');
   span.textContent = message; // Safe text insertion
   toast.appendChild(span);
-  
+
   if (els.toastContainer) {
     els.toastContainer.appendChild(toast);
   } else {
     console.log(`[Toast] [${type}] ${message}`);
   }
-  
+
   setTimeout(() => {
     toast.remove();
   }, 3000);
@@ -768,7 +781,7 @@ async function loadImageToElement(imgElement, imageId, fallbackUrl) {
       console.warn(`Failed to load IndexedDB image ${imageId}:`, e.message);
     }
   }
-  
+
   if (fallbackUrl && fallbackUrl.startsWith('data:')) {
     imgElement.src = fallbackUrl;
   } else {
@@ -800,38 +813,10 @@ function initAutosaveTimer() {
 
 // Bootup Directory Permission Sync
 async function syncActiveDirectoryPermissions() {
-  const sources = db.getDirectorySources();
-  for (const source of sources) {
-    try {
-      const handle = await db.getDirectoryHandle(source.handleKey);
-      if (handle) {
-        const status = await handle.queryPermission({ mode: 'read' });
-        await db.updateDirectorySource(source.id, { permissionStatus: status });
-        
-        // Sync videos availabilityStatus based on permission
-        db.fileLocations.forEach(loc => {
-          if (loc.directoryId === source.id) {
-            loc.availabilityStatus = (status === 'granted') ? 'available' : 'permission-required';
-          }
-        });
-        db._saveTable('file_locations', db.fileLocations);
-
-        if (status === 'granted') {
-          processBackgroundHashingQueue();
-        }
-      } else {
-        await db.updateDirectorySource(source.id, { permissionStatus: 'prompt' });
-        db.fileLocations.forEach(loc => {
-          if (loc.directoryId === source.id) {
-            loc.availabilityStatus = 'permission-required';
-          }
-        });
-        db._saveTable('file_locations', db.fileLocations);
-      }
-    } catch (err) {
-      console.error(`Failed to sync permission for directory source ${source.name}:`, err);
-    }
-  }
+  return syncActiveDirectoryPermissionsController({
+    db,
+    processBackgroundHashingQueue
+  });
 }
 
 export async function processBackgroundHashingQueue() {
@@ -879,7 +864,7 @@ function getFilteredVideosList() {
       const review = db.getReviewForVideo(v.id);
       const ratings = review ? db.getCriterionRatingsForReview(review.id) : [];
       const hasRating = review && (review.overallGrade || review.comment || ratings.length > 0);
-      
+
       return state.filters.status === 'rated' ? hasRating : !hasRating;
     });
   }
@@ -894,7 +879,7 @@ function getFilteredVideosList() {
     if (state.filters.availability === 'no-directory') {
       videos = videos.filter(v => v.sourceType === 'directory' && !db.getDirectorySource(v.directoryId));
     } else if (state.filters.availability === 'isolated') {
-      videos = videos.filter(v => 
+      videos = videos.filter(v =>
         v.availabilityStatus === 'missing' ||
         v.availabilityStatus === 'scan-error' ||
         v.availabilityStatus === 'unsupported' ||
@@ -921,7 +906,7 @@ async function handleBulkDelete() {
 
   let successCount = 0;
   let failCount = 0;
-  
+
   for (const v of filteredVideos) {
     try {
       if (state.currentVideoId === v.id) {
@@ -945,7 +930,7 @@ async function handleBulkDelete() {
   if (failCount > 0) {
     showToast(`${failCount}本の動画の削除に失敗しました。`, 'error');
   }
-  
+
   const currentVideoStillExists = db.getVideo(state.currentVideoId);
   if (state.currentVideoId && !currentVideoStillExists) {
     handleBackToLibrary();
@@ -961,12 +946,12 @@ function renderLibrary() {
   // Populate Tags list in filter select (XSS Safe)
   const oldVal = els.filterTag.value;
   els.filterTag.innerHTML = '';
-  
+
   const defaultOpt = document.createElement('option');
   defaultOpt.value = '';
   defaultOpt.textContent = 'すべて';
   els.filterTag.appendChild(defaultOpt);
-  
+
   db.getTags().forEach(tag => {
     const opt = document.createElement('option');
     opt.value = tag.id;
@@ -981,7 +966,7 @@ function renderLibrary() {
   videos.sort((a, b) => {
     const rA = db.getReviewForVideo(a.id);
     const rB = db.getReviewForVideo(b.id);
-    
+
     const getUpdateSecs = (video, review) => {
       const dates = [video.updatedAt];
       if (review) dates.push(review.updatedAt);
@@ -1029,13 +1014,13 @@ function renderLibrary() {
     els.libraryEmpty.classList.remove('hidden');
   } else {
     els.libraryEmpty.classList.add('hidden');
-    
+
     videos.forEach(v => {
       const review = db.getReviewForVideo(v.id);
       const starScores = review ? db.getCriterionRatingsForReview(review.id) : [];
       const tags = db.getVideoTags(v.id);
       const notes = db.getTimelineNotes(v.id);
-      
+
       let avgText = '未評価';
       let avgScore = 0;
       if (starScores.length > 0) {
@@ -1067,7 +1052,7 @@ function renderLibrary() {
       } else if (v.sourceType === 'directory' && !hasDirectorySource) {
         card.classList.add('status-no-directory');
       }
-      
+
       card.addEventListener('click', () => switchScreenToEditor(v.id));
 
       // Thumbnail wrapper
@@ -1263,7 +1248,7 @@ function renderLibrary() {
       // Rating Row
       const ratingRow = document.createElement('div');
       ratingRow.className = 'video-card-rating-row';
-      
+
       const avgSpan = document.createElement('span');
       avgSpan.style.color = 'var(--color-text-muted)';
       avgSpan.textContent = `平均: ${avgText}`;
@@ -1271,7 +1256,7 @@ function renderLibrary() {
 
       const starsDiv = document.createElement('div');
       starsDiv.className = 'video-card-avg-stars';
-      
+
       const roundedStars = Math.round(avgScore);
       for (let i = 1; i <= 5; i++) {
         const starSvg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
@@ -1360,20 +1345,20 @@ function handleBackToLibrary() {
       return;
     }
   }
-  
+
   els.video.pause();
   els.video.removeAttribute('src');
   els.video.load();
   revokeActiveBlobUrl(); // Release object URL memory
-  
+
   state.currentVideoId = null;
   state.activeVideoFile = null;
-  
+
   state.currentView = 'library';
   els.viewLibrary.classList.remove('hidden');
   els.viewEditor.classList.add('hidden');
   els.btnBack.classList.add('hidden');
-  
+
   clearDirty();
   renderLibrary();
 }
@@ -1383,10 +1368,10 @@ function renderLocationsListInEditor(video) {
     els.infoLocationsContainer.style.display = 'none';
     return;
   }
-  
+
   els.infoLocationsContainer.style.display = 'block';
   els.infoLocationsList.innerHTML = '';
-  
+
   const locations = video.locations || [];
   locations.forEach(loc => {
     const row = document.createElement('div');
@@ -1427,7 +1412,7 @@ function renderLocationsListInEditor(video) {
         try {
           await db.deleteFileLocation(loc.id);
           showToast('ロケーション登録を削除しました。');
-          
+
           const updatedVideo = db.getVideo(video.id);
           if (!updatedVideo || !updatedVideo.locations || updatedVideo.locations.length === 0) {
             handleBackToLibrary();
@@ -1482,7 +1467,7 @@ function switchScreenToEditor(videoId) {
 
   // Load ratings content
   const review = db.getReviewForVideo(videoId);
-  
+
   // Load overall grade button state
   els.gradeButtons.forEach(btn => btn.classList.remove('active'));
   state.currentOverallGrade = review ? review.overallGrade : null;
@@ -1500,7 +1485,7 @@ function switchScreenToEditor(videoId) {
 
   // Render individual star lists
   renderStarCriteriaPanel();
-  
+
   // Load comment
   els.commentEditor.value = review ? review.comment : '';
 
@@ -1512,7 +1497,7 @@ function switchScreenToEditor(videoId) {
 
   // Render locations list
   renderLocationsListInEditor(video);
-  
+
   // Initialize dynamic captured timestamp label
   state.capturedNoteTime = 0;
   state.capturedNoteThumb = null;
@@ -1532,7 +1517,7 @@ function switchScreenToEditor(videoId) {
 
   // Load media source in player
   loadVideoMediaSource(video);
-  
+
   clearDirty();
 }
 
@@ -1546,7 +1531,7 @@ function showFolderErrorOnPlayer(message, mode = 'none') {
 
   els.warningFileName.textContent = message;
   els.reconnectCard.classList.remove('hidden');
-  
+
   // Toggle buttons by mode without destroying innerHTML
   if (mode === 'permission') {
     els.playerFolderPermissionButton.classList.remove('hidden');
@@ -1565,7 +1550,7 @@ async function handlePlayerFolderPermissionClick() {
   if (!state.currentVideoId) return;
   const video = db.getVideo(state.currentVideoId);
   if (!video || video.sourceType !== 'directory') return;
-  
+
   const source = db.getDirectorySource(video.directoryId);
   if (!source) return;
 
@@ -1586,14 +1571,14 @@ async function handlePlayerFolderPermissionClick() {
     openSettingsModal();
     return;
   }
-  
+
   try {
     const status = await handle.requestPermission({ mode: 'read' });
     await db.updateDirectorySource(source.id, { permissionStatus: status });
-    
+
     // Persist video availabilityStatus changes using DB layer
     await db.updateDirectoryVideosAvailability(source.id, status === 'granted' ? 'available' : 'permission-required');
-    
+
     if (status === 'granted') {
       showToast('アクセスを許可しました');
       loadVideoMediaSource(video);
@@ -1612,7 +1597,7 @@ async function loadVideoMediaSource(video) {
   els.video.removeAttribute('src');
   els.video.load();
   els.reconnectCard.classList.add('hidden');
-  
+
   // Release old video file reference from RAM
   revokeActiveBlobUrl();
 
@@ -1683,7 +1668,7 @@ async function loadVideoMediaSource(video) {
       state.activeBlobUrl = objectUrl;
       els.video.src = objectUrl;
       els.video.load();
-      
+
       // Auto capture thumbnail if missing
       if (!video.thumbnailId && !video.thumbnailUrl) {
         els.video.addEventListener('loadeddata', async function grabFirstFrame() {
@@ -1789,16 +1774,16 @@ function handleAddLocalFile(e) {
   tempVideo.preload = 'metadata';
   const objectUrl = URL.createObjectURL(file);
   tempVideo.src = objectUrl;
-  
+
   const cleanup = () => {
     URL.revokeObjectURL(objectUrl);
     tempVideo.onloadedmetadata = null;
     tempVideo.onerror = null;
   };
-  
+
   tempVideo.onloadedmetadata = async () => {
     const duration = tempVideo.duration || 0;
-    
+
     // Snatch initial frame
     let frameBlob = null;
     try {
@@ -1806,9 +1791,9 @@ function handleAddLocalFile(e) {
     } catch (err) {
       console.warn('Failed to capture initial frame from tempVideo:', err);
     }
-    
+
     cleanup(); // Revoke Object URL immediately
-    
+
     try {
       const qh = await computeQuickHash(file);
       const added = await db.addVideo({
@@ -1848,10 +1833,10 @@ function handleAddLocalFile(e) {
       showToast(`動画を追加できませんでした: ${err.message}`, 'error');
     }
   };
-  
+
   tempVideo.onerror = async () => {
     cleanup();
-    
+
     try {
       const qh = await computeQuickHash(file);
       const added = await db.addVideo({
@@ -1964,7 +1949,7 @@ async function handleAddUrlSubmit() {
     els.urlTitleInput.value = '';
     els.urlPathInput.value = '';
     els.urlDurationInput.value = '';
-    
+
     closeModal(els.modalAddUrl);
     switchScreenToEditor(added.id);
     showToast('URL動画を追加しました');
@@ -2025,7 +2010,7 @@ function navigateAdjacentVideo(direction) {
 function renderStarCriteriaPanel() {
   const activeCriteria = db.getCriteriaForVideoReview(state.currentVideoId);
   els.criteriaPanel.innerHTML = '';
-  
+
   if (activeCriteria.length === 0) {
     const p = document.createElement('p');
     p.style.fontSize = '0.8125rem';
@@ -2067,7 +2052,7 @@ function renderStarCriteriaPanel() {
       starSvg.setAttribute('fill', 'currentColor');
       starSvg.setAttribute('viewBox', '0 0 20 20');
       starSvg.innerHTML = `<path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z" />`;
-      
+
       starSvg.addEventListener('click', () => {
         const starVal = s;
         if (state.currentRatings[crit.id] === starVal) {
@@ -2120,7 +2105,7 @@ function renderVideoTagsList() {
   if (!state.currentVideoId) return;
   const tags = db.getVideoTags(state.currentVideoId);
   els.tagsChipsList.innerHTML = '';
-  
+
   if (tags.length === 0) {
     const span = document.createElement('span');
     span.style.fontSize = '0.75rem';
@@ -2131,11 +2116,11 @@ function renderVideoTagsList() {
     tags.forEach(t => {
       const chip = document.createElement('span');
       chip.className = 'tag-chip';
-      
+
       const label = document.createElement('span');
       label.textContent = t.name;
       chip.appendChild(label);
-      
+
       const removeBtn = document.createElement('button');
       removeBtn.className = 'tag-chip-remove';
       removeBtn.title = 'タグを削除';
@@ -2149,7 +2134,7 @@ function renderVideoTagsList() {
         }
       });
       chip.appendChild(removeBtn);
-      
+
       els.tagsChipsList.appendChild(chip);
     });
   }
@@ -2227,9 +2212,9 @@ async function handleTagInputKeydown(e) {
 // Render Timeline notes (XSS Safe DOM)
 function renderTimelineNotesList() {
   if (!state.currentVideoId) return;
-  
+
   clearImageBlobUrls();
-  
+
   const notes = db.getTimelineNotes(state.currentVideoId);
   els.timelineNotesList.innerHTML = '';
 
@@ -2247,11 +2232,11 @@ function renderTimelineNotesList() {
   notes.forEach(note => {
     const item = document.createElement('div');
     item.className = 'timeline-note-item';
-    
+
     // Thumbnail container
     const thumbDiv = document.createElement('div');
     thumbDiv.className = 'timeline-note-thumb';
-    
+
     const img = document.createElement('img');
     img.alt = 'Scene capture';
     loadImageToElement(img, note.thumbnailId, note.thumbnailUrl);
@@ -2286,7 +2271,7 @@ function renderTimelineNotesList() {
 
     const actionsDiv = document.createElement('div');
     actionsDiv.className = 'timeline-note-actions';
-    
+
     const delBtn = document.createElement('button');
     delBtn.className = 'timeline-note-action-btn delete';
     delBtn.title = 'メモを削除';
@@ -2346,7 +2331,7 @@ async function addTimelineNote() {
   if (!state.currentVideoId) return;
 
   const label = formatTime(state.capturedNoteTime);
-  
+
   try {
     await db.addTimelineNote(state.currentVideoId, {
       timestampSeconds: state.capturedNoteTime,
@@ -2379,7 +2364,7 @@ async function saveReviewForm(isAutosave = false) {
     });
 
     clearDirty();
-    
+
     if (!isAutosave) {
       showToast('評価内容を保存しました');
     } else {
@@ -2403,7 +2388,7 @@ function openSettingsModal() {
   // Check API capability
   const isIdbSupported = (typeof indexedDB !== 'undefined');
   const isFileSystemSupported = (typeof window.showDirectoryPicker === 'function');
-  
+
   if (!isFileSystemSupported) {
     els.folderApiFallbackMsg.classList.remove('hidden');
     els.folderSettingsPanel.classList.add('hidden');
@@ -2435,7 +2420,7 @@ function openSettingsModal() {
 
 function closeSettingsModal() {
   closeModal(els.modalSettings);
-  
+
   if (state.currentVideoId && state.currentView === 'editor') {
     renderStarCriteriaPanel();
     updateRadar();
@@ -2446,370 +2431,81 @@ function closeSettingsModal() {
 function renderFolderSettingsPanel() {
   const sources = db.getDirectorySources();
   const source = sources[0]; // Supports 1 active folder source in MVP
-  
-  if (!source) {
-    els.folderNameVal.textContent = '-';
-    els.folderStatusVal.textContent = '未接続';
-    els.folderStatusVal.style.color = 'var(--color-text-muted)';
-    els.folderPermissionVal.textContent = '-';
-    els.folderVideoCountVal.textContent = '0本';
-    els.folderLastScanVal.textContent = '-';
-    
-    els.btnFolderRescan.classList.add('hidden');
-    els.btnFolderRequestPerm.classList.add('hidden');
-    els.btnFolderDisconnect.classList.add('hidden');
-    els.btnFolderSelect.classList.remove('hidden');
-    return;
-  }
+  const dirVideoCount = source
+    ? db.getVideos().filter(v => v.sourceType === 'directory' && v.directoryId === source.id).length
+    : 0;
 
-  // Bind directory source properties safely
-  els.folderNameVal.textContent = source.name;
-  
-  // Status check
-  const isDisconnected = !source.handleKey || source.permissionStatus === 'disconnected';
-  els.folderStatusVal.textContent = isDisconnected ? '再接続が必要' : '接続済み';
-  els.folderStatusVal.style.color = isDisconnected ? 'var(--color-error)' : 'var(--color-success)';
-  
-  // Permission status
-  let permColor = 'var(--color-text-dim)';
-  let permText = '確認中';
-  
-  if (isDisconnected) {
-    permText = '再接続が必要';
-    permColor = 'var(--color-error)';
-    els.btnFolderRequestPerm.textContent = 'フォルダを再接続';
-    els.btnFolderRequestPerm.classList.remove('hidden');
-    els.btnFolderRescan.classList.add('hidden');
-  } else {
-    els.btnFolderRequestPerm.textContent = 'アクセスを許可';
-    if (source.permissionStatus === 'granted') {
-      permText = '許可済み';
-      permColor = 'var(--color-success)';
-      
-      els.btnFolderRequestPerm.classList.add('hidden');
-      els.btnFolderRescan.classList.remove('hidden');
-    } else if (source.permissionStatus === 'prompt') {
-      permText = '許可が必要';
-      permColor = 'var(--color-warning)';
-      
-      els.btnFolderRequestPerm.classList.remove('hidden');
-      els.btnFolderRescan.classList.add('hidden');
-    } else {
-      permText = '拒否';
-      permColor = 'var(--color-error)';
-      
-      els.btnFolderRequestPerm.classList.remove('hidden');
-      els.btnFolderRescan.classList.add('hidden');
-    }
-  }
-  
-  els.folderPermissionVal.textContent = permText;
-  els.folderPermissionVal.style.color = permColor;
-  
-  // Registered videos count
-  const dirVideoCount = db.getVideos().filter(v => v.sourceType === 'directory' && v.directoryId === source.id).length;
-  els.folderVideoCountVal.textContent = `${dirVideoCount}本`;
-  
-  // Last scan
-  els.folderLastScanVal.textContent = source.lastScannedAt 
-    ? new Date(source.lastScannedAt).toLocaleString('ja-JP') 
-    : '未スキャン';
-  
-  // Checkbox state
-  els.folderRecursiveCheckbox.checked = source.includeSubdirectories;
-
-  els.btnFolderSelect.classList.add('hidden');
-  els.btnFolderDisconnect.classList.remove('hidden');
+  renderFolderSettingsUI({
+    source,
+    dirVideoCount,
+    els
+  });
 }
 
 // Select a new folder on the host machine using a Two-Phase Commit with Rollback
 export async function handleFolderSelect(reconnectSourceId = null) {
-  if (!window.showDirectoryPicker) {
-    showToast('このブラウザはフォルダ選択に対応していません。', 'error');
-    return;
-  }
-
-  // Generate temporary key for the 2-phase verification
-  const tempUUID = Date.now().toString(36) + Math.random().toString(36).substring(2, 9);
-  const tempKey = `pending-directory-handle-${tempUUID}`;
-  let handleSavedToTemp = false;
-
-  try {
-    const handle = await window.showDirectoryPicker({ mode: 'read' });
-    if (!handle) return;
-
-    // Phase 1: Try saving the new handle under a temporary key
-    await db.putDirectoryHandle(tempKey, handle);
-    handleSavedToTemp = true;
-
-    // Phase 2: Read it back to verify serialization integrity
-    const verifiedHandle = await db.getDirectoryHandle(tempKey);
-    if (!verifiedHandle) {
-      throw new Error('一時キーからのハンドルの読み戻しに失敗しました。');
-    }
-
-    // Phase 3: Test-read the directory to verify permissions/integrity
-    let testReadSuccess = false;
-    try {
-      const iterator = verifiedHandle.values();
-      await iterator.next();
-      testReadSuccess = true;
-    } catch (err) {
-      console.warn('Folder test read failed:', err);
-    }
-    if (!testReadSuccess) {
-      throw new Error('選択したフォルダへのアクセス権限がないか、読み取りに失敗しました。');
-    }
-
-    if (reconnectSourceId && typeof reconnectSourceId === 'string') {
-      // Reconnect Mode: Update the existing source in place without creating a new ID
-      const source = db.getDirectorySource(reconnectSourceId);
-      if (!source) {
-        throw new Error('再接続対象のフォルダソースが見つかりません。');
-      }
-
-      await db.reconnectDirectorySource(source.id, handle);
-
-      // Clean up temporary handle
-      await db.deleteDirectoryHandle(tempKey);
-      handleSavedToTemp = false;
-
-      showToast('フォルダを再接続しました。');
-      if (!window.__TEST_ENV__) {
-        renderFolderSettingsPanel();
-        renderLibrary();
-        // Trigger initial scan on the reconnected folder
-        await startFolderScanning(source, handle);
-      }
-    } else {
-      // Normal Mode: Overwrite / select a brand new folder source
-      // Phase 4: Overwrite confirmation
-      const oldSourceIds = db.getDirectorySources().map(s => s.id);
-      if (oldSourceIds.length > 0) {
-        if (!confirm('すでに接続されているフォルダ設定があります。上書きして新しいフォルダを選択しますか？')) {
-          // Clean temp handle and return
-          await db.deleteDirectoryHandle(tempKey);
-          return;
-        }
-      }
-
-      // Phase 5: Commit changes to Database
-      const source = await db.addDirectorySource({
-        name: handle.name,
-        includeSubdirectories: els.folderRecursiveCheckbox.checked
-      });
-
-      // Copy from temporary key to permanent handle key
-      await db.putDirectoryHandle(source.handleKey, handle);
-      
-      // Set permission status
-      const status = await handle.queryPermission({ mode: 'read' });
-      await db.updateDirectorySource(source.id, { permissionStatus: status });
-
-      // Clean up temporary handle
-      await db.deleteDirectoryHandle(tempKey);
-      handleSavedToTemp = false;
-
-      // Disconnect old source if exists
-      for (const oldId of oldSourceIds) {
-        if (oldId !== source.id) {
-          await db.deleteDirectorySource(oldId);
-        }
-      }
-
-      showToast(`フォルダ「${handle.name}」を接続しました。`);
-      if (!window.__TEST_ENV__) {
-        renderFolderSettingsPanel();
-        // Trigger initial scan
-        await startFolderScanning(source, handle);
-      }
-    }
-  } catch (err) {
-    if (err.name === 'AbortError') {
-      console.log('Folder selection cancelled by user');
-      if (handleSavedToTemp) {
-        try { await db.deleteDirectoryHandle(tempKey); } catch (e) {}
-      }
-      return;
-    }
-    
-    // Rollback: Keep old folder connection intact
-    if (handleSavedToTemp) {
-      try { await db.deleteDirectoryHandle(tempKey); } catch (e) {}
-    }
-    
-    showToast(`フォルダ接続エラー: ${err.message}`, 'error');
-  }
+  return handleFolderSelectController({
+    db,
+    reconnectSourceId,
+    isRecursiveChecked: els.folderRecursiveCheckbox?.checked || false,
+    showToast,
+    renderFolderSettingsPanel,
+    renderLibrary,
+    confirm: (msg) => confirm(msg),
+    startFolderScanningFn: (source, handle) => startFolderScanning(source, handle)
+  });
 }
 
 // Request permission context explicitly inside user click
 export async function handleFolderRequestPermission() {
-  const source = db.getDirectorySources()[0];
-  if (!source) return;
-
-  const isDisconnected = !source.handleKey || source.permissionStatus === 'disconnected';
-  if (isDisconnected) {
-    await handleFolderSelect(source.id);
-    return;
-  }
-
-  try {
-    const handle = await db.getDirectoryHandle(source.handleKey);
-    if (!handle) {
-      await db.updateDirectorySource(source.id, { handleKey: '', permissionStatus: 'disconnected' });
-      showToast('フォルダの参照データが見つかりません。フォルダを再接続してください。', 'error');
-      if (!window.__TEST_ENV__) {
-        renderFolderSettingsPanel();
-      }
-      return;
-    }
-
-    const status = await handle.requestPermission({ mode: 'read' });
-    await db.updateDirectorySource(source.id, { permissionStatus: status });
-    
-    // Update and persist video availability statuses via public DB method
-    await db.updateDirectoryVideosAvailability(source.id, status === 'granted' ? 'available' : 'permission-required');
-
-    showToast(status === 'granted' ? 'アクセス権限が許可されました。' : 'アクセス権限が拒否されました。');
-    if (!window.__TEST_ENV__) {
-      renderFolderSettingsPanel();
-      renderLibrary();
-    }
-  } catch (err) {
-    showToast(`権限要求エラー: ${err.message}`, 'error');
-  }
+  return handleFolderRequestPermissionController({
+    db,
+    showToast,
+    renderFolderSettingsPanel,
+    renderLibrary,
+    handleFolderSelectFn: (id) => handleFolderSelect(id)
+  });
 }
 
 // Rescan current connected folder
 async function handleFolderRescan() {
-  const source = db.getDirectorySources()[0];
-  if (!source) return;
-
-  try {
-    const handle = await db.getDirectoryHandle(source.handleKey);
-    if (!handle) {
-      showToast('フォルダが見つかりません。再接続してください。', 'error');
-      return;
-    }
-    await startFolderScanning(source, handle);
-  } catch (err) {
-    showToast(`スキャン起動エラー: ${err.message}`, 'error');
-  }
+  return handleFolderRescanController({
+    db,
+    showToast,
+    startFolderScanningFn: (source, handle) => startFolderScanning(source, handle)
+  });
 }
 
 // Non-blocking Folder scanner using the shared directory-scanner.js module
 async function startFolderScanning(source, handle) {
-  state.scanAbort = false;
-  els.scanProgressBox.classList.remove('hidden');
-  els.scanProgressFiles.textContent = '0';
-  els.scanProgressVideos.textContent = '0';
-
-  const recursive = els.folderRecursiveCheckbox.checked;
-  await db.updateDirectorySource(source.id, { includeSubdirectories: recursive });
-
-  // Use AbortController for cancellation support
-  const controller = new AbortController();
-  const abortListener = () => {
-    controller.abort();
-  };
-  
-  const originalScanAbort = els.btnFolderScanAbort.onclick;
-  els.btnFolderScanAbort.onclick = () => {
-    state.scanAbort = true;
-    controller.abort();
-  };
-
-  try {
-    const scanResult = await scanDirectory({
-      directoryHandle: handle,
-      recursive: recursive,
-      signal: controller.signal,
-      onProgress: ({ checkedFiles, detectedVideos }) => {
-        els.scanProgressFiles.textContent = checkedFiles.toString();
-        els.scanProgressVideos.textContent = detectedVideos.toString();
-      }
-    });
-
-    els.scanProgressBox.classList.add('hidden');
-
-    if (scanResult.aborted || state.scanAbort) {
-      showToast('フォルダスキャンが中止されました。', 'error');
-      state.scanAbort = false;
-      return;
-    }
-
-    // Apply differentials (now extremely fast, no synchronous full hashing)
-    const summary = await applyScanDifferentials({
-      db,
-      directoryId: source.id,
-      scanResult,
-      recursive
-    });
-
-    // Save scan timestamp
-    await db.updateDirectorySource(source.id, { lastScannedAt: new Date().toISOString() });
-
-    const sourcesList = db.getDirectorySources();
-    let eligibleCount = 0;
-    for (const loc of db.fileLocations) {
-      if (loc.verificationStatus !== 'provisional') continue;
-      const src = sourcesList.find(s => s.id === loc.directoryId);
-      if (!src || src.permissionStatus !== 'granted') continue;
-      const handle = await db.getDirectoryHandle(src.handleKey);
-      if (!handle) continue;
-      try {
-        const perm = await handle.queryPermission({ mode: 'read' });
-        if (perm === 'granted') {
-          eligibleCount++;
-        }
-      } catch (e) {}
-    }
-    const pendingValidationCount = eligibleCount;
-    alert(`スキャン完了\n\n新規：${summary.added}本\n更新：${summary.updated}本\n変更なし：${summary.unchanged}本\n見つからない：${summary.missing}本\n判定保留：${summary.pending}本\nエラー：${summary.error}件\nバックグラウンド検証待ち：${pendingValidationCount}件`);
-
-    renderFolderSettingsPanel();
-    renderLibrary();
-    processBackgroundHashingQueue();
-  } catch (err) {
-    els.scanProgressBox.classList.add('hidden');
-    if (err.name === 'AbortError' || state.scanAbort) {
-      showToast('フォルダスキャンが中止されました。', 'error');
-    } else {
-      showToast(`スキャンエラー: ${err.message}`, 'error');
-    }
-  } finally {
-    els.btnFolderScanAbort.onclick = originalScanAbort;
-  }
+  return startFolderScanningController({
+    db,
+    source,
+    handle,
+    recursive: els.folderRecursiveCheckbox?.checked || false,
+    scanDirectory,
+    applyScanDifferentials,
+    processBackgroundHashingQueue,
+    updateScanProgressUI: (checkedFiles, detectedVideos, show) => updateScanProgressUI(els, checkedFiles, detectedVideos, show),
+    showToast,
+    alert: (msg) => alert(msg),
+    renderFolderSettingsPanel,
+    renderLibrary
+  });
 }
 
 // Confirm Disconnect Folder Source
 async function handleFolderDisconnect() {
-  const sources = db.getDirectorySources();
-  if (sources.length === 0) return;
-
-  const source = sources[0];
-  if (!confirm(`動画フォルダ「${source.name}」との接続を解除します。\n登録済みの評価・タグ・コメントは削除されません。`)) {
-    return;
-  }
-
-  try {
-    globalHashQueue.cancelPending();
-    bgHashState.targetKeys.clear();
-    bgHashState.completedKeys.clear();
-    bgHashState.failedKeys.clear();
-    bgHashState.skippedKeys.clear();
-    bgHashState.activeId = null;
-    bgHashState.activeName = '';
-    bgHashState.activePercent = null;
-    updateBackgroundHashingProgress(true);
-
-    await db.deleteDirectorySource(source.id);
-    showToast('動画フォルダの接続を解除しました。');
-    renderFolderSettingsPanel();
-    renderLibrary();
-  } catch (err) {
-    showToast(`接続解除エラー: ${err.message}`, 'error');
-  }
+  return handleFolderDisconnectController({
+    db,
+    globalHashQueue,
+    bgHashState,
+    updateBackgroundHashingProgress,
+    showToast,
+    renderFolderSettingsPanel,
+    renderLibrary,
+    confirm: (msg) => confirm(msg)
+  });
 }
 
 // Settings criteria rows renderer (XSS Safe DOM)
@@ -2821,7 +2517,7 @@ function renderSettingsCriteriaList() {
   criteria.forEach((crit, index) => {
     const row = document.createElement('div');
     row.className = 'settings-criterion-row';
-    
+
     const controlsDiv = document.createElement('div');
     controlsDiv.className = 'criterion-order-controls';
 
@@ -2895,7 +2591,7 @@ function renderSettingsCriteriaList() {
     checkbox.checked = crit.isActive;
     checkbox.addEventListener('change', async () => {
       const active = checkbox.checked;
-      
+
       if (active) {
         const activeCount = db.getActiveCriteriaForGenre(genreId).length;
         if (activeCount >= 6) {
@@ -2904,7 +2600,7 @@ function renderSettingsCriteriaList() {
           return;
         }
       }
-      
+
       await db.updateCriterion(crit.id, { isActive: active });
     });
     activeLabel.appendChild(checkbox);
@@ -2989,7 +2685,7 @@ function toggleMute() {
 function handleVolumeSlider() {
   els.video.volume = els.volumeSlider.value;
   els.video.muted = (els.video.volume === 0);
-  
+
   if (els.video.muted) {
     els.muteIconOff.classList.add('hidden');
     els.muteIconOn.classList.remove('hidden');
@@ -3002,7 +2698,7 @@ function handleVolumeSlider() {
 function handleTimeUpdate() {
   const current = els.video.currentTime || 0;
   const duration = els.video.duration || 1;
-  
+
   els.timeCurrent.textContent = formatTime(current);
 
   const pct = (current / duration) * 100;
@@ -3095,7 +2791,7 @@ function handleKeyboardShortcuts(e) {
 
 function populateSettingsGenreSelect() {
   const genres = db.getGenres();
-  
+
   // 1. Configure configuration genre select dropdown
   els.settingsGenreSelect.innerHTML = '';
   genres.forEach(g => {
@@ -3104,7 +2800,7 @@ function populateSettingsGenreSelect() {
     opt.textContent = g.isActive ? g.name : `${g.name} (無効)`;
     els.settingsGenreSelect.appendChild(opt);
   });
-  
+
   if (state.selectedSettingsGenreId) {
     els.settingsGenreSelect.value = state.selectedSettingsGenreId;
   } else if (genres.length > 0) {
@@ -3115,7 +2811,7 @@ function populateSettingsGenreSelect() {
   // 2. Configure copy source select dropdown (only active genres, excluding current one)
   els.settingsCopySourceSelect.innerHTML = '';
   const currentGenreId = state.selectedSettingsGenreId;
-  
+
   const placeholderOpt = document.createElement('option');
   placeholderOpt.value = '';
   placeholderOpt.textContent = '-- コピー元ジャンルを選択 --';
@@ -3226,7 +2922,7 @@ async function handleBackupCreate() {
 
     localStorage.setItem('vreview_last_backup_time', new Date().toISOString());
     els.backupLastTimeVal.textContent = new Date().toLocaleString();
-    
+
     showToast('バックアップを作成しました。');
   } catch (err) {
     console.error(err);
@@ -3328,7 +3024,7 @@ async function handleBackupRestore(e) {
     try {
       const imageEntries = [];
       const imagePromises = [];
-      
+
       if (thumbnailsFolder) {
         thumbnailsFolder.forEach((relativePath, zipEntry) => {
           if (!zipEntry.dir) {
@@ -3340,7 +3036,7 @@ async function handleBackupRestore(e) {
           }
         });
       }
-      
+
       if (notesFolder) {
         notesFolder.forEach((relativePath, zipEntry) => {
           if (!zipEntry.dir) {
@@ -3385,7 +3081,7 @@ async function handleBackupRestore(e) {
 async function handleCleanOrphanData() {
   try {
     const { orphanNotes, unreferencedImageIds } = await db.checkOrphanData();
-    
+
     if (orphanNotes.length === 0 && unreferencedImageIds.length === 0) {
       alert('クリーンアップが必要な孤立データ（メモ・画像）は見つかりませんでした。');
       return;
@@ -3401,7 +3097,7 @@ async function handleCleanOrphanData() {
     }
 
     const { notesCleanedCount, imagesCleanedCount } = await db.cleanOrphanData();
-    
+
     showToast(`クリーンアップを完了しました（タイムラインメモ: ${notesCleanedCount}件、画像: ${imagesCleanedCount}枚）。`);
     renderLibrary();
   } catch (err) {
