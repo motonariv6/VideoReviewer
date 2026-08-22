@@ -953,15 +953,55 @@ export class AppDatabase {
   _buildVirtualVideo(asset) {
     if (!asset) return undefined;
     const locations = this.fileLocations.filter(loc => loc.mediaAssetId === asset.id);
-    
-    let primary = locations.find(loc => loc.availabilityStatus === 'available') ||
-                  locations.find(loc => loc.availabilityStatus === 'permission-required') ||
-                  locations[0];
-                  
+
+    const scoredLocations = locations.map(loc => {
+      const ds = this.directorySources.find(source => source.id === loc.directoryId);
+      let status = 'missing';
+      let score = 0;
+
+      if (loc.availabilityStatus === 'available') {
+        if (ds && ds.handleKey && ds.permissionStatus !== 'disconnected') {
+          if (ds.permissionStatus === 'granted') {
+            status = 'available';
+            score = 3;
+          } else {
+            status = 'permission-required';
+            score = 2;
+          }
+        } else {
+          status = 'missing';
+          score = 0;
+        }
+      } else if (loc.availabilityStatus === 'permission-required') {
+        if (ds && ds.handleKey && ds.permissionStatus !== 'disconnected') {
+          status = 'permission-required';
+          score = 1;
+        } else {
+          status = 'missing';
+          score = 0;
+        }
+      } else {
+        status = loc.availabilityStatus || 'missing';
+        score = 0;
+      }
+      return { loc, status, score, lastVerifiedAt: loc.lastVerifiedAt || '' };
+    });
+
+    // Sort by score descending, then lastVerifiedAt descending safely
+    scoredLocations.sort((a, b) => {
+      if (b.score !== a.score) return b.score - a.score;
+      const timeA = a.lastVerifiedAt ? new Date(a.lastVerifiedAt).getTime() : 0;
+      const timeB = b.lastVerifiedAt ? new Date(b.lastVerifiedAt).getTime() : 0;
+      return timeB - timeA;
+    });
+
+    const primaryWrapper = scoredLocations[0];
+    const primary = primaryWrapper ? primaryWrapper.loc : null;
+
     let logicalStatus = 'missing';
-    if (locations.some(loc => loc.availabilityStatus === 'available')) {
+    if (scoredLocations.some(w => w.status === 'available')) {
       logicalStatus = 'available';
-    } else if (locations.some(loc => loc.availabilityStatus === 'permission-required')) {
+    } else if (scoredLocations.some(w => w.status === 'permission-required')) {
       logicalStatus = 'permission-required';
     } else if (locations.some(loc => loc.availabilityStatus === 'scan-error')) {
       logicalStatus = 'scan-error';
@@ -993,20 +1033,308 @@ export class AppDatabase {
       availabilityStatus: logicalStatus,
       sourceType: isUrl ? 'url' : 'directory',
       videoUrl: asset.videoUrl || (isUrl ? `https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/${asset.id === 'vid-sample-bunny' ? 'BigBuckBunny' : asset.id === 'vid-sample-sintel' ? 'Sintel' : 'TearsOfSteel'}.mp4` : ''),
-      locations: locations
+      locations: scoredLocations.map(w => w.loc)
     };
   }
 
   getVideos() {
-    return this.mediaAssets.map(asset => this._buildVirtualVideo(asset));
+    return this.mediaAssets
+      .filter(asset => !asset.isArchived)
+      .map(asset => this._buildVirtualVideo(asset));
   }
 
   getVideo(id) {
     const asset = this.mediaAssets.find(a => a.id === id);
+    if (!asset) return null;
     return this._buildVirtualVideo(asset);
   }
 
-  async addVideo({ title, displayTitle, fileName, fileSize, videoUrl, duration, thumbnailBlob, sourceType, directoryId, relativePath, lastModified, contentHash, quickHash, hashStatus }) {
+  async resolveAndRegisterNewScannedFileProvisional({
+    directoryId,
+    sf
+  }) {
+    // 1. Get candidates by quickHash and fileSize
+    const candidates = this.mediaAssets.filter(a => a.fileSize === sf.fileSize && a.quickHash === sf.quickHash);
+
+    if (candidates.length === 1) {
+      // Exactly 1 candidate -> provisional match!
+      const matchedAsset = candidates[0];
+      
+      if (matchedAsset.isArchived) {
+        matchedAsset.isArchived = false;
+        matchedAsset.archivedAt = null;
+        matchedAsset.updatedAt = new Date().toISOString();
+        this._saveTable('media_assets', this.mediaAssets);
+      }
+      
+      const normPath = normalizePath(sf.relativePath);
+      let existingLoc = this.fileLocations.find(l => l.directoryId === directoryId && normalizePath(l.relativePath) === normPath);
+      if (!existingLoc) {
+        const newLoc = {
+          id: 'loc-' + generateUUID(),
+          mediaAssetId: matchedAsset.id,
+          directoryId: directoryId || '',
+          relativePath: normPath,
+          fileName: sf.fileName || '',
+          fileSize: sf.fileSize || 0,
+          lastModified: sf.lastModified || 0,
+          availabilityStatus: 'available',
+          lastVerifiedAt: '',
+          verificationStatus: 'provisional',
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString()
+        };
+        this.fileLocations.push(newLoc);
+        this._saveTable('file_locations', this.fileLocations);
+      } else {
+        if (existingLoc.availabilityStatus !== 'available' || existingLoc.verificationStatus !== 'provisional') {
+          existingLoc.availabilityStatus = 'available';
+          existingLoc.verificationStatus = 'provisional';
+          existingLoc.updatedAt = new Date().toISOString();
+          this._saveTable('file_locations', this.fileLocations);
+        }
+      }
+      return { status: 'merged', assetId: matchedAsset.id };
+    } else if (candidates.length > 1) {
+      // Multiple candidates -> do NOT merge. Treat as verification-pending.
+      const newAsset = await this.addVideo({
+        title: sf.fileName,
+        fileName: sf.fileName,
+        fileSize: sf.fileSize,
+        videoUrl: '',
+        duration: 0,
+        sourceType: 'directory',
+        directoryId,
+        relativePath: sf.relativePath,
+        lastModified: sf.lastModified,
+        quickHash: sf.quickHash || '',
+        hashStatus: 'pending',
+        identityStatus: 'provisional'
+      });
+      const loc = this.fileLocations.find(l => l.mediaAssetId === newAsset.id);
+      if (loc) {
+        loc.verificationStatus = 'provisional';
+        this._saveTable('file_locations', this.fileLocations);
+      }
+      return { status: 'verification-pending', assetId: newAsset.id };
+    } else {
+      // 0 candidates -> register as a new provisional asset!
+      const newAsset = await this.addVideo({
+        title: sf.fileName,
+        fileName: sf.fileName,
+        fileSize: sf.fileSize,
+        videoUrl: '',
+        duration: 0,
+        sourceType: 'directory',
+        directoryId,
+        relativePath: sf.relativePath,
+        lastModified: sf.lastModified,
+        quickHash: sf.quickHash || '',
+        hashStatus: 'pending',
+        identityStatus: 'provisional'
+      });
+      const loc = this.fileLocations.find(l => l.mediaAssetId === newAsset.id);
+      if (loc) {
+        loc.verificationStatus = 'provisional';
+        this._saveTable('file_locations', this.fileLocations);
+      }
+      return { status: 'new', assetId: newAsset.id };
+    }
+  }
+
+  async completeLocationProvisionalVerification(locId, scannedHash) {
+    const loc = this.fileLocations.find(l => l.id === locId);
+    if (!loc) throw new Error('Location not found');
+
+    const video = this.mediaAssets.find(a => a.id === loc.mediaAssetId);
+    if (!video) throw new Error('Video not found');
+
+    // Check if there is already another VERIFIED asset in the database with this hash
+    const existingAsset = this.mediaAssets.find(a => a.contentHash === scannedHash && a.id !== video.id && a.identityStatus !== 'provisional' && a.identityStatus !== 'conflict');
+
+    if (video.identityStatus === 'provisional') {
+      // Case A: The asset itself was newly registered as provisional
+      if (existingAsset) {
+        // A verified asset already exists with this hash. Merge video into existingAsset!
+        const mergeResult = await this.mergeMediaAssets(existingAsset.id, video.id);
+        loc.verificationStatus = 'verified';
+        this._saveTable('file_locations', this.fileLocations);
+        return { status: 'success', merged: true, targetAssetId: existingAsset.id };
+      } else {
+        // No verified asset has this hash. Make this asset the canonical one!
+        video.contentHash = scannedHash;
+        video.hashStatus = 'completed';
+        video.identityStatus = 'verified';
+        video.updatedAt = new Date().toISOString();
+        this._saveTable('media_assets', this.mediaAssets);
+
+        loc.verificationStatus = 'verified';
+        this._saveTable('file_locations', this.fileLocations);
+        return { status: 'success', merged: false, assetId: video.id };
+      }
+    } else {
+      // Case B: The asset was verified, but this location was provisionally matched to it
+      if (video.contentHash === scannedHash) {
+        // The provisional match was correct!
+        loc.verificationStatus = 'verified';
+        this._saveTable('file_locations', this.fileLocations);
+        return { status: 'success', merged: false, assetId: video.id };
+      } else {
+        // The provisional match was incorrect! (Full hash mismatch)
+        // We must undo the match and separate this location into a new asset!
+        
+        let targetAsset = existingAsset;
+        if (!targetAsset) {
+          // Create a new verified asset
+          const assetId = 'vid-' + generateUUID();
+          targetAsset = {
+            id: assetId,
+            contentHash: scannedHash,
+            hashAlgorithm: 'SHA-256',
+            quickHash: video.quickHash,
+            hashStatus: 'completed',
+            fileSize: loc.fileSize,
+            duration: video.duration || 0,
+            displayTitle: loc.fileName,
+            genreId: video.genreId || 'genre-default',
+            thumbnailId: '',
+            videoUrl: '',
+            identityStatus: 'verified',
+            identityConflictGroupId: null,
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString()
+          };
+          this.mediaAssets.push(targetAsset);
+          this._saveTable('media_assets', this.mediaAssets);
+        }
+
+        // Separate loc by pointing it to targetAsset
+        loc.mediaAssetId = targetAsset.id;
+        loc.verificationStatus = 'verified';
+        this._saveTable('file_locations', this.fileLocations);
+
+        // If the original asset has no locations left, archive it again!
+        const remainingLocs = this.fileLocations.filter(l => l.mediaAssetId === video.id);
+        if (remainingLocs.length === 0) {
+          video.isArchived = true;
+          video.archivedAt = new Date().toISOString();
+          this._saveTable('media_assets', this.mediaAssets);
+        }
+
+        return { status: 'separated', newAssetId: targetAsset.id };
+      }
+    }
+  }
+
+  async resolveAndRegisterNewScannedFile({
+    directoryId,
+    directoryHandle,
+    sf,
+    getFileHandleFromRelativePathFn,
+    computeFileSHA256Fn
+  }) {
+    // 1. Get candidates by quickHash and fileSize
+    const candidates = this.mediaAssets.filter(a => a.fileSize === sf.fileSize && a.quickHash === sf.quickHash);
+
+    let scannedHash = null;
+    let fileObj = null;
+    try {
+      const fileHandle = await getFileHandleFromRelativePathFn(directoryHandle, sf.relativePath);
+      fileObj = await fileHandle.getFile();
+      scannedHash = await computeFileSHA256Fn(fileObj);
+    } catch (err) {
+      console.warn(`Failed to compute hash for scanned file ${sf.relativePath}:`, err);
+      return { status: 'verification-pending', assetId: null };
+    }
+
+    // 2. Resolve candidate hashes if they are not computed yet
+    for (const candidate of candidates) {
+      if (candidate.hashStatus !== 'completed' || !candidate.contentHash) {
+        const candLocs = this.fileLocations.filter(l => l.mediaAssetId === candidate.id);
+        let resolvedCandidateHash = null;
+        for (const cl of candLocs) {
+          const ds = this.getDirectorySource(cl.directoryId);
+          if (ds && ds.handleKey && ds.permissionStatus === 'granted') {
+            try {
+              const handle = await this.getDirectoryHandle(ds.handleKey);
+              if (handle) {
+                const fh = await getFileHandleFromRelativePathFn(handle, cl.relativePath);
+                const f = await fh.getFile();
+                resolvedCandidateHash = await computeFileSHA256Fn(f);
+                break;
+              }
+            } catch (e) {
+              console.warn(`Failed to resolve candidate location ${cl.id} for hashing:`, e);
+            }
+          }
+        }
+        if (resolvedCandidateHash) {
+          candidate.contentHash = resolvedCandidateHash;
+          candidate.hashStatus = 'completed';
+          candidate.updatedAt = new Date().toISOString();
+          this._saveTable('media_assets', this.mediaAssets);
+        }
+      }
+    }
+
+    // 3. Find if any existing asset has the identical non-empty contentHash (exclude conflict assets)
+    const matchedAsset = this.mediaAssets.find(a => a.contentHash === scannedHash && a.identityStatus !== 'conflict');
+    if (matchedAsset) {
+      if (matchedAsset.isArchived) {
+        matchedAsset.isArchived = false;
+        matchedAsset.archivedAt = null;
+        matchedAsset.updatedAt = new Date().toISOString();
+        this._saveTable('media_assets', this.mediaAssets);
+      }
+
+      // Check if location already exists for this directory and path (safety check)
+      const normPath = normalizePath(sf.relativePath);
+      let existingLoc = this.fileLocations.find(l => l.directoryId === directoryId && normalizePath(l.relativePath) === normPath);
+      if (!existingLoc) {
+        const newLoc = {
+          id: 'loc-' + generateUUID(),
+          mediaAssetId: matchedAsset.id,
+          directoryId: directoryId || '',
+          relativePath: normPath,
+          fileName: sf.fileName || '',
+          fileSize: sf.fileSize || 0,
+          lastModified: sf.lastModified || 0,
+          availabilityStatus: 'available',
+          lastVerifiedAt: '',
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString()
+        };
+        this.fileLocations.push(newLoc);
+        this._saveTable('file_locations', this.fileLocations);
+      } else {
+        if (existingLoc.availabilityStatus !== 'available') {
+          existingLoc.availabilityStatus = 'available';
+          existingLoc.updatedAt = new Date().toISOString();
+          this._saveTable('file_locations', this.fileLocations);
+        }
+      }
+      return { status: 'merged', assetId: matchedAsset.id };
+    } else {
+      // Create new mediaAsset with completed hash
+      const newAsset = await this.addVideo({
+        title: sf.fileName,
+        fileName: sf.fileName,
+        fileSize: sf.fileSize,
+        videoUrl: '',
+        duration: 0,
+        sourceType: 'directory',
+        directoryId,
+        relativePath: sf.relativePath,
+        lastModified: sf.lastModified,
+        quickHash: sf.quickHash || '',
+        contentHash: scannedHash,
+        hashStatus: 'completed'
+      });
+      return { status: 'new', assetId: newAsset.id };
+    }
+  }
+
+  async addVideo({ title, displayTitle, fileName, fileSize, videoUrl, duration, thumbnailBlob, sourceType, directoryId, relativePath, lastModified, contentHash, quickHash, hashStatus, identityStatus }) {
     const sType = sourceType || (videoUrl ? 'url' : 'directory');
     const normalizedTitle = normalizeDisplayTitle(displayTitle !== undefined ? displayTitle : title);
     const normPath = normalizePath(relativePath);
@@ -1041,10 +1369,14 @@ export class AppDatabase {
             this._saveTable('media_assets', this.mediaAssets);
           }
           if (existingLoc.availabilityStatus !== 'available' || (fileSize && existingLoc.fileSize !== fileSize)) {
+            const isSizeChanged = fileSize && existingLoc.fileSize !== fileSize;
             existingLoc.availabilityStatus = 'available';
             if (fileSize) existingLoc.fileSize = fileSize;
             if (lastModified) existingLoc.lastModified = lastModified;
             existingLoc.lastVerifiedAt = new Date().toISOString();
+            if (isSizeChanged) {
+              existingLoc.verificationStatus = 'provisional';
+            }
             existingLoc.updatedAt = new Date().toISOString();
             this._saveTable('file_locations', this.fileLocations);
           }
@@ -1096,8 +1428,10 @@ export class AppDatabase {
       genreId: 'genre-default',
       thumbnailId: '',
       videoUrl: videoUrl || '',
-      identityStatus: 'normal',
+      identityStatus: identityStatus || 'normal',
       identityConflictGroupId: null,
+      isArchived: false,
+      archivedAt: null,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString()
     };
@@ -1439,6 +1773,23 @@ export class AppDatabase {
     return { status: 'success', hash, ...result };
   }
 
+  async updateLocationLastVerified(locId) {
+    const loc = this.fileLocations.find(l => l.id === locId);
+    if (loc) {
+      loc.lastVerifiedAt = new Date().toISOString();
+      this._saveTable('file_locations', this.fileLocations);
+    }
+  }
+
+  async updateLocationInfo(locId, updates) {
+    const loc = this.fileLocations.find(l => l.id === locId);
+    if (loc) {
+      Object.assign(loc, updates);
+      loc.updatedAt = new Date().toISOString();
+      this._saveTable('file_locations', this.fileLocations);
+    }
+  }
+
   async updateVideo(id, updates) {
     const asset = this.mediaAssets.find(a => a.id === id);
     if (asset) {
@@ -1555,6 +1906,27 @@ export class AppDatabase {
     this.timelineNotes = this.timelineNotes.filter(n => n.mediaAssetId !== mediaAssetId && !reviewIds.includes(n.videoReviewId));
     this._saveTable('timeline_notes', this.timelineNotes);
 
+    return true;
+  }
+
+  async archiveVideo(mediaAssetId) {
+    const asset = this.mediaAssets.find(a => a.id === mediaAssetId);
+    if (!asset) return false;
+
+    asset.isArchived = true;
+    asset.archivedAt = new Date().toISOString();
+    this._saveTable('media_assets', this.mediaAssets);
+
+    // Remove active locations associated with this archived asset
+    this.fileLocations = this.fileLocations.filter(l => l.mediaAssetId !== mediaAssetId);
+    this._saveTable('file_locations', this.fileLocations);
+
+    return true;
+  }
+
+  async deleteFileLocation(locId) {
+    this.fileLocations = this.fileLocations.filter(l => l.id !== locId);
+    this._saveTable('file_locations', this.fileLocations);
     return true;
   }
 
@@ -1884,6 +2256,12 @@ export class AppDatabase {
         }
         if (a.identityConflictGroupId === undefined) {
           a.identityConflictGroupId = null;
+        }
+        if (a.isArchived === undefined) {
+          a.isArchived = false;
+        }
+        if (a.archivedAt === undefined) {
+          a.archivedAt = null;
         }
       });
     }
@@ -2660,10 +3038,12 @@ export const BACKUP_SCHEMA = {
           "displayTitle": { "type": ["string", "null"] },
           "genreId": { "type": "string", "pattern": "^genre-[a-zA-Z0-9-]{1,64}$" },
           "thumbnailId": { "type": "string" },
-          "identityStatus": { "type": "string", "enum": ["normal", "conflict"] },
+          "identityStatus": { "type": "string", "enum": ["normal", "conflict", "provisional", "verified"] },
           "identityConflictGroupId": { "type": ["string", "null"] },
           "createdAt": { "type": "string" },
-          "updatedAt": { "type": "string" }
+          "updatedAt": { "type": "string" },
+          "isArchived": { "type": "boolean" },
+          "archivedAt": { "type": ["string", "null"] }
         }
       }
     },
@@ -2693,6 +3073,7 @@ export const BACKUP_SCHEMA = {
           "lastModified": { "type": "integer" },
           "availabilityStatus": { "type": "string", "enum": ["available", "permission-required", "missing", "unsupported", "scan-error"] },
           "lastVerifiedAt": { "type": "string" },
+          "verificationStatus": { "type": "string", "enum": ["provisional", "verified", "failed"] },
           "createdAt": { "type": "string" },
           "updatedAt": { "type": "string" }
         }

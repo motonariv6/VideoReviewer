@@ -153,6 +153,9 @@
          SCREEN 2: Dual Column Review Workspace (Editor)
          ============================================== -->
     <main id="view-editor" class="screen-editor hidden">
+      <div id="provisional-warning-banner" class="hidden" style="background-color: #f59e0b; color: white; font-weight: 600; font-size: 0.875rem; padding: 8px; text-align: center; grid-column: 1 / -1; width: 100%;">
+        フルハッシュ（SHA-256）検証中ですが、編集・評価は可能です。
+      </div>
       <!-- Left Column: Video and Basic Controls -->
       <div class="editor-left-pane">
         <div class="pane-nav-bar">
@@ -265,6 +268,10 @@
             <div>ファイル名: <span id="info-file-name" style="color:var(--color-text-main)">-</span></div>
             <div>サイズ: <span id="info-file-size" style="color:var(--color-text-main)">-</span></div>
             <div>再生時間: <span id="info-duration" style="color:var(--color-text-main)">-</span></div>
+          </div>
+          <div id="info-locations-container" style="margin-top: 12px; border-top: 1px solid var(--color-border); padding-top: 8px;">
+            <div style="font-weight: 600; margin-bottom: 4px;">保存ロケーション一覧:</div>
+            <div id="info-locations-list" style="display: flex; flex-direction: column; gap: 4px;"></div>
           </div>
         </div>
 

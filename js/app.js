@@ -1,13 +1,73 @@
 import { AppDatabase } from './db.js';
 import { formatTime, parseTime, generateFileSignature, captureVideoFrame, validateVideoUrl, getFileHandleFromRelativePath, filterVideosByTag } from './video-helper.js';
 import { RadarChart } from './radar.js';
-import { scanDirectory, classifyScanResults, applyScanDifferentials } from './directory-scanner.js';
-import { computeQuickHash, computeFileSHA256, globalHashQueue } from './hash-helper.js';
+import { scanDirectory, classifyScanResults, applyScanDifferentials, isIgnoredSystemEntry } from './directory-scanner.js';
+import { computeQuickHash, computeFileSHA256, globalHashQueue, logMetric } from './hash-helper.js';
 
 // Instantiate DB & components
 export let db = new AppDatabase();
+
+function wrapDbForDeletionCleanup(dbInstance) {
+  if (!dbInstance) return;
+  const originalDeleteVideoCascade = dbInstance.deleteVideoCascade;
+  dbInstance.deleteVideoCascade = async function(mediaAssetId) {
+    const locsToDelete = dbInstance.fileLocations.filter(l => l.mediaAssetId === mediaAssetId);
+    const locIds = locsToDelete.map(l => l.id);
+
+    const result = await originalDeleteVideoCascade.call(dbInstance, mediaAssetId);
+
+    if (result) {
+      for (const id of locIds) {
+        bgHashState.targetKeys.delete(id);
+        bgHashState.completedKeys.delete(id);
+        bgHashState.failedKeys.delete(id);
+        bgHashState.skippedKeys.delete(id);
+      }
+      updateBackgroundHashingProgress(true);
+    }
+    return result;
+  };
+
+  const originalArchiveVideo = dbInstance.archiveVideo;
+  dbInstance.archiveVideo = async function(mediaAssetId) {
+    const locsToDelete = dbInstance.fileLocations.filter(l => l.mediaAssetId === mediaAssetId);
+    const locIds = locsToDelete.map(l => l.id);
+
+    const result = await originalArchiveVideo.call(dbInstance, mediaAssetId);
+
+    if (result) {
+      for (const id of locIds) {
+        bgHashState.targetKeys.delete(id);
+        bgHashState.completedKeys.delete(id);
+        bgHashState.failedKeys.delete(id);
+        bgHashState.skippedKeys.delete(id);
+      }
+      updateBackgroundHashingProgress(true);
+    }
+    return result;
+  };
+
+  const originalDeleteFileLocation = dbInstance.deleteFileLocation;
+  dbInstance.deleteFileLocation = async function(locId) {
+    const result = await originalDeleteFileLocation.call(dbInstance, locId);
+    if (result) {
+      bgHashState.targetKeys.delete(locId);
+      bgHashState.completedKeys.delete(locId);
+      bgHashState.failedKeys.delete(locId);
+      bgHashState.skippedKeys.delete(locId);
+      updateBackgroundHashingProgress(true);
+    }
+    return result;
+  };
+}
+
+wrapDbForDeletionCleanup(db);
+
 export function setDbForTesting(mockDb) {
   db = mockDb;
+  if (db) {
+    wrapDbForDeletionCleanup(db);
+  }
 }
 let radar;
 
@@ -112,6 +172,8 @@ const els = {
   infoFileName: document.getElementById('info-file-name'),
   infoFileSize: document.getElementById('info-file-size'),
   infoDuration: document.getElementById('info-duration'),
+  infoLocationsContainer: document.getElementById('info-locations-container'),
+  infoLocationsList: document.getElementById('info-locations-list'),
   
   // Review inputs
   gradeButtons: document.querySelectorAll('.grade-btn[data-grade]'),
@@ -161,6 +223,8 @@ const els = {
   
   // Toast notifications
   toastContainer: document.getElementById('toast-container'),
+
+  provisionalWarningBanner: document.getElementById('provisional-warning-banner'),
 
   // Display Title Override UI
   titleDisplayContainer: document.getElementById('title-display-container'),
@@ -318,7 +382,6 @@ function initEventListeners() {
     }
   });
 
-  // 2. Video Genre Select Dropdown
   els.videoGenreSelect.addEventListener('change', async () => {
     const videoId = state.currentVideoId;
     if (!videoId) return;
@@ -753,53 +816,533 @@ async function syncActiveDirectoryPermissions() {
   }
 }
 
-async function processBackgroundHashingQueue() {
-  const videos = db.getVideos().filter(v => v.sourceType === 'directory' && v.hashStatus === 'pending');
-  if (videos.length === 0) return;
+export let bgHashState = {
+  batchId: '',
+  generation: 0,
+  targetKeys: new Set(),
+  completedKeys: new Set(),
+  failedKeys: new Set(),
+  skippedKeys: new Set(),
+  activeId: null,
+  activeName: '',
+  activePercent: null,
+  lastUpdateTime: 0,
+  lastUpdatePercent: -1,
+  panelMinimized: false,
+  panelClosed: false
+};
 
+let bgHashCloseTimeout = null;
+
+export function updateBackgroundHashingProgress(force = false) {
+  const total = bgHashState.targetKeys.size;
+
+  let completedCount = 0;
+  let failedCount = 0;
+  let skippedCount = 0;
+
+  for (const id of bgHashState.targetKeys) {
+    if (bgHashState.completedKeys.has(id)) {
+      completedCount++;
+    } else if (bgHashState.failedKeys.has(id)) {
+      failedCount++;
+    } else if (bgHashState.skippedKeys.has(id)) {
+      skippedCount++;
+    }
+  }
+
+  const current = completedCount + failedCount + skippedCount;
+
+  if (total === 0) {
+    if (bgHashCloseTimeout) {
+      clearTimeout(bgHashCloseTimeout);
+      bgHashCloseTimeout = null;
+    }
+    updateBackgroundHashingUI(0, 0);
+    return;
+  }
+
+  if (current === total) {
+    if (!bgHashCloseTimeout) {
+      bgHashCloseTimeout = setTimeout(() => {
+        bgHashCloseTimeout = null;
+        updateBackgroundHashingUI(0, 0);
+      }, 3000);
+    }
+  } else {
+    if (bgHashCloseTimeout) {
+      clearTimeout(bgHashCloseTimeout);
+      bgHashCloseTimeout = null;
+    }
+  }
+
+  triggerUIUpdate(current, total, force);
+}
+
+let bgHashLastUpdateTime = 0;
+let bgHashLastPercent = -1;
+
+function triggerUIUpdate(completed, total, force) {
+  const now = Date.now();
+  const percent = bgHashState.activePercent;
+  const percentChanged = percent !== bgHashLastPercent;
+  const timeElapsed = now - bgHashLastUpdateTime > 100;
+
+  if (force || percentChanged || timeElapsed || completed === total) {
+    bgHashLastUpdateTime = now;
+    bgHashLastPercent = percent;
+    updateBackgroundHashingUI(completed, total);
+  }
+}
+
+export function updateBackgroundHashingUI(current, total) {
+  let indicator = document.getElementById('bg-hash-indicator');
+  
+  if (bgHashState.panelClosed) {
+    if (indicator) indicator.classList.add('hidden');
+    return;
+  }
+
+  if (total === 0 || (current >= total && !bgHashCloseTimeout)) {
+    if (indicator) indicator.classList.add('hidden');
+    return;
+  }
+
+  if (!document.getElementById('bg-hash-styles')) {
+    const style = document.createElement('style');
+    style.id = 'bg-hash-styles';
+    style.textContent = `
+      @keyframes bg-hash-slide {
+        0% { left: -30%; }
+        100% { left: 100%; }
+      }
+      .bg-hash-indeterminate {
+        position: relative;
+        overflow: hidden;
+        background-color: var(--color-border, #374151) !important;
+      }
+      .bg-hash-indeterminate::after {
+        content: '';
+        position: absolute;
+        top: 0; left: -30%; width: 30%; height: 100%;
+        background: linear-gradient(90deg, transparent, var(--color-primary, #6366f1), transparent);
+        animation: bg-hash-slide 1.2s infinite linear;
+      }
+      #bg-hash-indicator {
+        position: fixed;
+        top: 76px;
+        right: 16px;
+        padding: 12px 16px;
+        background-color: var(--color-bg-card, #1f2937);
+        color: var(--color-text, #f3f4f6);
+        border-radius: var(--radius-sm, 6px);
+        box-shadow: var(--shadow-md, 0 4px 6px rgba(0,0,0,0.15));
+        border: 1px solid var(--color-border, #374151);
+        font-size: 0.75rem;
+        font-weight: 600;
+        z-index: 90;
+        transition: opacity 0.3s ease;
+        width: 260px;
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+        pointer-events: auto;
+      }
+      @media (max-width: 640px) {
+        #bg-hash-indicator {
+          left: 16px;
+          right: 16px;
+          width: auto;
+          max-width: calc(100vw - 32px);
+        }
+      }
+    `;
+    document.head.appendChild(style);
+  }
+
+  if (!indicator) {
+    indicator = document.createElement('div');
+    indicator.id = 'bg-hash-indicator';
+    document.body.appendChild(indicator);
+  }
+
+  indicator.classList.remove('hidden');
+
+  let headerRow = indicator.querySelector('.bg-hash-header-row');
+  if (!headerRow) {
+    headerRow = document.createElement('div');
+    headerRow.className = 'bg-hash-header-row';
+    headerRow.style.display = 'flex';
+    headerRow.style.justify = 'space-between';
+    headerRow.style.alignItems = 'center';
+    headerRow.style.width = '100%';
+    headerRow.style.gap = '8px';
+    indicator.appendChild(headerRow);
+  }
+
+  let titleEl = headerRow.querySelector('.bg-hash-title');
+  if (!titleEl) {
+    titleEl = document.createElement('div');
+    titleEl.className = 'bg-hash-title';
+    titleEl.style.fontSize = '0.8125rem';
+    titleEl.style.color = 'var(--color-text, #f3f4f6)';
+    titleEl.style.flex = '1';
+    titleEl.style.whiteSpace = 'nowrap';
+    titleEl.style.overflow = 'hidden';
+    titleEl.style.textOverflow = 'ellipsis';
+    headerRow.appendChild(titleEl);
+  }
+
+  let actionsEl = headerRow.querySelector('.bg-hash-actions');
+  if (!actionsEl) {
+    actionsEl = document.createElement('div');
+    actionsEl.className = 'bg-hash-actions';
+    actionsEl.style.display = 'flex';
+    actionsEl.style.gap = '8px';
+    actionsEl.style.alignItems = 'center';
+    headerRow.appendChild(actionsEl);
+  }
+
+  let minBtn = actionsEl.querySelector('.bg-hash-btn-min');
+  if (!minBtn) {
+    minBtn = document.createElement('button');
+    minBtn.className = 'bg-hash-btn-min';
+    minBtn.style.background = 'none';
+    minBtn.style.border = 'none';
+    minBtn.style.color = 'var(--color-text-muted, #9ca3af)';
+    minBtn.style.cursor = 'pointer';
+    minBtn.style.padding = '2px';
+    minBtn.style.fontSize = '0.75rem';
+    minBtn.style.lineHeight = '1';
+    minBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      bgHashState.panelMinimized = !bgHashState.panelMinimized;
+      updateBackgroundHashingProgress(true);
+    });
+    actionsEl.appendChild(minBtn);
+  }
+
+  let closeBtn = actionsEl.querySelector('.bg-hash-btn-close');
+  if (!closeBtn) {
+    closeBtn = document.createElement('button');
+    closeBtn.className = 'bg-hash-btn-close';
+    closeBtn.style.background = 'none';
+    closeBtn.style.border = 'none';
+    closeBtn.style.color = 'var(--color-text-muted, #9ca3af)';
+    closeBtn.style.cursor = 'pointer';
+    closeBtn.style.padding = '2px';
+    closeBtn.style.fontSize = '0.75rem';
+    closeBtn.style.lineHeight = '1';
+    closeBtn.textContent = '×';
+    closeBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      bgHashState.panelClosed = true;
+      indicator.classList.add('hidden');
+    });
+    actionsEl.appendChild(closeBtn);
+  }
+
+  let fileEl = indicator.querySelector('.bg-hash-file');
+  if (!fileEl) {
+    fileEl = document.createElement('div');
+    fileEl.className = 'bg-hash-file';
+    fileEl.style.fontSize = '0.75rem';
+    fileEl.style.color = 'var(--color-text-muted, #9ca3af)';
+    fileEl.style.whiteSpace = 'nowrap';
+    fileEl.style.overflow = 'hidden';
+    fileEl.style.textOverflow = 'ellipsis';
+    indicator.appendChild(fileEl);
+  }
+
+  let progressContainer = indicator.querySelector('.bg-hash-progress-container');
+  if (!progressContainer) {
+    progressContainer = document.createElement('div');
+    progressContainer.className = 'bg-hash-progress-container';
+    Object.assign(progressContainer.style, {
+      width: '100%',
+      backgroundColor: 'var(--color-border, #374151)',
+      height: '6px',
+      borderRadius: '3px',
+      overflow: 'hidden',
+      position: 'relative'
+    });
+    const fillEl = document.createElement('div');
+    fillEl.className = 'bg-hash-progress-fill';
+    Object.assign(fillEl.style, {
+      height: '100%',
+      backgroundColor: 'var(--color-primary, #6366f1)',
+      width: '0%',
+      transition: 'width 0.1s ease'
+    });
+    progressContainer.appendChild(fillEl);
+    indicator.appendChild(progressContainer);
+  }
+
+  const fillEl = progressContainer.querySelector('.bg-hash-progress-fill');
+
+  if (bgHashState.panelMinimized) {
+    titleEl.textContent = `ハッシュ検証 ${current} / ${total}`;
+    minBtn.textContent = '＋';
+    fileEl.style.display = 'none';
+    progressContainer.style.display = 'none';
+    indicator.style.gap = '0px';
+    indicator.style.padding = '8px 12px';
+  } else {
+    let headerText = `フルハッシュ検証中 ${current} / ${total}`;
+    const extraStats = [];
+    let failedCount = 0;
+    let skippedCount = 0;
+    for (const id of bgHashState.targetKeys) {
+      if (bgHashState.failedKeys.has(id)) failedCount++;
+      else if (bgHashState.skippedKeys.has(id)) skippedCount++;
+    }
+
+    if (failedCount > 0) extraStats.push(`失敗: ${failedCount}件`);
+    if (skippedCount > 0) extraStats.push(`スキップ: ${skippedCount}件`);
+    if (extraStats.length > 0) headerText += ` (${extraStats.join(', ')})`;
+
+    titleEl.textContent = headerText;
+    minBtn.textContent = '－';
+    indicator.style.gap = '6px';
+    indicator.style.padding = '12px 16px';
+
+    const clipName = (name) => {
+      if (!name) return '';
+      if (name.length > 25) {
+        return name.slice(0, 12) + '...' + name.slice(-10);
+      }
+      return name;
+    };
+
+    if (bgHashState.activeId) {
+      const pct = bgHashState.activePercent;
+      fileEl.textContent = `${clipName(bgHashState.activeName)} (${pct === null ? '検証中' : pct + '%'})`;
+      fileEl.style.display = '';
+      progressContainer.style.display = '';
+
+      if (pct === null) {
+        fillEl.className = 'bg-hash-progress-fill bg-hash-indeterminate';
+        fillEl.style.width = '100%';
+      } else {
+        fillEl.className = 'bg-hash-progress-fill';
+        fillEl.style.width = `${pct}%`;
+      }
+    } else {
+      fileEl.style.display = 'none';
+      progressContainer.style.display = 'none';
+    }
+  }
+}
+
+export async function processSingleLocationVerification(dbInstance, locId, sources, getDirectoryHandleFn, getFileHandleFn, computeHashFn) {
+  const freshLoc = dbInstance.fileLocations.find(l => l.id === locId);
+  if (!freshLoc || freshLoc.verificationStatus !== 'provisional') return;
+
+  const source = sources.find(s => s.id === freshLoc.directoryId);
+  if (!source) return;
+
+  const handle = await getDirectoryHandleFn(source.handleKey);
+  if (!handle) return;
+
+  const perm = await handle.queryPermission({ mode: 'read' });
+  if (perm !== 'granted') return;
+
+  const fileHandle = await getFileHandleFn(handle, freshLoc.relativePath);
+  const fileObj = await fileHandle.getFile();
+
+  // 1. Calculate full SHA-256
+  const hash = await computeHashFn(fileObj);
+
+  // 2. Complete verification
+  const result = await dbInstance.completeLocationProvisionalVerification(freshLoc.id, hash);
+  return result;
+}
+
+export async function processBackgroundHashingQueue() {
+  const provisionalLocs = db.fileLocations.filter(loc => loc.verificationStatus === 'provisional');
   const sources = db.getDirectorySources();
+
+  logMetric(`[DIAGNOSTIC] Total provisional locations found in DB: ${provisionalLocs.length}`);
+  for (const loc of provisionalLocs) {
+    const source = sources.find(s => s.id === loc.directoryId);
+    let hasHandle = false;
+    if (source) {
+      const handle = await db.getDirectoryHandle(source.handleKey);
+      hasHandle = !!handle;
+    }
+    const isQueued = globalHashQueue.queuedKeys.has(loc.id);
+    const isRunning = globalHashQueue.runningKeys.has(loc.id);
+    logMetric(`[DIAGNOSTIC_ITEM] location.id: ${loc.id}, mediaAssetId: ${loc.mediaAssetId}, sourceId: ${loc.directoryId}, relativePath: ${loc.relativePath}, verificationStatus: ${loc.verificationStatus}, sourceStatus: ${source ? 'present' : 'absent'}, hasHandle: ${hasHandle}, permissionStatus: ${source ? source.permissionStatus : 'N/A'}, isQueued: ${isQueued}, isRunning: ${isRunning}`);
+  }
+
+  if (provisionalLocs.length === 0) {
+    updateBackgroundHashingProgress(true);
+    return;
+  }
+
   if (sources.length === 0) return;
 
-  for (const video of videos) {
-    globalHashQueue.enqueue(async () => {
-      try {
-        const currentVideo = db.getVideo(video.id);
-        if (!currentVideo || currentVideo.hashStatus !== 'pending') return;
+  // 1. Asynchronously filter only currently eligible/accessible locations
+  const eligibleLocs = [];
+  for (const loc of provisionalLocs) {
+    const source = sources.find(s => s.id === loc.directoryId);
+    if (!source || source.permissionStatus !== 'granted') continue;
 
-        const result = await db.performVerifiedVideoHashing(
-          video.id,
-          async (loc) => {
-            const source = sources.find(s => s.id === loc.directoryId);
-            if (!source) return null;
-            const handle = await db.getDirectoryHandle(source.handleKey);
-            if (!handle) return null;
-            const perm = await handle.queryPermission({ mode: 'read' });
-            if (perm !== 'granted') return null;
-            const fileHandle = await getFileHandleFromRelativePath(handle, loc.relativePath);
-            return await fileHandle.getFile();
-          },
-          computeFileSHA256
+    const handle = await db.getDirectoryHandle(source.handleKey);
+    if (!handle) continue;
+
+    try {
+      const perm = await handle.queryPermission({ mode: 'read' });
+      if (perm !== 'granted') continue;
+    } catch (err) {
+      continue;
+    }
+
+    eligibleLocs.push(loc);
+  }
+
+  const finalLocsToProcess = eligibleLocs;
+
+  if (finalLocsToProcess.length === 0) {
+    updateBackgroundHashingProgress(true);
+    return;
+  }
+
+  // Start new batch if queued/running are empty and we have new locations to process
+  const newLocs = finalLocsToProcess.filter(loc => {
+    return !globalHashQueue.queuedKeys.has(loc.id) && !globalHashQueue.runningKeys.has(loc.id);
+  });
+
+  if (newLocs.length === 0) {
+    updateBackgroundHashingProgress();
+    return;
+  }
+
+  if (globalHashQueue.queuedKeys.size === 0 && globalHashQueue.runningKeys.size === 0) {
+    bgHashState.batchId = 'batch-' + Math.random().toString(36).slice(2);
+    bgHashState.generation++;
+    bgHashState.targetKeys.clear();
+    bgHashState.completedKeys.clear();
+    bgHashState.failedKeys.clear();
+    bgHashState.skippedKeys.clear();
+    bgHashState.panelClosed = false;
+    if (bgHashCloseTimeout) {
+      clearTimeout(bgHashCloseTimeout);
+      bgHashCloseTimeout = null;
+    }
+  }
+
+  const currentGeneration = bgHashState.generation;
+  const currentBatchId = bgHashState.batchId;
+
+  for (const loc of newLocs) {
+    logMetric(`Queue Enqueue: Name: ${loc.fileName}, Size: ${loc.fileSize}, LocId: ${loc.id}`);
+
+    const promise = globalHashQueue.enqueue(loc.id, async () => {
+      // 4. Validate generation before starting execution
+      if (bgHashState.generation !== currentGeneration || bgHashState.batchId !== currentBatchId) {
+        return;
+      }
+
+      // Pre-execution DB validation check
+      const freshLoc = db.fileLocations.find(l => l.id === loc.id);
+      if (!freshLoc || freshLoc.verificationStatus !== 'provisional') {
+        if (bgHashState.generation === currentGeneration) {
+          updateBackgroundHashingProgress();
+        }
+        return;
+      }
+
+      const source = sources.find(s => s.id === freshLoc.directoryId);
+      if (!source) {
+        if (bgHashState.generation === currentGeneration) {
+          updateBackgroundHashingProgress();
+        }
+        return;
+      }
+
+      try {
+        const handle = await db.getDirectoryHandle(source.handleKey);
+        if (!handle) {
+          if (bgHashState.generation === currentGeneration) {
+            updateBackgroundHashingProgress();
+          }
+          return;
+        }
+        const perm = await handle.queryPermission({ mode: 'read' });
+        if (perm !== 'granted') {
+          if (bgHashState.generation === currentGeneration) {
+            updateBackgroundHashingProgress();
+          }
+          return;
+        }
+
+        if (bgHashState.generation === currentGeneration) {
+          bgHashState.activeId = loc.id;
+          bgHashState.activeName = loc.fileName;
+          bgHashState.activePercent = null;
+          updateBackgroundHashingProgress(true);
+        }
+
+        await processSingleLocationVerification(
+          db,
+          loc.id,
+          sources,
+          (key) => db.getDirectoryHandle(key),
+          getFileHandleFromRelativePath,
+          (file, opts) => {
+            return computeFileSHA256(file, {
+              ...opts,
+              onProgress: (pInfo) => {
+                // Validate generation in progress callback
+                if (bgHashState.generation === currentGeneration) {
+                  if (pInfo.percent < 100) {
+                    bgHashState.activePercent = pInfo.percent;
+                  } else {
+                    bgHashState.activePercent = 100;
+                  }
+                  updateBackgroundHashingProgress();
+                }
+              }
+            });
+          }
         );
 
-        if (result.status === 'success') {
-          if (result.merged) {
-            console.log(`Merged duplicate asset in background: ${video.id} -> ${result.targetAssetId}`);
-          } else if (result.conflict) {
-            console.log(`Conflict detected for contentHash ${result.hash}. Group ID: ${result.conflictGroupId}`);
-          } else {
-            console.log(`Successfully hashed video ${video.id} -> ${result.hash}`);
+        if (bgHashState.generation === currentGeneration) {
+          // Double check targetKeys before marking completed
+          if (bgHashState.targetKeys.has(loc.id)) {
+            bgHashState.completedKeys.add(loc.id);
           }
-        } else {
-          console.warn(`Background hashing finished with status: ${result.status}, reason: ${result.reason}`);
         }
-        renderLibrary();
       } catch (err) {
-        console.error(`Failed background hashing for video ${video.id}:`, err);
+        console.error(`Failed background verification for location ${loc.relativePath}:`, err);
+        if (bgHashState.generation === currentGeneration) {
+          if (bgHashState.targetKeys.has(loc.id)) {
+            bgHashState.failedKeys.add(loc.id);
+          }
+        }
+      } finally {
+        if (bgHashState.generation === currentGeneration) {
+          if (bgHashState.activeId === loc.id) {
+            bgHashState.activeId = null;
+            bgHashState.activeName = '';
+            bgHashState.activePercent = null;
+          }
+          updateBackgroundHashingProgress(true);
+          renderLibrary();
+        }
       }
-    }).catch(err => {
-      console.error(`Queue error for video ${video.id}:`, err);
     });
+
+    if (promise) {
+      bgHashState.targetKeys.add(loc.id);
+      promise.catch(err => {
+        console.error(`Queue error for location ${loc.relativePath}:`, err);
+      });
+    }
   }
+
+  updateBackgroundHashingProgress(true);
 }
 
 // Reusable helper to filter videos
@@ -1107,10 +1650,10 @@ function renderLibrary() {
       titleH4.style.flex = '1';
       titleContainer.appendChild(titleH4);
 
-      // Card Delete Button
+      // Card Delete Button (Archive)
       const delBtn = document.createElement('button');
       delBtn.className = 'btn btn-icon btn-delete-card';
-      delBtn.title = 'ライブラリから削除';
+      delBtn.title = 'ライブラリからアーカイブ削除 (評価データは保持されます)';
       delBtn.style.padding = '2px';
       delBtn.style.color = 'var(--color-text-muted)';
       delBtn.style.cursor = 'pointer';
@@ -1119,15 +1662,56 @@ function renderLibrary() {
         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
       </svg>`;
 
-      // Hover styling
-      delBtn.addEventListener('mouseenter', () => { delBtn.style.color = 'var(--color-error)'; });
+      delBtn.addEventListener('mouseenter', () => { delBtn.style.color = 'var(--color-warning, #f59e0b)'; });
       delBtn.addEventListener('mouseleave', () => { delBtn.style.color = 'var(--color-text-muted)'; });
 
-      // Click event handles cascade delete safely
       delBtn.addEventListener('click', async (e) => {
-        e.stopPropagation(); // Avoid opening the editing workspace
-        
-        const confirmMsg = `一覧からこの動画を削除します。評価、タグ、コメント、タイムラインメモも削除されます。実際の動画ファイルは削除されません。\n\n動画: 「${v.displayTitle || v.title}」\n本当に削除しますか？`;
+        e.stopPropagation();
+        const confirmMsg = `一覧からこの動画を削除します。評価データは保持され、再スキャン時に復元可能です。実際の動画ファイルは削除されません。\n\n動画: 「${v.displayTitle || v.title}」\n本当に削除しますか？`;
+        if (confirm(confirmMsg)) {
+          try {
+            if (state.currentVideoId === v.id) {
+              revokeActiveBlobUrl();
+              state.activeVideoFile = null;
+            }
+            const success = await db.archiveVideo(v.id);
+            if (success) {
+              state.videoFilesMap.delete(v.id);
+              showToast('動画をアーカイブ削除しました。');
+              const currentVideoStillExists = db.getVideo(state.currentVideoId);
+              if (state.currentVideoId && !currentVideoStillExists) {
+                handleBackToLibrary();
+              } else {
+                renderLibrary();
+              }
+            } else {
+              showToast('動画のアーカイブ削除に失敗しました。', 'error');
+            }
+          } catch (err) {
+            showToast(`削除エラー: ${err.message}`, 'error');
+          }
+        }
+      });
+
+      // Card Permanent Delete Button
+      const permDelBtn = document.createElement('button');
+      permDelBtn.className = 'btn btn-icon btn-perm-delete-card';
+      permDelBtn.title = '完全に削除 (評価データも削除され、再スキャンしても復元できません)';
+      permDelBtn.style.padding = '2px';
+      permDelBtn.style.color = 'var(--color-text-muted)';
+      permDelBtn.style.cursor = 'pointer';
+      permDelBtn.style.flexShrink = '0';
+      permDelBtn.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" style="width:16px;height:16px" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 11l4 4m0-4l-4 4" />
+      </svg>`;
+
+      permDelBtn.addEventListener('mouseenter', () => { permDelBtn.style.color = 'var(--color-error)'; });
+      permDelBtn.addEventListener('mouseleave', () => { permDelBtn.style.color = 'var(--color-text-muted)'; });
+
+      permDelBtn.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        const confirmMsg = `完全に削除します。\n評価・タグ・コメント・タイムラインメモも削除され、再スキャンしても復元できません。実際の動画ファイルは削除されません。\n\n動画: 「${v.displayTitle || v.title}」\n本当に完全に削除しますか？`;
         if (confirm(confirmMsg)) {
           try {
             if (state.currentVideoId === v.id) {
@@ -1137,8 +1721,7 @@ function renderLibrary() {
             const success = await db.deleteVideoCascade(v.id);
             if (success) {
               state.videoFilesMap.delete(v.id);
-              showToast('一覧から削除しました。実ファイルは削除されていません。');
-              
+              showToast('データベースから完全に削除しました。');
               const currentVideoStillExists = db.getVideo(state.currentVideoId);
               if (state.currentVideoId && !currentVideoStillExists) {
                 handleBackToLibrary();
@@ -1146,15 +1729,16 @@ function renderLibrary() {
                 renderLibrary();
               }
             } else {
-              showToast('動画の削除に失敗しました。', 'error');
+              showToast('動画の完全削除に失敗しました。', 'error');
             }
           } catch (err) {
-            showToast(`削除エラー: ${err.message}`, 'error');
+            showToast(`完全削除エラー: ${err.message}`, 'error');
           }
         }
       });
 
       titleContainer.appendChild(delBtn);
+      titleContainer.appendChild(permDelBtn);
       bodyDiv.appendChild(titleContainer);
 
       // Display original title as subtitle if displayTitle is present
@@ -1292,6 +1876,73 @@ function handleBackToLibrary() {
   renderLibrary();
 }
 
+function renderLocationsListInEditor(video) {
+  if (video.sourceType === 'url') {
+    els.infoLocationsContainer.style.display = 'none';
+    return;
+  }
+  
+  els.infoLocationsContainer.style.display = 'block';
+  els.infoLocationsList.innerHTML = '';
+  
+  const locations = video.locations || [];
+  locations.forEach(loc => {
+    const row = document.createElement('div');
+    row.style.display = 'flex';
+    row.style.justify = 'space-between';
+    row.style.alignItems = 'center';
+    row.style.gap = '8px';
+    row.style.fontSize = '0.75rem';
+    row.style.padding = '4px 8px';
+    row.style.backgroundColor = 'rgba(255,255,255,0.05)';
+    row.style.borderRadius = '4px';
+
+    const source = db.getDirectorySource(loc.directoryId);
+    const folderName = source ? source.name : 'フォルダ不明';
+
+    const pathSpan = document.createElement('span');
+    pathSpan.style.wordBreak = 'break-all';
+    pathSpan.textContent = `📁 ${folderName} / ${loc.relativePath}`;
+    if (loc.verificationStatus === 'provisional') {
+      pathSpan.textContent += ' (ハッシュ検証前)';
+      pathSpan.style.color = 'var(--color-warning, #f59e0b)';
+    }
+    row.appendChild(pathSpan);
+
+    const delBtn = document.createElement('button');
+    delBtn.className = 'btn btn-icon';
+    delBtn.title = 'ロケーション登録を削除 (評価データは残ります)';
+    delBtn.style.color = 'var(--color-text-muted)';
+    delBtn.style.cursor = 'pointer';
+    delBtn.style.padding = '2px';
+    delBtn.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" style="width:14px;height:14px" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+    </svg>`;
+
+    delBtn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      if (confirm(`このロケーション登録を削除しますか？\n他のロケーション、アセット、評価データは削除しないでおきます。\n\nパス: ${loc.relativePath}`)) {
+        try {
+          await db.deleteFileLocation(loc.id);
+          showToast('ロケーション登録を削除しました。');
+          
+          const updatedVideo = db.getVideo(video.id);
+          if (!updatedVideo || !updatedVideo.locations || updatedVideo.locations.length === 0) {
+            handleBackToLibrary();
+          } else {
+            renderLocationsListInEditor(updatedVideo);
+          }
+        } catch (err) {
+          showToast(`削除エラー: ${err.message}`, 'error');
+        }
+      }
+    });
+
+    row.appendChild(delBtn);
+    els.infoLocationsList.appendChild(row);
+  });
+}
+
 // Switch Screen: Editor Workspace
 function switchScreenToEditor(videoId) {
   const video = db.getVideo(videoId);
@@ -1356,12 +2007,23 @@ function switchScreenToEditor(videoId) {
 
   // Render timeline notes
   renderTimelineNotesList();
+
+  // Render locations list
+  renderLocationsListInEditor(video);
   
   // Initialize dynamic captured timestamp label
   state.capturedNoteTime = 0;
   state.capturedNoteThumb = null;
   els.capturedTimestampLabel.textContent = '[00:00]';
   els.timelineCommentField.value = '';
+
+  // Disable or enable fields based on whether the asset itself is provisional
+  const isProvisional = video.identityStatus === 'provisional';
+  if (isProvisional) {
+    els.provisionalWarningBanner.classList.remove('hidden');
+  } else {
+    els.provisionalWarningBanner.classList.add('hidden');
+  }
 
   // Draw chart
   updateRadar();
@@ -1453,34 +2115,69 @@ async function loadVideoMediaSource(video) {
   revokeActiveBlobUrl();
 
   if (video.sourceType === 'directory') {
-    const source = db.getDirectorySource(video.directoryId);
-    if (!source) {
+    const locations = video.locations || [];
+    if (locations.length === 0) {
       showFolderErrorOnPlayer('接続フォルダ設定が削除されています。');
       return;
     }
-    
-    try {
-      const handle = await db.getDirectoryHandle(source.handleKey);
-      if (!handle) {
-        els.playerFolderPermissionButton.textContent = 'フォルダを再接続する';
-        showFolderErrorOnPlayer('フォルダの継続参照ハンドルが見つかりません。再接続してください。', 'permission');
-        return;
+
+    let resolvedFile = null;
+    let resolvedLoc = null;
+    let resolvedSource = null;
+    let hasPermissionError = false;
+    let permissionErrorSource = null;
+    let hasMissingHandleError = false;
+    let missingHandleSource = null;
+
+    for (const loc of locations) {
+      const source = db.getDirectorySource(loc.directoryId);
+      if (!source) continue;
+
+      const isDisconnected = !source.handleKey || source.permissionStatus === 'disconnected';
+      if (isDisconnected) {
+        if (!hasMissingHandleError) {
+          hasMissingHandleError = true;
+          missingHandleSource = source;
+        }
+        continue;
       }
 
-      // Query active permissions
-      const perm = await handle.queryPermission({ mode: 'read' });
-      if (perm !== 'granted') {
-        els.playerFolderPermissionButton.textContent = 'フォルダのアクセスを許可する';
-        showFolderErrorOnPlayer(`動画フォルダ「${source.name}」へのアクセス権限が必要です。`, 'permission');
-        return;
+      try {
+        const handle = await db.getDirectoryHandle(source.handleKey);
+        if (!handle) {
+          if (!hasMissingHandleError) {
+            hasMissingHandleError = true;
+            missingHandleSource = source;
+          }
+          continue;
+        }
+
+        const perm = await handle.queryPermission({ mode: 'read' });
+        if (perm !== 'granted') {
+          if (!hasPermissionError) {
+            hasPermissionError = true;
+            permissionErrorSource = source;
+          }
+          continue;
+        }
+
+        const fileHandle = await getFileHandleFromRelativePath(handle, loc.relativePath);
+        const file = await fileHandle.getFile();
+        resolvedFile = file;
+        resolvedLoc = loc;
+        resolvedSource = source;
+        break;
+      } catch (err) {
+        console.warn(`Failed to resolve location ${loc.id}:`, err);
       }
+    }
 
-      // Traverse path to resolve File
-      const fileHandle = await getFileHandleFromRelativePath(handle, video.relativePath);
-      const file = await fileHandle.getFile();
-      state.activeVideoFile = file;
+    if (resolvedFile) {
+      // Record this successful playback location as preferred
+      await db.updateLocationLastVerified(resolvedLoc.id);
 
-      const objectUrl = URL.createObjectURL(file);
+      state.activeVideoFile = resolvedFile;
+      const objectUrl = URL.createObjectURL(resolvedFile);
       state.activeBlobUrl = objectUrl;
       els.video.src = objectUrl;
       els.video.load();
@@ -1499,14 +2196,18 @@ async function loadVideoMediaSource(video) {
           els.video.removeEventListener('loadeddata', grabFirstFrame);
         }, { once: true });
       }
-    } catch (err) {
-      if (err.name === 'NotFoundError') {
-        showFolderErrorOnPlayer(`ファイルが見つかりません: ${video.relativePath}`);
-        await db.updateVideo(video.id, { availabilityStatus: 'missing' });
-        renderLibrary();
-      } else {
-        showFolderErrorOnPlayer(`ファイル読み込み失敗: ${err.message}`);
-      }
+    } else if (hasPermissionError) {
+      els.playerFolderPermissionButton.textContent = 'フォルダのアクセスを許可する';
+      showFolderErrorOnPlayer(`動画フォルダ「${permissionErrorSource.name}」へのアクセス権限が必要です。`, 'permission');
+    } else if (hasMissingHandleError) {
+      els.playerFolderPermissionButton.textContent = 'フォルダを再接続する';
+      showFolderErrorOnPlayer(`動画フォルダ「${missingHandleSource.name}」の接続ハンドルが見つかりません。再接続してください。`, 'permission');
+    } else {
+      // No location worked, mark the primary (first) location as missing
+      const primaryLoc = locations[0] || {};
+      showFolderErrorOnPlayer(`ファイルが見つかりません: ${primaryLoc.relativePath || '不明なパス'}`);
+      await db.updateVideo(video.id, { availabilityStatus: 'missing', directoryId: primaryLoc.directoryId, relativePath: primaryLoc.relativePath });
+      renderLibrary();
     }
   } else if (video.sourceType === 'url') {
     els.video.src = video.videoUrl;
@@ -1575,6 +2276,12 @@ async function handleVideoPlaying() {
 function handleAddLocalFile(e) {
   const file = e.target.files[0];
   if (!file) return;
+
+  if (isIgnoredSystemEntry(file.name, file.name)) {
+    showToast('このファイルはシステムファイルのため無視されました。', 'error');
+    els.addLocalFileInput.value = '';
+    return;
+  }
 
   const tempVideo = document.createElement('video');
   tempVideo.preload = 'metadata';
@@ -1687,6 +2394,12 @@ function handleAddLocalFile(e) {
 function handleReconnectFile(e) {
   const file = e.target.files[0];
   if (!file || !state.currentVideoId) return;
+
+  if (isIgnoredSystemEntry(file.name, file.name)) {
+    showToast('システムファイルは選択できません。', 'error');
+    els.reconnectFileInput.value = '';
+    return;
+  }
 
   const video = db.getVideo(state.currentVideoId);
   if (!video) return;
@@ -2523,7 +3236,7 @@ async function startFolderScanning(source, handle) {
       return;
     }
 
-    // Apply differentials
+    // Apply differentials (now extremely fast, no synchronous full hashing)
     const summary = await applyScanDifferentials({
       db,
       directoryId: source.id,
@@ -2534,7 +3247,23 @@ async function startFolderScanning(source, handle) {
     // Save scan timestamp
     await db.updateDirectorySource(source.id, { lastScannedAt: new Date().toISOString() });
 
-    alert(`スキャン完了\n\n新規：${summary.added}本\n更新：${summary.updated}本\n変更なし：${summary.unchanged}本\n見つからない：${summary.missing}本\n判定保留：${summary.pending}本\nエラー：${summary.error}件`);
+    const sourcesList = db.getDirectorySources();
+    let eligibleCount = 0;
+    for (const loc of db.fileLocations) {
+      if (loc.verificationStatus !== 'provisional') continue;
+      const src = sourcesList.find(s => s.id === loc.directoryId);
+      if (!src || src.permissionStatus !== 'granted') continue;
+      const handle = await db.getDirectoryHandle(src.handleKey);
+      if (!handle) continue;
+      try {
+        const perm = await handle.queryPermission({ mode: 'read' });
+        if (perm === 'granted') {
+          eligibleCount++;
+        }
+      } catch (e) {}
+    }
+    const pendingValidationCount = eligibleCount;
+    alert(`スキャン完了\n\n新規：${summary.added}本\n更新：${summary.updated}本\n変更なし：${summary.unchanged}本\n見つからない：${summary.missing}本\n判定保留：${summary.pending}本\nエラー：${summary.error}件\nバックグラウンド検証待ち：${pendingValidationCount}件`);
 
     renderFolderSettingsPanel();
     renderLibrary();
@@ -2562,6 +3291,16 @@ async function handleFolderDisconnect() {
   }
 
   try {
+    globalHashQueue.cancelPending();
+    bgHashState.targetKeys.clear();
+    bgHashState.completedKeys.clear();
+    bgHashState.failedKeys.clear();
+    bgHashState.skippedKeys.clear();
+    bgHashState.activeId = null;
+    bgHashState.activeName = '';
+    bgHashState.activePercent = null;
+    updateBackgroundHashingProgress(true);
+
     await db.deleteDirectorySource(source.id);
     showToast('動画フォルダの接続を解除しました。');
     renderFolderSettingsPanel();

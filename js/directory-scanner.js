@@ -7,6 +7,39 @@ import { computeQuickHash } from './hash-helper.js';
 import { normalizePath } from './video-helper.js';
 
 /**
+ * Checks if a file or directory should be ignored as a system/hidden entry
+ * @param {string} name
+ * @param {string} relativePath
+ * @returns {boolean}
+ */
+export function isIgnoredSystemEntry(name, relativePath) {
+  const lowerName = name.toLowerCase();
+  
+  if (lowerName === '.ds_store') {
+    return true;
+  }
+  
+  if (name.startsWith('.')) {
+    return true;
+  }
+  
+  const normalizedPath = (relativePath || '').replace(/\\/g, '/');
+  const components = normalizedPath.split('/');
+  
+  for (const part of components) {
+    const lowerPart = part.toLowerCase();
+    if (lowerPart === '__macosx') {
+      return true;
+    }
+    if (part.startsWith('.')) {
+      return true;
+    }
+  }
+  
+  return false;
+}
+
+/**
  * Checks if a filename matches supported video formats (case-insensitive)
  * @param {string} fileName 
  * @returns {boolean}
@@ -99,8 +132,11 @@ export async function scanDirectory({ directoryHandle, recursive = true, signal 
           checkedFilesCount++;
 
           if (entry.kind === 'file') {
+            const fileRelPath = normalizePath(relPath ? `${relPath}/${entry.name}` : entry.name);
+            if (isIgnoredSystemEntry(entry.name, fileRelPath)) {
+              continue;
+            }
             if (isSupportedVideoFile(entry.name)) {
-              const fileRelPath = normalizePath(relPath ? `${relPath}/${entry.name}` : entry.name);
               try {
                 const file = await entry.getFile();
                 const qh = await computeQuickHash(file);
@@ -120,9 +156,13 @@ export async function scanDirectory({ directoryHandle, recursive = true, signal 
               }
             }
           } else if (entry.kind === 'directory' && recursive) {
+            const dirRelPath = normalizePath(relPath ? `${relPath}/${entry.name}` : entry.name);
+            if (isIgnoredSystemEntry(entry.name, dirRelPath)) {
+              continue;
+            }
             queue.push({
               dirHandle: entry,
-              relPath: normalizePath(relPath ? `${relPath}/${entry.name}` : entry.name)
+              relPath: dirRelPath
             });
           }
 
@@ -227,23 +267,32 @@ export function classifyScanResults({ existingVideos, scannedFiles, failedFiles,
  * @param {boolean} [options.recursive=true]
  * @returns {Promise<Object>}
  */
-export async function applyScanDifferentials({ db, directoryId, scanResult, recursive = true }) {
+export async function applyScanDifferentials({
+  db,
+  directoryId,
+  scanResult,
+  recursive = true,
+  directoryHandle = null,
+  getFileHandleFromRelativePathFn = null,
+  computeFileSHA256Fn = null,
+  onProgress = null
+}) {
   const { scannedFiles, failedFiles, failedDirectories, completed, aborted } = scanResult;
-  const existingVideos = db.getVideos().filter(v => v.sourceType === 'directory' && v.directoryId === directoryId);
+  const existingLocations = db.fileLocations.filter(loc => loc.directoryId === directoryId);
   
   const isRootFailed = failedDirectories.some(fd => fd.relativePath === '');
 
   // If root walk failed, abort diff additions and set all to scan-error status
   if (aborted || !completed || isRootFailed) {
-    for (const ev of existingVideos) {
-      await db.updateVideo(ev.id, { availabilityStatus: 'scan-error' });
+    for (const loc of existingLocations) {
+      await db.updateLocationInfo(loc.id, { availabilityStatus: 'scan-error' });
     }
     return { 
       added: 0, 
       updated: 0, 
       unchanged: 0, 
       missing: 0, 
-      pending: existingVideos.length, 
+      pending: existingLocations.length, 
       error: failedFiles.length + failedDirectories.length 
     };
   }
@@ -258,66 +307,71 @@ export async function applyScanDifferentials({ db, directoryId, scanResult, recu
   let errorCount = failedFiles.length + failedDirectories.length;
 
   // 1. Process successfully scanned files
+  let processedCount = 0;
   for (const sf of scannedFiles) {
-    const matched = existingVideos.find(ev => ev.relativePath === sf.relativePath);
-    if (!matched) {
+    processedCount++;
+    if (onProgress) {
+      onProgress(processedCount, scannedFiles.length);
+    }
+    const matchedLoc = db.fileLocations.find(loc => loc.directoryId === directoryId && normalizePath(loc.relativePath) === normalizePath(sf.relativePath));
+    if (!matchedLoc) {
       try {
-        await db.addVideo({
-          title: sf.fileName,
-          fileName: sf.fileName,
-          fileSize: sf.fileSize,
-          videoUrl: '',
-          duration: 0,
-          sourceType: 'directory',
+        const res = await db.resolveAndRegisterNewScannedFileProvisional({
           directoryId,
-          relativePath: sf.relativePath,
-          lastModified: sf.lastModified,
-          quickHash: sf.quickHash || '',
-          hashStatus: 'pending'
+          sf
         });
-        added++;
+        if (res.status === 'new') {
+          added++;
+        } else if (res.status === 'merged') {
+          unchanged++;
+        } else if (res.status === 'verification-pending') {
+          pending++;
+        } else {
+          errorCount++;
+        }
       } catch (err) {
         errorCount++;
       }
     } else {
-      const isModified = matched.fileSize !== sf.fileSize || matched.lastModified !== sf.lastModified;
+      const isModified = matchedLoc.fileSize !== sf.fileSize || matchedLoc.lastModified !== sf.lastModified;
       if (isModified) {
         try {
-          await db.updateVideo(matched.id, {
+          await db.updateLocationInfo(matchedLoc.id, {
             fileSize: sf.fileSize,
             lastModified: sf.lastModified,
-            availabilityStatus: 'available'
+            availabilityStatus: 'available',
+            verificationStatus: 'provisional'
           });
+          
+
           updated++;
         } catch (err) {
           errorCount++;
         }
       } else {
-        await db.updateVideo(matched.id, { availabilityStatus: 'available' });
+        await db.updateLocationInfo(matchedLoc.id, { availabilityStatus: 'available' });
         unchanged++;
       }
     }
   }
 
-  // 2. Process missing/failed files
-  for (const ev of existingVideos) {
-    if (scannedPaths.has(ev.relativePath)) {
+  // 2. Process missing/failed locations
+  for (const loc of existingLocations) {
+    if (scannedPaths.has(loc.relativePath)) {
       continue;
     }
 
-    const isFailedFile = failedFiles.some(ff => ff.relativePath === ev.relativePath);
-    const isFailedDir = isPathCoveredByFailedDirectory(ev.relativePath, failedDirectories);
-    const inScope = isPathInScope(ev.relativePath, recursive);
+    const isFailedFile = failedFiles.some(ff => ff.relativePath === loc.relativePath);
+    const isFailedDir = isPathCoveredByFailedDirectory(loc.relativePath, failedDirectories);
+    const inScope = isPathInScope(loc.relativePath, recursive);
 
     if (inScope && !isFailedFile && !isFailedDir) {
-      await db.updateVideo(ev.id, { availabilityStatus: 'missing' });
+      await db.updateLocationInfo(loc.id, { availabilityStatus: 'missing' });
       missing++;
     } else if (isFailedFile || isFailedDir) {
-      // Mark as scan-error to avoid false-positive missing
-      await db.updateVideo(ev.id, { availabilityStatus: 'scan-error' });
+      await db.updateLocationInfo(loc.id, { availabilityStatus: 'scan-error' });
       pending++;
     } else {
-      // Out of scope (not scanned in this mode)
       pending++;
     }
   }
