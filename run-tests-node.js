@@ -159,6 +159,43 @@ const MIME_TYPES = {
 };
 
 async function run() {
+  const args = process.argv.slice(2);
+  let testGroup = null;
+  let hasInvalidArg = false;
+
+  for (let i = 0; i < args.length; i++) {
+    if (args[i] === '--group') {
+      testGroup = args[i + 1] || null;
+      i++;
+    } else if (args[i].startsWith('--group=')) {
+      testGroup = args[i].split('=')[1] || null;
+    } else if (args[i] === '--all') {
+      testGroup = 'all';
+    } else {
+      hasInvalidArg = true;
+    }
+  }
+
+  const validGroups = ['hash', 'folder', 'all'];
+  if (hasInvalidArg || (testGroup !== null && !validGroups.includes(testGroup))) {
+    console.error(`
+利用方法 (Usage):
+  node run-tests-node.js [--group <group_name>] [--all]
+
+有効なグループ名 (Valid group names):
+  - hash   : ハッシュ検証関連テストのみ実行
+  - folder : フォルダ管理・スキャン関連テストのみ実行
+  - all    : すべてのテストを実行
+
+例 (Examples):
+  node run-tests-node.js --group folder
+  node run-tests-node.js --group hash
+  node run-tests-node.js --all
+    `);
+    process.exitCode = 1;
+    return;
+  }
+
   const chromePath = findChromeExecutable();
   if (!chromePath) {
     console.error(`
@@ -305,18 +342,7 @@ Candidates searched:
 
     logPhase('chrome-launch', `Launching Chrome Headless via: ${chromePath}`);
 
-    const args = process.argv.slice(2);
-    let testGroup = null;
-    for (let i = 0; i < args.length; i++) {
-      if (args[i] === '--group') {
-        testGroup = args[i + 1] || null;
-        i++;
-      } else if (args[i].startsWith('--group=')) {
-        testGroup = args[i].split('=')[1] || null;
-      } else if (args[i] === '--all') {
-        testGroup = 'all';
-      }
-    }
+
 
     let targetUrl = `http://127.0.0.1:${serverPort}/test.html?automated=true`;
     if (testGroup) {
