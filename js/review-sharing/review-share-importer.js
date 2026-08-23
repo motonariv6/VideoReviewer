@@ -21,7 +21,7 @@ function formatTime(seconds) {
 
 /**
  * Imports reviews from a Shared Review Package.
- * @param {AppDatabase} db 
+ * @param {AppDatabase} db
  * @param {object} pkg The Shared Review Package JSON object
  * @param {number[]} selectedIndices Indices of items chosen by the user
  * @returns {object} Import summary counts
@@ -62,44 +62,28 @@ export function importPackage(db, pkg, selectedIndices) {
       }
 
       // Duplicate Check 2: Already pending?
-      const alreadyPending = db.pendingSharedReviews.some(p => 
-        p.videoHash === videoHash.toLowerCase() && 
-        p.payload.reviewId === reviewId &&
-        p.payload.reviewerId === reviewerId
-      );
+      const alreadyPending = db.hasPendingSharedReview(videoHash, reviewId, reviewerId);
       if (alreadyPending) {
         summary.duplicate++;
         continue;
       }
 
       // Match video by full SHA-256 hash
-      const matchedVideo = db.mediaAssets.find(v => 
-        v.contentHash && v.contentHash.toLowerCase() === videoHash.toLowerCase()
-      );
+      const matchedVideo = db.findVideoByContentHash(videoHash);
 
       if (matchedVideo) {
         // Matched! Register shared review
         // Resolve/Register Remote Reviewer
         let dbReviewer = db.findReviewerBySourceId(reviewerId);
         if (!dbReviewer) {
-          // Check for reviewer ID collision (if remote reviewer ID matches our local reviewer ID)
-          const localRev = db.getLocalReviewer();
-          let nextReviewerId = reviewerId;
-          if (localRev && localRev.id === reviewerId) {
-            // Generate unique local ID to protect local owner properties
-            nextReviewerId = 'reviewer-' + generateUUIDv4();
-          }
           dbReviewer = db.addImportedReviewer({
-            id: nextReviewerId,
             displayName: pkg.exporter.displayName || '共有レビュアー',
             sourceReviewerId: reviewerId
           });
         }
 
         // Add Video Review
-        const localReviewId = 'rev-' + generateUUIDv4();
-        db.addImportedReview({
-          id: localReviewId,
+        const localReview = db.addImportedReview({
           mediaAssetId: matchedVideo.id,
           reviewerId: dbReviewer.id,
           overallScore: review.overallRating,
@@ -107,26 +91,18 @@ export function importPackage(db, pkg, selectedIndices) {
           sourceReviewId: reviewId,
           sourceReviewerId: reviewerId
         });
+        const localReviewId = localReview.id;
 
         // Map and Associate Tags
         if (review.tags && review.tags.length > 0) {
           for (const tObj of review.tags) {
-            const normalized = normalizeTag(tObj.tag);
-            let dbTag = db.tags.find(t => normalizeTag(t.name) === normalized);
-            if (!dbTag) {
-              // Create new global tag
-              const newTagId = 'tag-' + generateUUIDv4();
-              dbTag = {
-                id: newTagId,
-                name: tObj.tag
-              };
-              db.tags.push(dbTag);
-              db._saveTable('tags', db.tags);
+            const dbTag = db.getOrCreateTag(tObj.tag);
+            if (dbTag) {
+              db.addImportedTagAssociation({
+                videoReviewId: localReviewId,
+                tagId: dbTag.id
+              });
             }
-            db.addImportedTagAssociation({
-              videoReviewId: localReviewId,
-              tagId: dbTag.id
-            });
           }
         }
 

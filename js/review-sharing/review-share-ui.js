@@ -1,5 +1,5 @@
 // review-share-ui.js - Handles the UI interactions for exporting/importing reviews
-import { exportReviews } from './review-share-exporter.js';
+import { exportReviews, isVideoEligibleForExport } from './review-share-exporter.js';
 import { importPackage } from './review-share-importer.js';
 import { validateSharedReviewPackage } from './review-share-validator.js';
 import { scoreToGrade } from './review-share-model.js';
@@ -17,10 +17,10 @@ let getFilteredVideosListRef = null;
 
 /**
  * Initializes the Review Sharing UI controls and binds events.
- * @param {AppDatabase} db 
- * @param {object} state 
- * @param {function} showToast 
- * @param {function} renderLibrary 
+ * @param {AppDatabase} db
+ * @param {object} state
+ * @param {function} showToast
+ * @param {function} renderLibrary
  * @param {function} getFilteredVideosList
  */
 export function initShareUI(db, state, showToast, renderLibrary, getFilteredVideosList) {
@@ -42,7 +42,7 @@ export function initShareUI(db, state, showToast, renderLibrary, getFilteredVide
     btnExportSubmit: document.getElementById('btn-share-export-submit'),
     btnImportTrigger: document.getElementById('btn-share-import-trigger'),
     importFileInput: document.getElementById('share-import-file'),
-    
+
     // Import Preview Modal
     modalImportPreview: document.getElementById('modal-share-import-preview'),
     importCloseX: document.getElementById('share-import-preview-close-x'),
@@ -104,10 +104,10 @@ export function initShareUI(db, state, showToast, renderLibrary, getFilteredVide
 function startExportMode() {
   stateRef.shareExportMode = true;
   stateRef.selectedExportVideoIds = new Set();
-  
+
   if (elements.standardActions) elements.standardActions.classList.add('hidden');
   if (elements.exportActions) elements.exportActions.classList.remove('hidden');
-  
+
   updateExportSelectedCount();
   renderLibraryRef();
   showToastRef('エクスポート選択モードを開始しました。アセットを選択してください。', 'success');
@@ -116,10 +116,10 @@ function startExportMode() {
 export function cancelExportMode() {
   stateRef.shareExportMode = false;
   stateRef.selectedExportVideoIds = new Set();
-  
+
   if (elements.standardActions) elements.standardActions.classList.remove('hidden');
   if (elements.exportActions) elements.exportActions.classList.add('hidden');
-  
+
   renderLibraryRef();
 }
 
@@ -133,8 +133,7 @@ function selectAllExport() {
   const filteredVideos = getFilteredVideosListLocal();
   let count = 0;
   filteredVideos.forEach(v => {
-    // Only select videos with completed SHA-256 hash
-    if (v.hashStatus === 'completed' && v.contentHash && v.contentHash.length === 64) {
+    if (isVideoEligibleForExport(dbRef, v)) {
       stateRef.selectedExportVideoIds.add(v.id);
       count++;
     }
@@ -142,7 +141,7 @@ function selectAllExport() {
   updateExportSelectedCount();
   renderLibraryRef();
   if (count === 0) {
-    showToastRef('エクスポート可能な有効なハッシュ値を持つ動画がありません。', 'warning');
+    showToastRef('エクスポート可能な有効なハッシュ値とレビューを持つ動画がありません。', 'warning');
   }
 }
 
@@ -162,7 +161,7 @@ function submitExport() {
     const pkg = exportReviews(dbRef, Array.from(stateRef.selectedExportVideoIds));
     const blob = new Blob([JSON.stringify(pkg, null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
-    
+
     const a = document.createElement('a');
     a.href = url;
     a.download = `reviews-share-${pkg.packageId}.json`;
@@ -170,7 +169,7 @@ function submitExport() {
     a.click();
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
-    
+
     showToastRef('共有レビューのエクスポートに成功しました。', 'success');
     cancelExportMode();
   } catch (err) {
@@ -188,7 +187,7 @@ function handleFileImport(e) {
   reader.onload = function(evt) {
     try {
       const pkg = JSON.parse(evt.target.result);
-      
+
       // Perform validation before showing preview
       const validation = validateSharedReviewPackage(pkg);
       if (!validation.isValid) {
@@ -217,22 +216,16 @@ function openImportPreview(pkg) {
 
   if (elements.importPreviewList) {
     elements.importPreviewList.innerHTML = '';
-    
+
     pkg.items.forEach((item, idx) => {
       const { videoHash, review } = item;
       const { reviewId, reviewerId } = review;
-      
-      const matchedVideo = dbRef.mediaAssets.find(v => 
-        v.contentHash && v.contentHash.toLowerCase() === videoHash.toLowerCase()
-      );
 
-      // Check duplicates
+      const matchedVideo = dbRef.findVideoByContentHash(videoHash);
+
+      // Check duplicates using clean DB APIs
       const isDuplicateImported = !!dbRef.findReviewBySourceId(reviewId, reviewerId);
-      const isDuplicatePending = dbRef.pendingSharedReviews.some(p => 
-        p.videoHash === videoHash.toLowerCase() && 
-        p.payload.reviewId === reviewId &&
-        p.payload.reviewerId === reviewerId
-      );
+      const isDuplicatePending = dbRef.hasPendingSharedReview(videoHash, reviewId, reviewerId);
       const isDuplicate = isDuplicateImported || isDuplicatePending;
 
       let titleText = '(動画未登録)';
@@ -257,13 +250,19 @@ function openImportPreview(pkg) {
       const tdCheck = document.createElement('td');
       tdCheck.style.padding = '10px';
       tdCheck.style.textAlign = 'center';
-      
+
       const chk = document.createElement('input');
       chk.type = 'checkbox';
       chk.className = 'share-import-item-checkbox';
       chk.dataset.index = idx;
-      // Duplicates are unchecked by default, valid ones checked
-      chk.checked = !isDuplicate;
+      // Duplicates are unchecked and disabled
+      if (isDuplicate) {
+        chk.checked = false;
+        chk.disabled = true;
+        chk.title = '既にインポート済み、または保留リストに存在します';
+      } else {
+        chk.checked = true;
+      }
       chk.addEventListener('change', updateImportPreviewCount);
       tdCheck.appendChild(chk);
       tr.appendChild(tdCheck);
@@ -271,7 +270,7 @@ function openImportPreview(pkg) {
       // Title & Hash TD
       const tdTitle = document.createElement('td');
       tdTitle.style.padding = '10px';
-      
+
       const mainTitle = document.createElement('div');
       mainTitle.style.fontWeight = '500';
       mainTitle.textContent = titleText;
@@ -348,7 +347,9 @@ function selectAllImportPreview() {
   if (!elements.importPreviewList) return;
   const checkboxes = elements.importPreviewList.querySelectorAll('.share-import-item-checkbox');
   checkboxes.forEach(chk => {
-    chk.checked = true;
+    if (!chk.disabled) {
+      chk.checked = true;
+    }
   });
   updateImportPreviewCount();
 }
@@ -364,7 +365,7 @@ function deselectAllImportPreview() {
 
 function submitImport() {
   if (!currentImportPackage || !elements.importPreviewList) return;
-  
+
   const checkboxes = elements.importPreviewList.querySelectorAll('.share-import-item-checkbox');
   const selectedIndices = [];
   checkboxes.forEach(chk => {
@@ -380,7 +381,7 @@ function submitImport() {
 
   try {
     const summary = importPackage(dbRef, currentImportPackage, selectedIndices);
-    
+
     // Display summary results
     const summaryText = `インポート完了しました。\n` +
       `インポート成功: ${summary.imported} 件\n` +
@@ -388,7 +389,7 @@ function submitImport() {
       `重複スキップ: ${summary.duplicate} 件\n` +
       `保護/スキップ: ${summary.protected} 件\n` +
       `失敗: ${summary.failed} 件`;
-    
+
     alert(summaryText); // using standard alert as per requirement (or we can show modal/toast)
     showToastRef('インポートが完了しました。', 'success');
     closeImportPreview();

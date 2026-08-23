@@ -33,6 +33,7 @@ import {
 } from './archive/archive-management-controller.js';
 import { renderFolderSettingsUI, updateScanProgressUI } from './folder/folder-settings-ui.js';
 import { initShareUI } from './review-sharing/review-share-ui.js';
+import { isVideoEligibleForExport } from './review-sharing/review-share-exporter.js';
 
 export {
   bgHashState,
@@ -980,10 +981,10 @@ function renderLibrary() {
         chk.style.cursor = 'pointer';
         chk.checked = state.selectedExportVideoIds && state.selectedExportVideoIds.has(v.id);
 
-        const canExport = v.hashStatus === 'completed' && v.contentHash && v.contentHash.length === 64;
+        const canExport = isVideoEligibleForExport(db, v);
         if (!canExport) {
           chk.disabled = true;
-          chk.title = 'ハッシュ値計算未完了のため選択できません';
+          chk.title = 'ハッシュ値計算未完了、またはオーナーレビューが存在しないため選択できません';
         }
 
         chk.addEventListener('click', (e) => {
@@ -1000,7 +1001,7 @@ function renderLibrary() {
         card.addEventListener('click', (e) => {
           e.stopPropagation();
           if (!canExport) {
-            showToast('この動画はハッシュ値計算未完了のため選択できません。', 'warning');
+            showToast('この動画はハッシュ値計算未完了、またはオーナーレビューが存在しないため選択できません。', 'warning');
             return;
           }
           if (state.selectedExportVideoIds.has(v.id)) {

@@ -4,6 +4,7 @@
  */
 
 import { base64ToBlob, normalizePath } from './video-helper.js';
+import { normalizeTag } from './review-sharing/review-share-model.js';
 
 // Helper to generate unique IDs
 function generateUUID() {
@@ -11,6 +12,17 @@ function generateUUID() {
     return crypto.randomUUID();
   }
   return 'id-' + Date.now().toString(36) + '-' + Math.random().toString(36).substr(2, 9);
+}
+
+function generateUUIDv4() {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+    const r = Math.random() * 16 | 0;
+    const v = c === 'x' ? r : (r & 0x3 | 0x8);
+    return v.toString(16);
+  });
 }
 
 // Normalizes displayTitle: null/undefined/blank becomes null, non-empty string is trimmed.
@@ -2611,6 +2623,38 @@ export class AppDatabase {
     this._saveTable('pending_shared_reviews', this.pendingSharedReviews);
   }
 
+  findVideoByContentHash(contentHash) {
+    if (!contentHash) return null;
+    const lowerHash = contentHash.toLowerCase();
+    return this.mediaAssets.find(v => v.contentHash && v.contentHash.toLowerCase() === lowerHash) || null;
+  }
+
+  hasPendingSharedReview(videoHash, reviewId, reviewerId) {
+    if (!videoHash) return false;
+    const lowerHash = videoHash.toLowerCase();
+    return this.pendingSharedReviews.some(p =>
+      p.videoHash === lowerHash &&
+      p.payload.reviewId === reviewId &&
+      p.payload.reviewerId === reviewerId
+    );
+  }
+
+  getOrCreateTag(tagName) {
+    if (!tagName) return null;
+    const normalized = normalizeTag(tagName);
+    let dbTag = this.tags.find(t => normalizeTag(t.name) === normalized);
+    if (!dbTag) {
+      const newTagId = 'tag-' + generateUUIDv4();
+      dbTag = {
+        id: newTagId,
+        name: tagName
+      };
+      this.tags.push(dbTag);
+      this._saveTable('tags', this.tags);
+    }
+    return dbTag;
+  }
+
   findReviewerBySourceId(sourceReviewerId) {
     return this.reviewers.find(r => r.sourceReviewerId === sourceReviewerId) || null;
   }
@@ -2619,10 +2663,10 @@ export class AppDatabase {
     return this.reviews.find(r => r.sourceReviewId === sourceReviewId && r.sourceReviewerId === sourceReviewerId) || null;
   }
 
-  addImportedReviewer({ id, displayName, sourceReviewerId }) {
+  addImportedReviewer({ displayName, sourceReviewerId }) {
     const now = new Date().toISOString();
     const reviewer = {
-      id: id || ('reviewer-' + generateUUID()),
+      id: 'reviewer-' + generateUUIDv4(), // Always generate local UUIDv4
       displayName,
       isLocal: false,
       sourceReviewerId,
@@ -2634,10 +2678,10 @@ export class AppDatabase {
     return reviewer;
   }
 
-  addImportedReview({ id, mediaAssetId, reviewerId, overallScore, comment, sourceReviewId, sourceReviewerId }) {
+  addImportedReview({ mediaAssetId, reviewerId, overallScore, comment, sourceReviewId, sourceReviewerId }) {
     const now = new Date().toISOString();
     const review = {
-      id: id || ('rev-' + generateUUID()),
+      id: 'rev-' + generateUUIDv4(), // Always generate local UUIDv4
       mediaAssetId,
       reviewerId,
       origin: 'imported',

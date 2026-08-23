@@ -182,14 +182,41 @@ export async function runReviewShareImportExportTests() {
   });
 
   await runTest('2. 複数作品export', async () => {
-    const db = createTestDb();
+    const db = createTestDb({
+      video_reviews: [
+        {
+          id: 'rev-owner11111111',
+          mediaAssetId: 'vid-11111111',
+          reviewerId: 'reviewer-owner1234',
+          origin: 'local',
+          overallScore: 4
+        },
+        {
+          id: 'rev-owner22222222',
+          mediaAssetId: 'vid-22222222',
+          reviewerId: 'reviewer-owner1234',
+          origin: 'local',
+          overallScore: 3
+        }
+      ]
+    });
     await db.initAsync();
     const pkg = exportReviews(db, ['vid-11111111', 'vid-22222222']);
     assert(pkg.items.length === 2, 'Should contain 2 items');
   });
 
   await runTest('3. 選択作品だけexport', async () => {
-    const db = createTestDb();
+    const db = createTestDb({
+      video_reviews: [
+        {
+          id: 'rev-owner22222222',
+          mediaAssetId: 'vid-22222222',
+          reviewerId: 'reviewer-owner1234',
+          origin: 'local',
+          overallScore: 3
+        }
+      ]
+    });
     await db.initAsync();
     const pkg = exportReviews(db, ['vid-22222222']);
     assert(pkg.items.length === 1);
@@ -242,10 +269,14 @@ export async function runReviewShareImportExportTests() {
       timeline_notes: []
     });
     await db.initAsync();
-    const pkg = exportReviews(db, ['vid-11111111']);
-    // Since owner review is missing, it should output an empty skeleton review for localOwner, NOT the imported review!
-    assert(pkg.items[0].review.reviewerId === 'reviewer-owner1234');
-    assert(pkg.items[0].review.overallRating === null);
+
+    let errorThrown = false;
+    try {
+      exportReviews(db, ['vid-11111111']);
+    } catch (e) {
+      errorThrown = true;
+    }
+    assert(errorThrown === true, 'Exporting video with only imported review should throw');
   });
 
   await runTest('6. criterion ratingsを含まない', async () => {
@@ -363,7 +394,7 @@ export async function runReviewShareImportExportTests() {
     const originalReviewsCount = db.reviews.length;
     const pkg = createValidImportPackage();
     pkg.schema = 'invalid-schema'; // trigger failure
-    
+
     let errorThrown = false;
     try {
       importPackage(db, pkg, [0]);
@@ -410,7 +441,7 @@ export async function runReviewShareImportExportTests() {
     await db.initAsync();
     const pkg = createValidImportPackage();
     importPackage(db, pkg, [0]);
-    
+
     // Check if new review registered
     const videoReviews = db.getReviewsForVideo('vid-11111111');
     assert(videoReviews.length === 2, 'Should co-exist (local owner review + imported review)');
@@ -421,7 +452,7 @@ export async function runReviewShareImportExportTests() {
     await db.initAsync();
     const pkg = createValidImportPackage();
     importPackage(db, pkg, [0]);
-    
+
     const importedReview = db.reviews.find(r => r.origin === 'imported');
     assert(importedReview !== undefined, 'Must save with origin imported');
   });
@@ -430,7 +461,7 @@ export async function runReviewShareImportExportTests() {
     const db = createTestDb();
     await db.initAsync();
     const originalOwnerReview = { ...db.getOwnerReviewForVideo('vid-11111111') };
-    
+
     const pkg = createValidImportPackage();
     importPackage(db, pkg, [0]);
 
@@ -443,7 +474,7 @@ export async function runReviewShareImportExportTests() {
     const db = createTestDb();
     await db.initAsync();
     const originalScore = db.getOwnerReviewForVideo('vid-11111111').overallScore;
-    
+
     const pkg = createValidImportPackage();
     // import overallRating: 5
     importPackage(db, pkg, [0]);
@@ -521,7 +552,7 @@ export async function runReviewShareImportExportTests() {
     const db = createTestDb();
     await db.initAsync();
     const pkg = createValidImportPackage();
-    
+
     // First import
     const summary1 = importPackage(db, pkg, [0]);
     assert(summary1.imported === 1);
@@ -551,10 +582,10 @@ export async function runReviewShareImportExportTests() {
     const db = createTestDb();
     await db.initAsync();
     const pkg = createValidImportPackage();
-    
+
     importPackage(db, pkg, [0]);
     const reviewsBefore = db.reviews.length;
-    
+
     importPackage(db, pkg, [0]); // re-import
     assert(db.reviews.length === reviewsBefore, 'Do not add new reviews to DB');
   });
@@ -567,7 +598,7 @@ export async function runReviewShareImportExportTests() {
 
     importPackage(db, pkg, [0]);
     const pendingCount = db.pendingSharedReviews.length;
-    
+
     importPackage(db, pkg, [0]);
     assert(db.pendingSharedReviews.length === pendingCount, 'Do not duplicate pending review registrations');
   });
@@ -577,7 +608,7 @@ export async function runReviewShareImportExportTests() {
     await db.initAsync();
     const pkg = createValidImportPackage();
     importPackage(db, pkg, [0]);
-    
+
     const reviewsBefore = db.reviews.length;
     importPackage(db, pkg, [0]);
     assert(db.reviews.length === reviewsBefore);
@@ -588,14 +619,14 @@ export async function runReviewShareImportExportTests() {
   await runTest('36. remote reviewer IDがlocal reviewer IDと同じ場合', async () => {
     const db = createTestDb();
     await db.initAsync();
-    
+
     // Remote reviewer ID matches local reviewer-owner1234
     const pkg = createValidImportPackage('reviewer-owner1234');
     importPackage(db, pkg, [0]);
 
     const localRev = db.getLocalReviewer();
     assert(localRev.isLocal === true, 'Local reviewer properties must be preserved');
-    
+
     const importedReview = db.reviews.find(r => r.origin === 'imported');
     assert(importedReview.reviewerId !== 'reviewer-owner1234', 'Collision mapping must map imported review to a different reviewer ID');
   });
@@ -611,7 +642,7 @@ export async function runReviewShareImportExportTests() {
     // Local owner review must not be overwritten
     const ownerReview = db.getOwnerReviewForVideo('vid-11111111');
     assert(ownerReview.reviewerId === 'reviewer-owner1234', 'Owner review must still belong to owner');
-    
+
     const importedReview = db.reviews.find(r => r.origin === 'imported');
     assert(importedReview.id !== 'rev-owner12345678', 'Collision mapping must map imported review to a generated review ID');
   });
@@ -640,7 +671,7 @@ export async function runReviewShareImportExportTests() {
     const db = createTestDb();
     await db.initAsync();
     const pkg = createValidImportPackage('reviewer-remote-fail');
-    
+
     // Simulate error during processing (e.g. inject an error in addImportedReview)
     const originalAddReview = db.addImportedReview;
     db.addImportedReview = () => { throw new Error('Simulated Crash'); };
@@ -739,7 +770,7 @@ export async function runReviewShareImportExportTests() {
     const getFilteredVideosList = () => db.getVideos();
 
     initShareUI(db, state, showToast, renderLibrary, getFilteredVideosList);
-    
+
     // Simulate clicking export start button (or directly call startExportMode if exposed)
     const startBtn = document.getElementById('btn-share-export-start');
     if (startBtn) {
@@ -757,7 +788,7 @@ export async function runReviewShareImportExportTests() {
     const getFilteredVideosList = () => db.getVideos();
 
     initShareUI(db, state, showToast, renderLibrary, getFilteredVideosList);
-    
+
     const cancelBtn = document.getElementById('btn-share-export-cancel');
     if (cancelBtn) {
       cancelBtn.click();
@@ -775,7 +806,7 @@ export async function runReviewShareImportExportTests() {
     const getFilteredVideosList = () => db.getVideos();
 
     initShareUI(db, state, showToast, renderLibrary, getFilteredVideosList);
-    
+
     // Manually trigger handleFileImport helper via triggering DOM element or manually testing input preview display
     const modal = document.getElementById('modal-share-import-preview');
     if (modal) {
@@ -812,6 +843,240 @@ export async function runReviewShareImportExportTests() {
     const doc = parser.parseFromString(htmlText, 'text/html');
     const modalSettings = doc.getElementById('modal-settings');
     assert(modalSettings !== null, 'Settings modal element must exist in index.html');
+  });
+
+  await runTest('48. owner reviewなし動画はexport不可', async () => {
+    // vid-22222222 has no owner review in default createTestDb
+    const db = createTestDb();
+    await db.initAsync();
+    let errorThrown = false;
+    try {
+      exportReviews(db, ['vid-22222222']);
+    } catch (e) {
+      errorThrown = true;
+    }
+    assert(errorThrown === true, 'Should throw when exporting video with no owner review');
+  });
+
+  await runTest('49. owner reviewあり + overallRating nullはexport可能', async () => {
+    const db = createTestDb({
+      video_reviews: [
+        {
+          id: 'rev-owner12345678',
+          mediaAssetId: 'vid-11111111',
+          reviewerId: 'reviewer-owner1234',
+          origin: 'local',
+          overallScore: null, // null rating
+          comment: '空の評価点',
+          createdAt: new Date().toISOString()
+        }
+      ]
+    });
+    await db.initAsync();
+    const pkg = exportReviews(db, ['vid-11111111']);
+    assert(pkg.items.length === 1);
+    assert(pkg.items[0].review.overallRating === null);
+  });
+
+  await runTest('50. 64文字だがhexでないhashはexport不可', async () => {
+    const db = createTestDb({
+      media_assets: [
+        {
+          id: 'vid-invalid-hex',
+          title: 'video.mp4',
+          fileName: 'video.mp4',
+          contentHash: 'gggg111111111111111111111111111111111111111111111111111111111111', // contains 'g'
+          hashAlgorithm: 'SHA-256',
+          hashStatus: 'completed',
+          genreId: 'genre-default'
+        }
+      ],
+      video_reviews: [
+        {
+          id: 'rev-owner999',
+          mediaAssetId: 'vid-invalid-hex',
+          reviewerId: 'reviewer-owner1234',
+          origin: 'local',
+          overallScore: 5
+        }
+      ]
+    });
+    await db.initAsync();
+    let errorThrown = false;
+    try {
+      exportReviews(db, ['vid-invalid-hex']);
+    } catch (e) {
+      errorThrown = true;
+    }
+    assert(errorThrown === true, 'Should reject non-hex hash characters');
+  });
+
+  await runTest('51. uppercase SHA-256はexport不可', async () => {
+    const db = createTestDb({
+      media_assets: [
+        {
+          id: 'vid-uppercase',
+          title: 'video.mp4',
+          fileName: 'video.mp4',
+          contentHash: 'AAAA111111111111111111111111111111111111111111111111111111111111', // uppercase
+          hashAlgorithm: 'SHA-256',
+          hashStatus: 'completed',
+          genreId: 'genre-default'
+        }
+      ],
+      video_reviews: [
+        {
+          id: 'rev-owner888',
+          mediaAssetId: 'vid-uppercase',
+          reviewerId: 'reviewer-owner1234',
+          origin: 'local',
+          overallScore: 5
+        }
+      ]
+    });
+    await db.initAsync();
+    let errorThrown = false;
+    try {
+      exportReviews(db, ['vid-uppercase']);
+    } catch (e) {
+      errorThrown = true;
+    }
+    assert(errorThrown === true, 'Should reject uppercase SHA-256');
+  });
+
+  await runTest('52. Select Allがinvalid hashを選択しない', async () => {
+    const db = createTestDb({
+      media_assets: [
+        { id: 'v1', contentHash: 'aaaa111111111111111111111111111111111111111111111111111111111111', hashStatus: 'completed', genreId: 'genre-default' }, // eligible
+        { id: 'v2', contentHash: 'AAAA111111111111111111111111111111111111111111111111111111111111', hashStatus: 'completed', genreId: 'genre-default' }, // ineligible (uppercase)
+        { id: 'v3', contentHash: 'bbbb222222222222222222222222222222222222222222222222222222222222', hashStatus: 'completed', genreId: 'genre-default' }  // ineligible (no owner review)
+      ],
+      video_reviews: [
+        { id: 'rev-v1', mediaAssetId: 'v1', reviewerId: 'reviewer-owner1234', origin: 'local', overallScore: 5 },
+        { id: 'rev-v2', mediaAssetId: 'v2', reviewerId: 'reviewer-owner1234', origin: 'local', overallScore: 5 }
+      ]
+    });
+    await db.initAsync();
+
+    const state = { shareExportMode: true, selectedExportVideoIds: new Set() };
+    initShareUI(db, state, () => {}, () => {}, () => db.getVideos());
+
+    const btnSelectAll = document.getElementById('btn-share-export-select-all');
+    if (btnSelectAll) {
+      btnSelectAll.click();
+      assert(state.selectedExportVideoIds.has('v1') === true, 'v1 must be selected');
+      assert(state.selectedExportVideoIds.has('v2') === false, 'v2 (uppercase hash) must not be selected');
+      assert(state.selectedExportVideoIds.has('v3') === false, 'v3 (no owner review) must not be selected');
+    }
+  });
+
+  await runTest('53. Importerがdb._saveTableを直接利用しない構造になっていること', async () => {
+    const resp = await fetch('js/review-sharing/review-share-importer.js');
+    const sourceText = await resp.text();
+    assert(!sourceText.includes('_saveTable'), 'importer.js should not call _saveTable directly');
+    assert(!sourceText.includes('db.tags.push'), 'importer.js should not push to db.tags directly');
+    assert(!sourceText.includes('db.mediaAssets'), 'importer.js should not read db.mediaAssets directly');
+    assert(!sourceText.includes('db.pendingSharedReviews'), 'importer.js should not read db.pendingSharedReviews directly');
+  });
+
+  await runTest('54. imported reviewerのlocal ID != sourceReviewerId', async () => {
+    const db = createTestDb();
+    await db.initAsync();
+    const pkg = createValidImportPackage('reviewer-remote-xyz');
+    importPackage(db, pkg, [0]);
+
+    const reviewer = db.reviewers.find(r => r.sourceReviewerId === 'reviewer-remote-xyz');
+    assert(reviewer !== undefined);
+    assert(reviewer.id !== 'reviewer-remote-xyz', 'Local ID must not be the source ID');
+    assert(reviewer.id.startsWith('reviewer-'), 'Local ID should still have reviewer- prefix');
+  });
+
+  await runTest('55. remote sourceReviewerIdが既存imported reviewerのlocal IDと衝突しても安全', async () => {
+    const db = createTestDb({
+      reviewers: [
+        {
+          id: 'reviewer-remote-xyz', // mock existing local ID being same as remote source ID
+          displayName: '競合レビュアー',
+          isLocal: false,
+          sourceReviewerId: 'reviewer-original-source',
+          createdAt: new Date().toISOString()
+        }
+      ]
+    });
+    await db.initAsync();
+    const pkg = createValidImportPackage('reviewer-remote-xyz');
+    importPackage(db, pkg, [0]);
+
+    // The newly imported reviewer should get a newly generated ID, preserving the original
+    const oldReviewer = db.reviewers.find(r => r.id === 'reviewer-remote-xyz');
+    assert(oldReviewer.sourceReviewerId === 'reviewer-original-source', 'Original reviewer must not be overwritten');
+
+    const newReviewer = db.reviewers.find(r => r.sourceReviewerId === 'reviewer-remote-xyz');
+    assert(newReviewer !== undefined);
+    assert(newReviewer.id !== 'reviewer-remote-xyz', 'New reviewer should get a unique generated ID');
+  });
+
+  await runTest('56. duplicate preview checkboxがdisabled', async () => {
+    const db = createTestDb();
+    await db.initAsync();
+
+    // Import once to create duplicate
+    const pkg = createValidImportPackage();
+    importPackage(db, pkg, [0]);
+
+    // Set up UI preview container in page body
+    const previewList = document.getElementById('share-import-preview-list');
+    if (previewList) {
+      previewList.innerHTML = '';
+      const state = {};
+      initShareUI(db, state, () => {}, () => {}, () => db.getVideos());
+
+      // Call UI open method to render duplicate row
+      const btnTrigger = document.getElementById('btn-share-import-trigger');
+      if (btnTrigger) {
+        // Trigger modal rendering (simulate file loader or direct UI list population)
+        const uiContainer = document.getElementById('modal-share-import-preview');
+        uiContainer.classList.add('open');
+
+        // Populate preview with the duplicate package
+        const checkboxes = previewList.querySelectorAll('.share-import-item-checkbox');
+        // Because of duplicate, the checkbox should be disabled
+        checkboxes.forEach(chk => {
+          assert(chk.disabled === true, 'Duplicate checkbox must be disabled');
+          assert(chk.checked === false, 'Duplicate checkbox must be unchecked');
+        });
+        uiContainer.classList.remove('open');
+      }
+    }
+  });
+
+  await runTest('57. Select All Import Previewでduplicateが選択されない', async () => {
+    const db = createTestDb();
+    await db.initAsync();
+
+    // Import once to create duplicate
+    const pkg = createValidImportPackage();
+    importPackage(db, pkg, [0]);
+
+    const previewList = document.getElementById('share-import-preview-list');
+    if (previewList) {
+      const state = {};
+      initShareUI(db, state, () => {}, () => {}, () => db.getVideos());
+
+      const uiContainer = document.getElementById('modal-share-import-preview');
+      uiContainer.classList.add('open');
+
+      const btnSelectAll = document.getElementById('btn-share-import-select-all');
+      if (btnSelectAll) {
+        btnSelectAll.click();
+        const checkboxes = previewList.querySelectorAll('.share-import-item-checkbox');
+        checkboxes.forEach(chk => {
+          // Since it is duplicate and disabled, it should remain unchecked!
+          assert(chk.checked === false, 'Disabled duplicate checkbox must not be selected by Select All');
+        });
+      }
+      uiContainer.classList.remove('open');
+    }
   });
 
   console.groupEnd(); // Group 19

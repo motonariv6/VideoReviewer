@@ -13,9 +13,39 @@ function generateUUIDv4() {
 }
 
 /**
+ * Checks if a hash value is eligible as a Shared Review Package v1 SHA-256 hash.
+ * Enforces exactly 64 lowercase hex characters.
+ * @param {string} hash
+ * @param {string} hashStatus
+ * @returns {boolean}
+ */
+export function isHashEligible(hash, hashStatus) {
+  if (hashStatus !== 'completed' || !hash) {
+    return false;
+  }
+  const hashPattern = /^[0-9a-f]{64}$/;
+  return hashPattern.test(hash);
+}
+
+/**
+ * Checks if a video asset is eligible for sharing export.
+ * @param {AppDatabase} db
+ * @param {object} video
+ * @returns {boolean}
+ */
+export function isVideoEligibleForExport(db, video) {
+  if (!video) return false;
+  if (!isHashEligible(video.contentHash, video.hashStatus)) {
+    return false;
+  }
+  const ownerReview = db.getOwnerReviewForVideo(video.id);
+  return ownerReview !== null;
+}
+
+/**
  * Exports local owner reviews of selected video IDs.
- * @param {AppDatabase} db 
- * @param {string[]} videoIds 
+ * @param {AppDatabase} db
+ * @param {string[]} videoIds
  * @returns {object} Shared Review Package JSON object
  */
 export function exportReviews(db, videoIds) {
@@ -36,27 +66,13 @@ export function exportReviews(db, videoIds) {
       throw new Error(`動画 ID ${videoId} が存在しません。`);
     }
 
-    // Verify SHA-256 hash status
-    if (video.hashStatus !== 'completed' || !video.contentHash || video.contentHash.length !== 64) {
-      throw new Error(`動画「${video.title}」の SHA-256 ハッシュ値が未計算、または計算中です。`);
+    // Verify eligibility
+    if (!isVideoEligibleForExport(db, video)) {
+      throw new Error(`動画「${video.title}」はエクスポートできません（有効なハッシュ値またはオーナーレビューが存在しません）。`);
     }
 
-    // Only export owner review
     const review = db.getOwnerReviewForVideo(videoId);
-    if (!review) {
-      // If no owner review exists, we still create a valid item with empty tags/timelineComments
-      items.push({
-        videoHash: video.contentHash.toLowerCase(),
-        review: {
-          reviewId: 'rev-' + generateUUIDv4(),
-          reviewerId: localReviewer.id,
-          overallRating: null,
-          tags: [],
-          timelineComments: []
-        }
-      });
-      continue;
-    }
+    // review is guaranteed to exist due to isVideoEligibleForExport check
 
     // Map tags
     const dbTags = db.getTagsForReview(review.id);
@@ -73,7 +89,7 @@ export function exportReviews(db, videoIds) {
     }));
 
     items.push({
-      videoHash: video.contentHash.toLowerCase(),
+      videoHash: video.contentHash, // keep original casing (which is guaranteed lowercase due to regex)
       review: {
         reviewId: review.id,
         reviewerId: localReviewer.id,
