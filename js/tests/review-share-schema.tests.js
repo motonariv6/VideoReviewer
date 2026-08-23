@@ -460,6 +460,117 @@ export async function runReviewShareSchemaTests() {
     assert(res[1].id === 'note-comm2', 'Tie-break by id must place note-comm2 second');
   });
 
+  // === NEW REGRESSION TESTS ===
+
+  await runTest('38. Travel/travel duplicate tag (Invalid)', async () => {
+    const pkg = createValidPackage();
+    pkg.items[0].review.tags = [{ tag: 'Travel' }, { tag: 'travel' }];
+    const res = validateSharedReviewPackage(pkg);
+    assert(res.isValid === false, 'Should reject duplicate tags Travel/travel');
+  });
+
+  await runTest('39. Unicode NFKC normalized duplicate tag (Invalid)', async () => {
+    const pkg = createValidPackage();
+    pkg.items[0].review.tags = [{ tag: 'ﾀｸﾞ' }, { tag: 'タグ' }];
+    const res = validateSharedReviewPackage(pkg);
+    assert(res.isValid === false, 'Should reject Unicode NFKC normalized duplicate tags');
+  });
+
+  await runTest('40. Decimal overallRating rejection in validateSharedReviewPackage (Invalid)', async () => {
+    const pkg = createValidPackage();
+    pkg.items[0].review.overallRating = 4.5;
+    const res = validateSharedReviewPackage(pkg);
+    assert(res.isValid === false, 'Should reject decimal overallRating in package validation');
+  });
+
+  await runTest('41. Decimal overallRating ignored in aggregateOverallRating (Pure function)', async () => {
+    const reviews = [
+      { overallRating: 5 },
+      { overallRating: 4.5 },
+      { overallRating: 3 }
+    ];
+    const res = aggregateOverallRating(reviews);
+    assert(res.averageScore === 4, 'Average rating must exclude decimal 4.5');
+    assert(res.reviewCount === 2, 'Active review count must exclude decimal 4.5');
+  });
+
+  await runTest('42. Prototype Pollution rejection (Invalid)', async () => {
+    // 1. __proto__
+    const pkg1 = createValidPackage();
+    const badObj1 = JSON.parse(JSON.stringify(pkg1));
+    Object.defineProperty(badObj1, '__proto__', {
+      value: { polluted: true },
+      enumerable: true,
+      configurable: true,
+      writable: true
+    });
+    const res1 = validateSharedReviewPackage(badObj1);
+
+    // 2. constructor
+    const pkg2 = createValidPackage();
+    pkg2.exporter.constructor = { polluted: true };
+    const res2 = validateSharedReviewPackage(pkg2);
+
+    // 3. prototype
+    const pkg3 = createValidPackage();
+    pkg3.items[0].review.prototype = { polluted: true };
+    const res3 = validateSharedReviewPackage(pkg3);
+
+    assert(res1.isValid === false && res2.isValid === false && res3.isValid === false, 'Should reject prototype pollution keys __proto__, constructor, and prototype');
+  });
+
+  await runTest('43. Tag aggregation with normalization and display retention (Pure function)', async () => {
+    const reviews = [
+      {
+        reviewId: 'rev-1',
+        reviewerId: 'reviewer-A',
+        tags: [{ tag: 'Travel' }]
+      },
+      {
+        reviewId: 'rev-2',
+        reviewerId: 'reviewer-B',
+        tags: [{ tag: 'travel' }]
+      }
+    ];
+    const res = aggregateTags(reviews);
+    assert(res.length === 1);
+    assert(res[0].tag === 'Travel', 'Must retain first display spelling: Travel');
+    assert(res[0].sources.length === 2, 'Should track both sources');
+  });
+
+  await runTest('44. Timeline comment duplicate identity check (Invalid)', async () => {
+    const pkg = createValidPackage();
+    pkg.items[0].review.timelineComments.push({
+      id: 'note-comm12345678', // duplicate ID within same reviewerId & reviewId
+      time: 20.0,
+      comment: '重複コメント'
+    });
+    const res = validateSharedReviewPackage(pkg);
+    assert(res.isValid === false, 'Should reject duplicate comment ID within same reviewer and review');
+  });
+
+  await runTest('45. Timeline comment duplicate ID is allowed across different reviews (Valid)', async () => {
+    const pkg = createValidPackage();
+    pkg.items.push({
+      videoHash: 'bbbb222222222222222222222222222222222222222222222222222222222222',
+      review: {
+        reviewId: 'rev-another12345',
+        reviewerId: 'reviewer-another12',
+        overallRating: 4,
+        tags: [],
+        timelineComments: [
+          {
+            id: 'note-comm12345678', // SAME comment ID, but different review/reviewer
+            time: 12.34,
+            comment: '問題なし'
+          }
+        ]
+      }
+    });
+    const res = validateSharedReviewPackage(pkg);
+    assert(res.isValid === true, 'Should allow same comment ID across different reviewer + review identities');
+  });
+
   console.groupEnd(); // suite
   return results;
 }

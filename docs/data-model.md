@@ -148,7 +148,7 @@ When a video is archived, its evaluations (reviews, ratings, tags, timeline note
 ## Shared Review Package (v1)
 
 For cross-user sharing of reviews, the application defines a standard sharing JSON package format.
-Refer to [Review Sharing Specification](file:///Users/motonari/.gemini/antigravity/scratch/video-annotator/docs/review-sharing.md) for full details.
+Refer to [Review Sharing Specification](./review-sharing.md) for full details.
 
 * **Format Name**: `video-review-share`
 * **Version**: `1` (versioned independently of the internal Database Schema).

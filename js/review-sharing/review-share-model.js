@@ -44,6 +44,15 @@ export function scoreToGrade(score) {
 }
 
 /**
+ * Normalizes tag text using Trim + Unicode NFKC + lowercase
+ * @param {string} tag
+ * @returns {string}
+ */
+export function normalizeTag(tag) {
+  return String(tag).trim().normalize('NFKC').toLowerCase();
+}
+
+/**
  * Aggregates overall ratings from multiple reviews.
  * Calculates average score and active review count, excluding null ratings.
  * @param {Array<Object>} reviews
@@ -62,7 +71,7 @@ export function aggregateOverallRating(reviews) {
     const score = r.overallRating;
     if (score !== null && score !== undefined) {
       const num = Number(score);
-      if (Number.isFinite(num) && num >= 1 && num <= 5) {
+      if (Number.isInteger(num) && num >= 1 && num <= 5) {
         totalScore += num;
         count++;
       }
@@ -86,7 +95,8 @@ export function aggregateTags(reviews) {
     throw new Error('Invalid arguments: reviews must be an array');
   }
 
-  const tagMap = new Map(); // tag text -> Map(reviewId -> reviewerId)
+  const tagMap = new Map(); // normalized tag -> Map(reviewId -> reviewerId)
+  const tagDisplayMap = new Map(); // normalized tag -> first display form string
 
   reviews.forEach(r => {
     if (!r || !Array.isArray(r.tags)) return;
@@ -97,21 +107,22 @@ export function aggregateTags(reviews) {
 
     r.tags.forEach(tObj => {
       if (!tObj || typeof tObj.tag !== 'string') return;
-      const tagText = tObj.tag.trim();
-      if (tagText === '') return;
+      const normalized = normalizeTag(tObj.tag);
+      if (normalized === '') return;
 
-      if (seenInThisReview.has(tagText)) return;
-      seenInThisReview.add(tagText);
+      if (seenInThisReview.has(normalized)) return;
+      seenInThisReview.add(normalized);
 
-      if (!tagMap.has(tagText)) {
-        tagMap.set(tagText, new Map());
+      if (!tagMap.has(normalized)) {
+        tagMap.set(normalized, new Map());
+        tagDisplayMap.set(normalized, tObj.tag.trim());
       }
-      tagMap.get(tagText).set(reviewId, reviewerId);
+      tagMap.get(normalized).set(reviewId, reviewerId);
     });
   });
 
   const results = [];
-  for (const [tagText, sourcesMap] of tagMap.entries()) {
+  for (const [normalized, sourcesMap] of tagMap.entries()) {
     const sources = [];
     for (const [reviewId, reviewerId] of sourcesMap.entries()) {
       sources.push({ reviewId, reviewerId });
@@ -121,7 +132,7 @@ export function aggregateTags(reviews) {
       if (a.reviewId !== b.reviewId) return a.reviewId.localeCompare(b.reviewId);
       return a.reviewerId.localeCompare(b.reviewerId);
     });
-    results.push({ tag: tagText, sources });
+    results.push({ tag: tagDisplayMap.get(normalized), sources });
   }
 
   // Sort final tags list alphabetically

@@ -1,6 +1,7 @@
 // review-share-validator.js - Shared Review Package validator
+import { normalizeTag } from './review-share-model.js';
 
-// Constants for Validation Limits
+// Constants for Validation Limits (DoS prevention, CPU/memory load mitigation, and input size constraints)
 export const LIMITS = {
   MAX_ITEMS: 1000,
   MAX_TAGS_PER_REVIEW: 100,
@@ -61,7 +62,7 @@ export function validateSharedReviewPackage(data) {
   if (data.version === undefined) errors.push('Missing top-level property: "version"');
   else if (data.version !== 1) errors.push(`Invalid version: ${data.version} (expected 1)`);
 
-  const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+  const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
   if (data.packageId === undefined) errors.push('Missing top-level property: "packageId"');
   else if (typeof data.packageId !== 'string' || !uuidPattern.test(data.packageId)) {
     errors.push(`Invalid packageId format: "${data.packageId}" (expected lowercase UUIDv4 format)`);
@@ -132,7 +133,7 @@ function validateItems(items, errors) {
   const hashPattern = /^[0-9a-f]{64}$/;
   const seenHashes = new Set();
   const seenReviewIdentities = new Set(); // reviewId + reviewerId
-  const seenCommentIds = new Set();
+  const seenCommentIdentities = new Set();
 
   items.forEach((item, index) => {
     if (item === null || typeof item !== 'object' || Array.isArray(item)) {
@@ -161,12 +162,12 @@ function validateItems(items, errors) {
     if (item.review === undefined) {
       errors.push(`Missing review in items[${index}]`);
     } else {
-      validateReview(item.review, index, errors, seenReviewIdentities, seenCommentIds);
+      validateReview(item.review, index, errors, seenReviewIdentities, seenCommentIdentities);
     }
   });
 }
 
-function validateReview(review, index, errors, seenReviewIdentities, seenCommentIds) {
+function validateReview(review, index, errors, seenReviewIdentities, seenCommentIdentities) {
   if (review === null || typeof review !== 'object' || Array.isArray(review)) {
     errors.push(`items[${index}].review must be a JSON object`);
     return;
@@ -227,7 +228,9 @@ function validateReview(review, index, errors, seenReviewIdentities, seenComment
   } else if (!Array.isArray(review.timelineComments)) {
     errors.push(`timelineComments in items[${index}].review must be an array`);
   } else {
-    validateTimelineComments(review.timelineComments, index, errors, seenCommentIds);
+    const revId = typeof review.reviewId === 'string' ? review.reviewId : '';
+    const rvrId = typeof review.reviewerId === 'string' ? review.reviewerId : '';
+    validateTimelineComments(review.timelineComments, index, errors, seenCommentIdentities, rvrId, revId);
   }
 }
 
@@ -259,16 +262,16 @@ function validateTags(tags, itemIndex, errors) {
     } else if (tagObj.tag.length > LIMITS.MAX_TAG_LENGTH) {
       errors.push(`tag in tags[${tagIndex}] in items[${itemIndex}].review exceeds maximum length of ${LIMITS.MAX_TAG_LENGTH} chars`);
     } else {
-      const trimmed = tagObj.tag.trim();
-      if (seenTagsInReview.has(trimmed)) {
-        errors.push(`Duplicate tag "${trimmed}" within review tags list in items[${itemIndex}]`);
+      const normalized = normalizeTag(tagObj.tag);
+      if (seenTagsInReview.has(normalized)) {
+        errors.push(`Duplicate tag "${tagObj.tag.trim()}" (normalized: "${normalized}") within review tags list in items[${itemIndex}]`);
       }
-      seenTagsInReview.add(trimmed);
+      seenTagsInReview.add(normalized);
     }
   });
 }
 
-function validateTimelineComments(comments, itemIndex, errors, seenCommentIds) {
+function validateTimelineComments(comments, itemIndex, errors, seenCommentIdentities, reviewerId, reviewId) {
   if (comments.length > LIMITS.MAX_TIMELINE_COMMENTS_PER_REVIEW) {
     errors.push(`timelineComments count (${comments.length}) in items[${itemIndex}].review exceeds maximum limit of ${LIMITS.MAX_TIMELINE_COMMENTS_PER_REVIEW}`);
     return;
@@ -294,10 +297,11 @@ function validateTimelineComments(comments, itemIndex, errors, seenCommentIds) {
     } else if (typeof c.id !== 'string' || !commentIdPattern.test(c.id)) {
       errors.push(`Invalid timelineComment id format: "${c.id}"`);
     } else {
-      if (seenCommentIds.has(c.id)) {
-        errors.push(`Duplicate timeline comment id detected: "${c.id}"`);
+      const commentIdentity = `${reviewerId}::${reviewId}::${c.id}`;
+      if (seenCommentIdentities.has(commentIdentity)) {
+        errors.push(`Duplicate timeline comment identity detected: "${commentIdentity}"`);
       }
-      seenCommentIds.add(c.id);
+      seenCommentIdentities.add(commentIdentity);
     }
 
     if (c.time === undefined) {
