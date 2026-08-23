@@ -32,6 +32,7 @@ import {
   handleBulkDeleteAction
 } from './archive/archive-management-controller.js';
 import { renderFolderSettingsUI, updateScanProgressUI } from './folder/folder-settings-ui.js';
+import { initShareUI } from './review-sharing/review-share-ui.js';
 
 export {
   bgHashState,
@@ -269,6 +270,7 @@ if (typeof window !== 'undefined' && !window.__TEST_ENV__) {
 
     initEventListeners();
     initAutosaveTimer();
+    initShareUI(db, state, showToast, renderLibrary, getFilteredVideosList);
     renderLibrary();
   });
 }
@@ -901,7 +903,6 @@ function renderLibrary() {
         card.classList.add('status-no-directory');
       }
 
-      card.addEventListener('click', () => switchScreenToEditor(v.id));
 
       // Thumbnail wrapper
       const thumbDiv = document.createElement('div');
@@ -965,6 +966,57 @@ function renderLibrary() {
       durationSpan.className = 'video-card-duration';
       durationSpan.textContent = formatTime(v.duration);
       thumbDiv.appendChild(durationSpan);
+
+      if (state.shareExportMode) {
+        const chk = document.createElement('input');
+        chk.type = 'checkbox';
+        chk.className = 'export-card-checkbox';
+        chk.style.position = 'absolute';
+        chk.style.top = '8px';
+        chk.style.left = '8px';
+        chk.style.width = '20px';
+        chk.style.height = '20px';
+        chk.style.zIndex = '10';
+        chk.style.cursor = 'pointer';
+        chk.checked = state.selectedExportVideoIds && state.selectedExportVideoIds.has(v.id);
+
+        const canExport = v.hashStatus === 'completed' && v.contentHash && v.contentHash.length === 64;
+        if (!canExport) {
+          chk.disabled = true;
+          chk.title = 'ハッシュ値計算未完了のため選択できません';
+        }
+
+        chk.addEventListener('click', (e) => {
+          e.stopPropagation();
+          if (!canExport) return;
+          if (chk.checked) {
+            state.selectedExportVideoIds.add(v.id);
+          } else {
+            state.selectedExportVideoIds.delete(v.id);
+          }
+          document.getElementById('export-selected-count').textContent = state.selectedExportVideoIds.size;
+        });
+
+        card.addEventListener('click', (e) => {
+          e.stopPropagation();
+          if (!canExport) {
+            showToast('この動画はハッシュ値計算未完了のため選択できません。', 'warning');
+            return;
+          }
+          if (state.selectedExportVideoIds.has(v.id)) {
+            state.selectedExportVideoIds.delete(v.id);
+            chk.checked = false;
+          } else {
+            state.selectedExportVideoIds.add(v.id);
+            chk.checked = true;
+          }
+          document.getElementById('export-selected-count').textContent = state.selectedExportVideoIds.size;
+        });
+
+        thumbDiv.appendChild(chk);
+      } else {
+        card.addEventListener('click', () => switchScreenToEditor(v.id));
+      }
 
       // Body wrapper
       const bodyDiv = document.createElement('div');
@@ -1058,8 +1110,10 @@ function renderLibrary() {
         });
       });
 
-      titleContainer.appendChild(delBtn);
-      titleContainer.appendChild(permDelBtn);
+      if (!state.shareExportMode) {
+        titleContainer.appendChild(delBtn);
+        titleContainer.appendChild(permDelBtn);
+      }
       bodyDiv.appendChild(titleContainer);
 
       // Display original title as subtitle if displayTitle is present
