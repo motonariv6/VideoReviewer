@@ -9,6 +9,7 @@ import { runFolderManagementTests } from './tests/folder-management.tests.js';
 import { runArchiveManagementTests } from './tests/archive-management.tests.js';
 import { runReviewEditorTests } from './tests/review-editor.tests.js';
 import { runMultiReviewSchemaTests } from './tests/multi-review-schema.tests.js';
+import { runReviewShareSchemaTests } from './tests/review-share-schema.tests.js';
 
 export const VALID_HASH_A = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
 export const VALID_HASH_B = 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
@@ -2254,6 +2255,12 @@ export async function runTests(groupFilter = null) {
   if (runAll || groupFilter === 'schema') {
     const schemaResults = await runMultiReviewSchemaTests();
     results.push(...schemaResults);
+  }
+
+  // --- GROUP 18: SHARED REVIEW SCHEMA & PURE FUNCTIONS TESTS ---
+  if (runAll || groupFilter === 'review-share-schema') {
+    const shareResults = await runReviewShareSchemaTests();
+    results.push(...shareResults);
   }
 
   if (runAll) {

@@ -142,3 +142,19 @@ When a video is archived, its evaluations (reviews, ratings, tags, timeline note
 1. **Atomics**: Any failure during migration triggers an immediate rollback to the pre-upgrade state in localStorage and memory.
 2. **Idempotence**: Upgrading is idempotent. If `schema_version` is already `4`, the migration immediately exits without doing anything.
 3. **Anomalies**: If an asset is found to have duplicate reviews in Schema v3, the upgrade is aborted with a detailed error message and rolled back.
+
+---
+
+## Shared Review Package (v1)
+
+For cross-user sharing of reviews, the application defines a standard sharing JSON package format.
+Refer to [Review Sharing Specification](./review-sharing.md) for full details.
+
+* **Format Name**: `video-review-share`
+* **Version**: `1` (versioned independently of the internal Database Schema).
+* **Scope**: Only exports the local owner's review. Imported reviews from peer users, rating criteria scores, free comments, thumbnails, local paths, and folder structures are strictly excluded.
+* **Asset Mapping**: Performed exclusively via 64-character SHA-256 content hash (`videoHash`).
+* **Relational Rules**:
+  - `packageId` tracks the JSON file itself.
+  - `reviewId` + `reviewerId` tracks individual review uniqueness.
+  - Validation catches duplicate items, reviews, tags, or timeline comments to ensure database integrity on import.

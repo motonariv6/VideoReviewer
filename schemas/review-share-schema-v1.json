@@ -1,0 +1,113 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "VideoReviewSharePackage",
+  "type": "object",
+  "required": ["schema", "version", "packageId", "exportedAt", "exporter", "items"],
+  "additionalProperties": false,
+  "properties": {
+    "schema": {
+      "type": "string",
+      "const": "video-review-share"
+    },
+    "version": {
+      "type": "integer",
+      "const": 1
+    },
+    "packageId": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+    },
+    "exportedAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "exporter": {
+      "type": "object",
+      "required": ["reviewerId", "displayName"],
+      "additionalProperties": false,
+      "properties": {
+        "reviewerId": {
+          "type": "string",
+          "pattern": "^reviewer-[a-zA-Z0-9-]{8,64}$"
+        },
+        "displayName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        }
+      }
+    },
+    "items": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["videoHash", "review"],
+        "additionalProperties": false,
+        "properties": {
+          "videoHash": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "review": {
+            "type": "object",
+            "required": ["reviewId", "reviewerId", "overallRating", "tags", "timelineComments"],
+            "additionalProperties": false,
+            "properties": {
+              "reviewId": {
+                "type": "string",
+                "pattern": "^rev-[a-zA-Z0-9-]{8,64}$"
+              },
+              "reviewerId": {
+                "type": "string",
+                "pattern": "^reviewer-[a-zA-Z0-9-]{8,64}$"
+              },
+              "overallRating": {
+                "type": ["integer", "null"],
+                "minimum": 1,
+                "maximum": 5
+              },
+              "tags": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": ["tag"],
+                  "additionalProperties": false,
+                  "properties": {
+                    "tag": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 100
+                    }
+                  }
+                }
+              },
+              "timelineComments": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": ["id", "time", "comment"],
+                  "additionalProperties": false,
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "pattern": "^(note|comm)-[a-zA-Z0-9-]{8,64}$"
+                    },
+                    "time": {
+                      "type": "number",
+                      "minimum": 0
+                    },
+                    "comment": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 10000
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
