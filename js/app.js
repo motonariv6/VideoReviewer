@@ -31,6 +31,7 @@ import {
   deleteFileLocationAction,
   handleBulkDeleteAction
 } from './archive/archive-management-controller.js';
+import { renderFolderSettingsUI, updateScanProgressUI } from './folder/folder-settings-ui.js';
 
 export {
   bgHashState,
@@ -38,7 +39,9 @@ export {
   updateBackgroundHashingProgress,
   updateBackgroundHashingUI,
   clearCloseTimeout,
-  handleLocationsRemoved
+  handleLocationsRemoved,
+  els,
+  openSettingsModal
 };
 
 // Instantiate DB & components
