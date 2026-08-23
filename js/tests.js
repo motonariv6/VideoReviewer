@@ -6,6 +6,7 @@ import { db, setDbForTesting, handleFolderSelect, handleFolderRequestPermission,
 import { computeSHA256, computeQuickHash, computeFileSHA256, HashQueue, globalHashQueue } from './hash-helper.js';
 import { runGroup11Tests } from './tests/hash-media-identity.tests.js';
 import { runFolderManagementTests } from './tests/folder-management.tests.js';
+import { runArchiveManagementTests } from './tests/archive-management.tests.js';
 
 export const VALID_HASH_A = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
 export const VALID_HASH_B = 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
@@ -248,114 +249,6 @@ export async function runTests(groupFilter = null) {
     // Test 26: Duplicate tag block
     keydownHandlerMock({ key: 'Enter', isComposing: false, keyCode: 13 }, '映像美');
     assert(tagsList.length === 1, 'Duplicate tag values must be rejected');
-  });
-
-  // --- GROUP 5: CASCADE VIDEO DELETION TESTS ---
-
-  await runTest('Cascade video deletion integrity and asset checks', async () => {
-    const memory = new MemoryStorage();
-    const testDb = new AppDatabase(memory, 'test_vreview_del_', 'TestVideoDB_CascadeDelete');
-    await testDb.initAsync();
-    testDb.mediaAssets = [];
-    testDb.fileLocations = [];
-    testDb._saveTable('media_assets', []);
-    testDb._saveTable('file_locations', []);
-
-    // 1. Setup Video A (to be deleted cascade) and Video B (to be kept)
-    const vidA = await testDb.addVideo({
-      title: 'Video A',
-      fileName: 'video_a.mp4',
-      sourceType: 'local-file'
-    });
-    const vidB = await testDb.addVideo({
-      title: 'Video B',
-      fileName: 'video_b.mp4',
-      sourceType: 'local-file'
-    });
-
-    // Verify initial count
-    assert(testDb.getVideos().length === 2, 'Initial videos count must be 2');
-
-    // Add Ratings, Reviews, Tags, Notes for Video A using saveReview API (proper schema)
-    const revA = await testDb.saveReview(vidA.id, {
-      overallGrade: 'A',
-      comment: 'Excellent',
-      ratings: {
-        'crit-1': 4,
-        'crit-2': 5
-      }
-    });
-
-    // Add tags association
-    testDb.videoTags.push({ mediaAssetId: vidA.id, tagId: 'tag-1' });
-    testDb._saveTable('video_tags', testDb.videoTags);
-
-    // Add timeline notes
-    testDb.timelineNotes.push({ id: 'note-a1', videoReviewId: revA.id, mediaAssetId: vidA.id, timestampSeconds: 10, comment: 'First note', thumbnailId: 'img-note-a1', createdAt: new Date().toISOString() });
-    testDb._saveTable('timeline_notes', testDb.timelineNotes);
-
-    // Seed thumbnails and note screenshots in IndexedDB mock if available
-    await testDb.updateVideoThumbnail(vidA.id, new Blob(['thumb-a'], { type: 'image/jpeg' }));
-    const videoWithThumb = testDb.getVideo(vidA.id);
-    assert(videoWithThumb.thumbnailId !== '', 'Video A should have a thumbnail ID');
-
-    // Setup associated reviews and notes for Video B using saveReview API (proper schema)
-    const revB = await testDb.saveReview(vidB.id, {
-      overallGrade: 'B',
-      comment: 'Good',
-      ratings: {
-        'crit-1': 3,
-        'crit-2': 2
-      }
-    });
-    testDb.videoTags.push({ mediaAssetId: vidB.id, tagId: 'tag-2' });
-    testDb._saveTable('video_tags', testDb.videoTags);
-    testDb.timelineNotes.push({ id: 'note-b1', videoReviewId: revB.id, mediaAssetId: vidB.id, timestampSeconds: 20, comment: 'Second note', thumbnailId: 'img-note-b1', createdAt: new Date().toISOString() });
-    testDb._saveTable('timeline_notes', testDb.timelineNotes);
-
-    if (testDb.idbAvailable) {
-      await testDb.putImage('img-note-a1', new Blob(['note-img-a'], { type: 'image/jpeg' }));
-      await testDb.putImage('img-note-b1', new Blob(['note-img-b'], { type: 'image/jpeg' }));
-    }
-
-    // Run cascade delete for Video A
-    const deleteSuccess = await testDb.deleteVideoCascade(vidA.id);
-    assert(deleteSuccess === true, 'Cascade delete operation must return true');
-
-    // Assert Video A is deleted but Video B remains
-    assert(!testDb.getVideo(vidA.id), 'Video A must be removed from videos');
-    assert(!!testDb.getVideo(vidB.id), 'Video B must NOT be removed from videos');
-
-    // Assert reviews and ratings are cascaded
-    assert(testDb.getReviewForVideo(vidA.id) === undefined, 'Review for Video A must be removed');
-    assert(testDb.getReviewForVideo(vidB.id) !== undefined, 'Review for Video B must remain');
-    
-    // Video A criterion ratings must be 0
-    assert(testDb.criterionRatings.some(cr => cr.videoReviewId === revA.id) === false, 'Criterion ratings for Review A must be removed');
-    // Video B criterion ratings must remain
-    assert(testDb.criterionRatings.some(cr => cr.videoReviewId === revB.id) === true, 'Criterion ratings for Review B must remain');
-
-    // Assert that the changes are written to the persistence layer (MemoryStorage)
-    const storedRatings = JSON.parse(memory.getItem('test_vreview_del_criterion_ratings') || '[]');
-    assert(storedRatings.some(cr => cr.videoReviewId === revA.id) === false, 'Stored criterion ratings in localStorage for Review A must be deleted');
-    assert(storedRatings.some(cr => cr.videoReviewId === revB.id) === true, 'Stored criterion ratings in localStorage for Review B must remain');
-
-    // Assert tags and notes are cascaded
-    assert(testDb.videoTags.some(vt => vt.mediaAssetId === vidA.id) === false, 'Tag relations for Video A must be removed');
-    assert(testDb.videoTags.some(vt => vt.mediaAssetId === vidB.id) === true, 'Tag relations for Video B must remain');
-    assert(testDb.getTimelineNotes(vidA.id).length === 0, 'Timeline notes for Video A must be removed');
-    assert(testDb.getTimelineNotes(vidB.id).length === 1, 'Timeline notes for Video B must remain');
-
-    // Assert IndexedDB images are deleted
-    if (testDb.idbAvailable) {
-      const deletedVidThumb = await testDb.getImage(videoWithThumb.thumbnailId);
-      const deletedNoteThumb = await testDb.getImage('img-note-a1');
-      const keptNoteThumb = await testDb.getImage('img-note-b1');
-
-      assert(deletedVidThumb === null, 'Deleted video thumbnail must be removed from IndexedDB');
-      assert(deletedNoteThumb === null, 'Deleted timeline note thumbnail must be removed from IndexedDB');
-      assert(keptNoteThumb !== null, 'Kept video timeline note thumbnail must remain in IndexedDB');
-    }
   });
 
   // --- GROUP 6: RADAR CHART RENDER AND LABEL TESTS ---
@@ -2455,94 +2348,13 @@ export async function runTests(groupFilter = null) {
     await runFolderManagementTests(runTest, assert);
   }
 
+  // --- GROUP 12: VIDEO ARCHIVING, RESCANNING, AND LOCATION DELETION TESTS ---
+  if (runAll || groupFilter === 'archive') {
+    await runArchiveManagementTests(runTest, assert);
+  }
+
   if (runAll) {
-    console.group('Group 12: Video Archiving, Rescanning, and Location Deletion');
-
-  await runTest('12-3. Permanent deletion cascade removes all review details', async () => {
-    const memory = new MemoryStorage();
-    const testDb = new AppDatabase(memory, 'test_vreview_g12_3_', 'TestVideoDB_G12_3');
-    await testDb.initAsync();
-
-    const asset = await testDb.addVideo({
-      fileName: 'perm.mp4',
-      fileSize: 100,
-      lastModified: 3000,
-      quickHash: 'qh_perm',
-      hashStatus: 'completed',
-      identityStatus: 'verified'
-    });
-
-    await testDb.saveReview(asset.id, {
-      overallGrade: 'B'
-    });
-
-    const success = await testDb.deleteVideoCascade(asset.id);
-    assert(success === true, 'deleteVideoCascade returns true');
-
-    const freshAsset = testDb.mediaAssets.find(a => a.id === asset.id);
-    assert(!freshAsset, 'Asset completely removed from DB');
-
-    const freshReview = testDb.reviews.find(r => r.mediaAssetId === asset.id);
-    assert(!freshReview, 'Review completely removed from DB');
-  });
-
-  await runTest('12-4. Location deletion preserves other locations and asset evaluations', async () => {
-    const memory = new MemoryStorage();
-    const testDb = new AppDatabase(memory, 'test_vreview_g12_4_', 'TestVideoDB_G12_4');
-    await testDb.initAsync();
-
-    const asset = await testDb.addVideo({
-      fileName: 'multi.mp4',
-      fileSize: 100,
-      lastModified: 4000,
-      quickHash: 'qh_multi',
-      hashStatus: 'completed',
-      identityStatus: 'verified'
-    });
-
-    await testDb.saveReview(asset.id, {
-      overallGrade: 'S'
-    });
-
-    const loc1 = {
-      id: 'loc-1',
-      mediaAssetId: asset.id,
-      directoryId: 'dir-1',
-      relativePath: 'path1.mp4',
-      fileName: 'multi.mp4',
-      fileSize: 100,
-      lastModified: 4000,
-      availabilityStatus: 'available',
-      verificationStatus: 'verified',
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString()
-    };
-    const loc2 = {
-      id: 'loc-2',
-      mediaAssetId: asset.id,
-      directoryId: 'dir-2',
-      relativePath: 'path2.mp4',
-      fileName: 'multi.mp4',
-      fileSize: 100,
-      lastModified: 4000,
-      availabilityStatus: 'available',
-      verificationStatus: 'verified',
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString()
-    };
-    testDb.fileLocations.push(loc1, loc2);
-
-    const success = await testDb.deleteFileLocation('loc-1');
-    assert(success === true, 'deleteFileLocation returns true');
-
-    assert(!testDb.fileLocations.some(l => l.id === 'loc-1'), 'loc-1 is deleted');
-    assert(testDb.fileLocations.some(l => l.id === 'loc-2'), 'loc-2 remains');
-
-    const freshReview = testDb.reviews.find(r => r.mediaAssetId === asset.id);
-    assert(freshReview && freshReview.overallGrade === 'S', 'Evaluations remain intact');
-  });
-
-  console.group('Group 13: Progress Panel UI Layout & Control Tests');
+    console.group('Group 13: Progress Panel UI Layout & Control Tests');
 
   await runTest('13-1. Progress panel positioning, styling, and z-index properties', async () => {
     bgHashState.panelClosed = false;
@@ -2668,7 +2480,6 @@ export async function runTests(groupFilter = null) {
   });
 
   console.groupEnd(); // Group 13
-  console.groupEnd(); // Group 12
 
   console.group('Group 15: URL Video Feature Deprecation Tests');
 
