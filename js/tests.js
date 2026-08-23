@@ -7,6 +7,7 @@ import { computeSHA256, computeQuickHash, computeFileSHA256, HashQueue, globalHa
 import { runGroup11Tests } from './tests/hash-media-identity.tests.js';
 import { runFolderManagementTests } from './tests/folder-management.tests.js';
 import { runArchiveManagementTests } from './tests/archive-management.tests.js';
+import { runReviewEditorTests } from './tests/review-editor.tests.js';
 
 export const VALID_HASH_A = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
 export const VALID_HASH_B = 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
@@ -220,126 +221,11 @@ export async function runTests(groupFilter = null) {
     }
   });
 
-  await runTest('24-26. Japanese IME composition enter tag registrations', async () => {
-    const tagsList = [];
-    let isComposing = false;
 
-    const keydownHandlerMock = (e, val) => {
-      if (e.isComposing || isComposing || e.keyCode === 229) {
-        return; // Block additions
-      }
-      if (e.key === 'Enter') {
-        if (tagsList.includes(val)) {
-          return; // Block duplicate tags
-        }
-        tagsList.push(val);
-      }
-    };
-
-    // Test 24: IME active conversion (Enter key)
-    isComposing = true;
-    keydownHandlerMock({ key: 'Enter', isComposing: true, keyCode: 229 }, '映像美');
-    assert(tagsList.length === 0, 'Tags must not be added while IME composition is active');
-
-    // Test 25: IME conversion finalized (standard Enter key)
-    isComposing = false;
-    keydownHandlerMock({ key: 'Enter', isComposing: false, keyCode: 13 }, '映像美');
-    assert(tagsList.length === 1 && tagsList[0] === '映像美', 'Tag must be added once composition is finalized');
-
-    // Test 26: Duplicate tag block
-    keydownHandlerMock({ key: 'Enter', isComposing: false, keyCode: 13 }, '映像美');
-    assert(tagsList.length === 1, 'Duplicate tag values must be rejected');
-  });
-
-  // --- GROUP 6: RADAR CHART RENDER AND LABEL TESTS ---
-
-  await runTest('Radar chart coordinates, label clamping, and responsiveness checks', async () => {
-    // Mock container
-    const container = document.createElement('div');
-    container.style.width = '320px';
-    container.style.height = '320px';
-    document.body.appendChild(container);
-
-    try {
-      const chart = new RadarChart(container);
-      
-      // Test cases for N = 3, 4, 5, 6 criteria items
-      const criteriaList = [
-        { id: 'c1', name: '映像美' }, // Short label (<=8 characters)
-        { id: 'c2', name: 'ストーリー構成' }, // Short label
-        { id: 'c3', name: 'ユーザーインターフェースデザイン' }, // Long label (>8 characters)
-        { id: 'c4', name: '音楽音響効果' },
-        { id: 'c5', name: '演出力' },
-        { id: 'c6', name: '革新性' }
-      ];
-
-      const ratings = { c1: 4, c2: 5, c3: 3, c4: 2, c5: 5, c6: 4 };
-
-      for (let n = 3; n <= 6; n++) {
-        const activeCriteria = criteriaList.slice(0, n);
-        
-        // Render chart
-        chart.render(activeCriteria, ratings);
-        
-        // Verify SVG elements generated inside container
-        const svg = container.querySelector('svg');
-        assert(svg !== null, `SVG chart must render for N = ${n}`);
-        assert(svg.getAttribute('viewBox') === '0 0 440 440', 'SVG viewBox must be set to 440x440');
-
-        // Check text labels count and content
-        const textElements = svg.querySelectorAll('.radar-labels text');
-        assert(textElements.length === n, `Should render exactly ${n} text labels`);
-
-        // Check clamping and coordinates fall inside safe box [15, 425]
-        textElements.forEach(text => {
-          const x = parseFloat(text.getAttribute('x'));
-          const y = parseFloat(text.getAttribute('y'));
-          assert(x >= 15 && x <= 425, `Label x (${x}) must fall in safe bounds [15, 425]`);
-          assert(y >= 15 && y <= 425, `Label y (${y}) must fall in safe bounds [15, 425]`);
-          
-          // Verify title node exists for full-name hover tooltip support
-          const title = text.querySelector('title');
-          assert(title !== null, 'Text label must include a title tooltip element');
-
-          // Verify tspan node exists to ensure title element was not wiped out
-          const tspans = text.querySelectorAll('tspan');
-          assert(tspans.length > 0, 'Text label must use tspan children to prevent wiping out title node');
-        });
-      }
-    } finally {
-      document.body.removeChild(container);
-    }
-  });
 
   // --- GROUP 7: BACKUP/RESTORE, DISPLAY TITLE, GENRES TESTS ---
 
   console.group('Group 7: New Features Tests');
-
-  await runTest('Display title fallback and editing constraints', async () => {
-    const memoryStorage = new MemoryStorage();
-    const testDb = new AppDatabase(memoryStorage, 'test_v7_title_');
-    await testDb.initAsync();
-    const video = await testDb.addVideo({
-      title: 'test_video.mp4',
-      fileName: 'test_video.mp4',
-      fileSize: 1024,
-      sourceType: 'directory',
-      directoryId: 'dir-1',
-      relativePath: 'test_video.mp4'
-    });
-    assert(video !== undefined, 'Must have at least one video');
-    
-    // 2. Set custom display title
-    await testDb.updateVideo(video.id, { displayTitle: 'カスタムタイトル' });
-    
-    const updatedVideo = testDb.getVideo(video.id);
-    assert(updatedVideo.displayTitle === 'カスタムタイトル', 'Display title should be saved');
-    
-    // 3. Clear/set displayTitle to null
-    await testDb.updateVideo(video.id, { displayTitle: null });
-    const clearedVideo = testDb.getVideo(video.id);
-    assert(clearedVideo.displayTitle === null, 'Display title should be cleared');
-  });
 
   await runTest('Genres and Genre-specific evaluation templates (CRUD & Constraints)', async () => {
     const memoryStorage = new MemoryStorage();
@@ -2351,6 +2237,12 @@ export async function runTests(groupFilter = null) {
   // --- GROUP 12: VIDEO ARCHIVING, RESCANNING, AND LOCATION DELETION TESTS ---
   if (runAll || groupFilter === 'archive') {
     await runArchiveManagementTests(runTest, assert);
+  }
+
+  // --- GROUP 16: REVIEW EDITOR & UI COMPONENTS TESTS ---
+  if (runAll || groupFilter === 'review') {
+    const editorResults = await runReviewEditorTests();
+    results.push(...editorResults);
   }
 
   if (runAll) {
