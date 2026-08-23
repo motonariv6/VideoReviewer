@@ -1,0 +1,294 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "VideoReviewer v4 Backup Schema",
+  "type": "object",
+  "required": [
+    "schemaVersion",
+    "reviewers",
+    "media_assets",
+    "file_locations",
+    "rating_criteria",
+    "video_reviews",
+    "criterion_ratings",
+    "tags",
+    "review_tags",
+    "timeline_notes",
+    "directory_sources",
+    "genres",
+    "evaluation_templates",
+    "pending_shared_reviews"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "type": "integer",
+      "enum": [4]
+    },
+    "reviewers": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "displayName",
+          "isLocal",
+          "createdAt",
+          "updatedAt"
+        ],
+        "properties": {
+          "id": { "type": "string", "pattern": "^reviewer-[a-zA-Z0-9-]{8,64}$" },
+          "displayName": { "type": "string", "minLength": 1 },
+          "isLocal": { "type": "boolean" },
+          "createdAt": { "type": "string" },
+          "updatedAt": { "type": "string" }
+        }
+      }
+    },
+    "media_assets": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "contentHash",
+          "hashAlgorithm",
+          "quickHash",
+          "hashStatus",
+          "fileSize",
+          "duration",
+          "displayTitle",
+          "genreId",
+          "identityStatus",
+          "identityConflictGroupId",
+          "createdAt",
+          "updatedAt"
+        ],
+        "properties": {
+          "id": { "type": "string", "pattern": "^(vid-|ast-)[a-zA-Z0-9-]{8,64}$" },
+          "contentHash": { "type": "string" },
+          "hashAlgorithm": { "type": "string", "enum": ["SHA-256"] },
+          "quickHash": { "type": "string" },
+          "hashStatus": { "type": "string", "enum": ["pending", "calculating", "completed", "failed"] },
+          "fileSize": { "type": "integer", "minimum": 0 },
+          "duration": { "type": "number", "minimum": 0 },
+          "displayTitle": { "type": ["string", "null"] },
+          "genreId": { "type": "string", "pattern": "^genre-[a-zA-Z0-9-]{1,64}$" },
+          "thumbnailId": { "type": "string" },
+          "identityStatus": { "type": "string", "enum": ["normal", "conflict", "provisional", "verified"] },
+          "identityConflictGroupId": { "type": ["string", "null"] },
+          "createdAt": { "type": "string" },
+          "updatedAt": { "type": "string" },
+          "isArchived": { "type": "boolean" },
+          "archivedAt": { "type": ["string", "null"] }
+        }
+      }
+    },
+    "file_locations": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "mediaAssetId",
+          "relativePath",
+          "fileName",
+          "fileSize",
+          "lastModified",
+          "availabilityStatus",
+          "lastVerifiedAt",
+          "createdAt",
+          "updatedAt"
+        ],
+        "properties": {
+          "id": { "type": "string", "pattern": "^loc-[a-zA-Z0-9-]{8,64}$" },
+          "mediaAssetId": { "type": "string", "pattern": "^(vid-|ast-)[a-zA-Z0-9-]{8,64}$" },
+          "directoryId": { "type": "string" },
+          "relativePath": { "type": "string" },
+          "fileName": { "type": "string" },
+          "fileSize": { "type": "integer", "minimum": 0 },
+          "lastModified": { "type": "integer" },
+          "availabilityStatus": { "type": "string", "enum": ["available", "permission-required", "missing", "unsupported", "scan-error"] },
+          "lastVerifiedAt": { "type": "string" },
+          "verificationStatus": { "type": "string", "enum": ["provisional", "verified", "failed"] },
+          "createdAt": { "type": "string" },
+          "updatedAt": { "type": "string" }
+        }
+      }
+    },
+    "rating_criteria": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "name", "description"],
+        "properties": {
+          "id": { "type": "string", "pattern": "^crit-[a-zA-Z0-9-]{1,64}$" },
+          "name": { "type": "string", "minLength": 1 },
+          "description": { "type": "string" }
+        }
+      }
+    },
+    "video_reviews": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "mediaAssetId",
+          "reviewerId",
+          "origin",
+          "overallScore",
+          "comment",
+          "createdAt",
+          "updatedAt"
+        ],
+        "properties": {
+          "id": { "type": "string", "pattern": "^rev-[a-zA-Z0-9-]{8,64}$" },
+          "mediaAssetId": { "type": "string", "pattern": "^(vid-|ast-)[a-zA-Z0-9-]{8,64}$" },
+          "reviewerId": { "type": "string", "pattern": "^reviewer-[a-zA-Z0-9-]{8,64}$" },
+          "origin": { "type": "string", "enum": ["local", "imported"] },
+          "overallScore": { "type": ["integer", "null"], "minimum": 1, "maximum": 5 },
+          "comment": { "type": ["string", "null"] },
+          "createdAt": { "type": "string" },
+          "updatedAt": { "type": "string" }
+        }
+      }
+    },
+    "criterion_ratings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "videoReviewId", "criterionId", "score"],
+        "properties": {
+          "id": { "type": "string", "pattern": "^rate-[a-zA-Z0-9-]{8,64}$" },
+          "videoReviewId": { "type": "string", "pattern": "^rev-[a-zA-Z0-9-]{8,64}$" },
+          "criterionId": { "type": "string", "pattern": "^crit-[a-zA-Z0-9-]{1,64}$" },
+          "score": { "type": "integer", "minimum": 1, "maximum": 5 }
+        }
+      }
+    },
+    "tags": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "name"],
+        "properties": {
+          "id": { "type": "string", "pattern": "^tag-[a-zA-Z0-9-]{8,64}$" },
+          "name": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    "review_tags": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "videoReviewId", "tagId", "createdAt"],
+        "properties": {
+          "id": { "type": "string", "pattern": "^review-tag-[a-zA-Z0-9-]{8,64}$" },
+          "videoReviewId": { "type": "string", "pattern": "^rev-[a-zA-Z0-9-]{8,64}$" },
+          "tagId": { "type": "string", "pattern": "^tag-[a-zA-Z0-9-]{8,64}$" },
+          "createdAt": { "type": "string" }
+        }
+      }
+    },
+    "timeline_notes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "videoReviewId",
+          "mediaAssetId",
+          "timestampSeconds",
+          "timestampLabel",
+          "comment",
+          "createdAt"
+        ],
+        "properties": {
+          "id": { "type": "string", "pattern": "^note-[a-zA-Z0-9-]{8,64}$" },
+          "videoReviewId": { "type": "string", "pattern": "^rev-[a-zA-Z0-9-]{8,64}$" },
+          "mediaAssetId": { "type": "string", "pattern": "^(vid-|ast-)[a-zA-Z0-9-]{8,64}$" },
+          "timestampSeconds": { "type": "number", "minimum": 0 },
+          "timestampLabel": { "type": "string" },
+          "comment": { "type": "string" },
+          "thumbnailId": { "type": "string" },
+          "createdAt": { "type": "string" }
+        }
+      }
+    },
+    "directory_sources": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "name", "includeSubdirectories", "permissionStatus", "handleKey", "createdAt", "updatedAt"],
+        "properties": {
+          "id": { "type": "string", "pattern": "^dir-[a-zA-Z0-9-]{8,64}$" },
+          "name": { "type": "string", "minLength": 1 },
+          "includeSubdirectories": { "type": "boolean" },
+          "permissionStatus": { "type": "string", "enum": ["granted", "denied", "prompt", "disconnected"] },
+          "handleKey": { "type": "string" },
+          "createdAt": { "type": "string" },
+          "updatedAt": { "type": "string" }
+        }
+      }
+    },
+    "genres": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "name", "displayTitle", "description", "createdAt", "updatedAt"],
+        "properties": {
+          "id": { "type": "string", "pattern": "^genre-[a-zA-Z0-9-]{1,64}$" },
+          "name": { "type": "string", "minLength": 1 },
+          "displayTitle": { "type": "string", "minLength": 1 },
+          "description": { "type": "string" },
+          "createdAt": { "type": "string" },
+          "updatedAt": { "type": "string" }
+        }
+      }
+    },
+    "evaluation_templates": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "genreId", "name", "criteriaIds", "createdAt", "updatedAt"],
+        "properties": {
+          "id": { "type": "string", "pattern": "^temp-[a-zA-Z0-9-]{1,64}$" },
+          "genreId": { "type": "string", "pattern": "^genre-[a-zA-Z0-9-]{1,64}$" },
+          "name": { "type": "string", "minLength": 1 },
+          "criteriaIds": { "type": "string" },
+          "createdAt": { "type": "string" },
+          "updatedAt": { "type": "string" }
+        }
+      }
+    },
+    "pending_shared_reviews": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "packageId",
+          "videoHash",
+          "hashAlgorithm",
+          "reviewerId",
+          "payload",
+          "status",
+          "importedAt",
+          "createdAt",
+          "updatedAt"
+        ],
+        "properties": {
+          "id": { "type": "string", "pattern": "^pending-review-[a-zA-Z0-9-]{8,64}$" },
+          "packageId": { "type": "string" },
+          "videoHash": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+          "hashAlgorithm": { "type": "string", "enum": ["sha256"] },
+          "reviewerId": { "type": "string", "pattern": "^reviewer-[a-zA-Z0-9-]{8,64}$" },
+          "payload": { "type": "object" },
+          "status": { "type": "string", "enum": ["pending"] },
+          "importedAt": { "type": "string" },
+          "createdAt": { "type": "string" },
+          "updatedAt": { "type": "string" }
+        }
+      }
+    }
+  }
+}

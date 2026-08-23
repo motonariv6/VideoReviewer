@@ -359,7 +359,7 @@ export async function runFolderManagementTests(runTest, assert) {
       lastModified: 100
     });
 
-    await testDb.saveReview(dummyVideo.id, { overallGrade: 'S', comment: 'Excellent quality' });
+    await testDb.saveReview(dummyVideo.id, { overallGrade: 'A', comment: 'Excellent quality' });
 
     const videos = testDb.getVideos().filter(v => v.fileName === 'first_vid.mp4');
     assert(videos.length === 1, 'Video must be registered');
@@ -744,10 +744,10 @@ export async function runFolderManagementTests(runTest, assert) {
     const videoId = video.id;
 
     // Add review, rating, tags, timeline notes referencing the actual generated videoId
-    testDb.reviews = [{ id: 'rev-1', mediaAssetId: videoId, overallGrade: 'A', createdAt: '', updatedAt: '' }];
-    testDb.criterionRatings = [{ id: 'rate-1', videoReviewId: 'rev-1', criterionId: 'crit-1', score: 4 }];
-    testDb.videoTags = [{ mediaAssetId: videoId, tagId: 'tag-1' }];
-    testDb.timelineNotes = [{ id: 'note-1', videoReviewId: 'rev-1', mediaAssetId: videoId, timestampSeconds: 0, timestampLabel: '00:00', comment: 'Note 1', createdAt: '' }];
+    await testDb.saveReview(videoId, { overallGrade: 'A', comment: '', ratings: { 'crit-1': 4 } });
+    await testDb.addTagToVideo(videoId, 'tag-1');
+    const review = testDb.getOwnerReviewForVideo(videoId);
+    testDb.timelineNotes = [{ id: 'note-1', videoReviewId: review.id, mediaAssetId: videoId, timestampSeconds: 0, timestampLabel: '00:00', comment: 'Note 1', createdAt: '' }];
     testDb._saveAll();
 
     // Reconnection via production DB method

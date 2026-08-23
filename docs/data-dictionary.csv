@@ -1,4 +1,9 @@
 table,field,type,required,default,description,references,example,introducedInSchemaVersion
+reviewers,id,string,true,,Unique reviewer identifier,,reviewer-a91d9a9c-84c5-4f59-9b4e-be51a1a13ec7,4
+reviewers,displayName,string,true,,Display name of reviewer,,自分,4
+reviewers,isLocal,boolean,true,,Flag indicating if the reviewer is local owner,,true,4
+reviewers,createdAt,string,true,,Timestamp of reviewer creation,,2026-08-23T11:00:00.000Z,4
+reviewers,updatedAt,string,true,,Timestamp of reviewer last update,,2026-08-23T11:00:00.000Z,4
 media_assets,id,string,true,,Unique identifier of logical video asset,,vid-f64e28ab-b295-46cb-8d1b-123456789abc,3
 media_assets,contentHash,string,true,,SHA-256 hash of entire file contents,,e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855,3
 media_assets,hashAlgorithm,string,true,SHA-256,Hash algorithm name,,SHA-256,3
@@ -6,10 +11,10 @@ media_assets,quickHash,string,true,,Fast preliminary candidate hash,,q_10485760_
 media_assets,hashStatus,string,true,pending,Hashing state (pending / calculating / completed / failed),,completed,3
 media_assets,fileSize,number,true,,Reference file size in bytes,,10485760,3
 media_assets,duration,number,true,,Duration of video in seconds,,123.45,3
-media_assets,displayTitle,string,false,,Nullable user-set display title (falls back to filename/original title),,My Video Presentation,3
+media_assets,displayTitle,string,false,,Nullable user-set display title,,My Video Presentation,3
 media_assets,genreId,string,true,genre-default,Genre reference,genres.id,genre-action,3
 media_assets,thumbnailId,string,false,,ID reference to image store in IndexedDB,,img-vid-abc,3
-media_assets,identityStatus,string,true,normal,Conflict state of logical asset (normal / conflict),,normal,3
+media_assets,identityStatus,string,true,normal,Conflict state of logical asset (normal / conflict / provisional / verified),,normal,3
 media_assets,identityConflictGroupId,string,false,,ID reference to the conflict group,,conflict-f64e28ab-b295-46cb-8d1b-123456789abc,3
 media_assets,createdAt,string,true,,Timestamp of asset creation,,2026-08-16T12:00:00.000Z,3
 media_assets,updatedAt,string,true,,Timestamp of asset last update,,2026-08-16T12:05:00.000Z,3
@@ -22,12 +27,15 @@ file_locations,fileSize,number,true,,Physical file size in bytes,,10485760,3
 file_locations,lastModified,number,true,,Physical file system last modified timestamp,,1718228392102,3
 file_locations,availabilityStatus,string,true,available,Reachability status (available / permission-required / missing / unsupported / scan-error),,available,3
 file_locations,lastVerifiedAt,string,true,,Timestamp of last verify check,,2026-08-16T12:00:00.000Z,3
+file_locations,verificationStatus,string,false,,Status of hash check (provisional / verified / failed),,provisional,3
 file_locations,createdAt,string,true,,Timestamp of location registration,,2026-08-16T12:00:00.000Z,3
 file_locations,updatedAt,string,true,,Timestamp of location update,,2026-08-16T12:00:00.000Z,3
 video_reviews,id,string,true,,Unique review identifier,,rev-a91d9a9c-84c5-4f59-9b4e-be51a1a13ec7,1
 video_reviews,mediaAssetId,string,true,,Foreign key referencing the logical media asset,media_assets.id,vid-f64e28ab-b295-46cb-8d1b-123456789abc,3
-video_reviews,overallGrade,string,false,,Overall evaluation grade,,A,1
-video_reviews,comment,string,false,,Overall comments,,Excellent video.,1
+video_reviews,reviewerId,string,true,,Foreign key pointing to reviewer,reviewers.id,reviewer-a91d9a9c-84c5-4f59-9b4e-be51a1a13ec7,4
+video_reviews,origin,string,true,local,Origin of review (local / imported),,local,4
+video_reviews,overallScore,number,false,,Overall score (1 to 5),,5,4
+video_reviews,comment,string,false,,Overall comment (string or null). Maps to sharing JSON free_comment.,,Excellent video.,4
 video_reviews,createdAt,string,true,,Timestamp of review creation,,2026-08-16T12:00:00.000Z,1
 video_reviews,updatedAt,string,true,,Timestamp of review update,,2026-08-16T12:00:00.000Z,1
 criterion_ratings,id,string,true,,Unique rating identifier,,rate-1a2b3c4d,1
@@ -39,8 +47,10 @@ rating_criteria,name,string,true,,Name of the criterion,,Lighting,1
 rating_criteria,description,string,true,,Description of the criterion,,Evaluates the light quality.,1
 tags,id,string,true,,Unique tag identifier,,tag-action,1
 tags,name,string,true,,Name of the tag,,Action,1
-video_tags,mediaAssetId,string,true,,Foreign key referencing the logical media asset,media_assets.id,vid-f64e28ab-b295-46cb-8d1b-123456789abc,3
-video_tags,tagId,string,true,,Foreign key referencing the tag,tags.id,tag-action,3
+review_tags,id,string,true,,Unique association identifier,,review-tag-8f90-be1f-123456789abc,4
+review_tags,videoReviewId,string,true,,Foreign key referencing the review,video_reviews.id,rev-a91d9a9c-84c5-4f59-9b4e-be51a1a13ec7,4
+review_tags,tagId,string,true,,Foreign key referencing the tag,tags.id,tag-action,4
+review_tags,createdAt,string,true,,Timestamp of association registration,,2026-08-23T11:00:00.000Z,4
 timeline_notes,id,string,true,,Unique timeline note identifier,,note-45f16b05-b287-41a6-a62e-f59964aef438,1
 timeline_notes,videoReviewId,string,true,,Foreign key referencing the review,video_reviews.id,rev-a91d9a9c-84c5-4f59-9b4e-be51a1a13ec7,1
 timeline_notes,mediaAssetId,string,true,,Foreign key referencing the media asset,media_assets.id,vid-f64e28ab-b295-46cb-8d1b-123456789abc,3
@@ -68,3 +78,13 @@ evaluation_templates,name,string,true,,Name of the template,,Standard Action eva
 evaluation_templates,criteriaIds,string,true,,Comma-separated criterion IDs,,crit-lighting,crit-acting,2
 evaluation_templates,createdAt,string,true,,Timestamp of creation,,2026-08-16T12:00:00.000Z,2
 evaluation_templates,updatedAt,string,true,,Timestamp of update,,2026-08-16T12:00:00.000Z,2
+pending_shared_reviews,id,string,true,,Unique pending reviewer identifier,,pending-review-a91d9a9c-84c5-4f59-9b4e-be51a1a13ec7,4
+pending_shared_reviews,packageId,string,true,,Package ID reference,,package-standard,4
+pending_shared_reviews,videoHash,string,true,,Content hash of target logical video asset,,e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855,4
+pending_shared_reviews,hashAlgorithm,string,true,sha256,Hashing algorithm of target video,,sha256,4
+pending_shared_reviews,reviewerId,string,true,,Reviewer ID reference,,reviewer-xyz,4
+pending_shared_reviews,payload,object,true,,Review details payload (holds free_comment overall_score tags timeline_comments etc.),,{},4
+pending_shared_reviews,status,string,true,pending,Pending status (pending),,pending,4
+pending_shared_reviews,importedAt,string,true,,Timestamp of review import,,2026-08-23T11:00:00.000Z,4
+pending_shared_reviews,createdAt,string,true,,Timestamp of pending review record creation,,2026-08-23T11:00:00.000Z,4
+pending_shared_reviews,updatedAt,string,true,,Timestamp of pending review record update,,2026-08-23T11:00:00.000Z,4

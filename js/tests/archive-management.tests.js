@@ -47,8 +47,7 @@ export async function runArchiveManagementTests(runTest, assert) {
     });
 
     // Add tags association
-    testDb.videoTags.push({ mediaAssetId: vidA.id, tagId: 'tag-1' });
-    testDb._saveTable('video_tags', testDb.videoTags);
+    await testDb.addTagToVideo(vidA.id, 'Tag1');
 
     // Add timeline notes
     testDb.timelineNotes.push({ id: 'note-a1', videoReviewId: revA.id, mediaAssetId: vidA.id, timestampSeconds: 10, comment: 'First note', thumbnailId: 'img-note-a1', createdAt: new Date().toISOString() });
@@ -68,8 +67,7 @@ export async function runArchiveManagementTests(runTest, assert) {
         'crit-2': 2
       }
     });
-    testDb.videoTags.push({ mediaAssetId: vidB.id, tagId: 'tag-2' });
-    testDb._saveTable('video_tags', testDb.videoTags);
+    await testDb.addTagToVideo(vidB.id, 'Tag2');
     testDb.timelineNotes.push({ id: 'note-b1', videoReviewId: revB.id, mediaAssetId: vidB.id, timestampSeconds: 20, comment: 'Second note', thumbnailId: 'img-note-b1', createdAt: new Date().toISOString() });
     testDb._saveTable('timeline_notes', testDb.timelineNotes);
 
@@ -101,8 +99,8 @@ export async function runArchiveManagementTests(runTest, assert) {
     assert(storedRatings.some(cr => cr.videoReviewId === revB.id) === true, 'Stored criterion ratings in localStorage for Review B must remain');
 
     // Assert tags and notes are cascaded
-    assert(testDb.videoTags.some(vt => vt.mediaAssetId === vidA.id) === false, 'Tag relations for Video A must be removed');
-    assert(testDb.videoTags.some(vt => vt.mediaAssetId === vidB.id) === true, 'Tag relations for Video B must remain');
+    assert(testDb.getVideoTags(vidA.id).length === 0, 'Tag relations for Video A must be removed');
+    assert(testDb.getVideoTags(vidB.id).some(t => t.name === 'Tag2') === true, 'Tag relations for Video B must remain');
     assert(testDb.getTimelineNotes(vidA.id).length === 0, 'Timeline notes for Video A must be removed');
     assert(testDb.getTimelineNotes(vidB.id).length === 1, 'Timeline notes for Video B must remain');
 
@@ -156,7 +154,7 @@ export async function runArchiveManagementTests(runTest, assert) {
     await testDb._saveTable('file_locations', testDb.fileLocations);
 
     const review = await testDb.saveReview(asset.id, {
-      overallGrade: 'S',
+      overallGrade: 'A',
       comment: 'Excellent video'
     });
 
@@ -206,7 +204,7 @@ export async function runArchiveManagementTests(runTest, assert) {
     const restoredVideo = testDb.getVideo(asset.id);
     assert(restoredVideo.isArchived === false, 'Virtual video shows not archived');
     const restoredReview = testDb.getReviewForVideo(asset.id);
-    assert(restoredReview && restoredReview.overallGrade === 'S', 'Evaluation is visible during provisional restore');
+    assert(restoredReview && restoredReview.overallGrade === 'A', 'Evaluation is visible during provisional restore');
   });
 
   // Old Group 12-2
@@ -405,7 +403,7 @@ export async function runArchiveManagementTests(runTest, assert) {
     });
 
     await testDb.saveReview(asset.id, {
-      overallGrade: 'S'
+      overallGrade: 'A'
     });
 
     testDb.fileLocations = [];
@@ -459,8 +457,8 @@ export async function runArchiveManagementTests(runTest, assert) {
     assert(!testDb.fileLocations.some(l => l.id === 'loc-1'), 'loc-1 is deleted');
     assert(testDb.fileLocations.some(l => l.id === 'loc-2'), 'loc-2 remains');
 
-    const freshReview = testDb.reviews.find(r => r.mediaAssetId === asset.id);
-    assert(freshReview && freshReview.overallGrade === 'S', 'Evaluations remain intact');
+    const freshReview = testDb.getReviewForVideo(asset.id);
+    assert(freshReview && freshReview.overallGrade === 'A', 'Evaluations remain intact');
 
     // Test handleBulkDeleteAction with multiple location notifications
     const mockBgHashState = {
