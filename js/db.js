@@ -267,7 +267,7 @@ export class AppDatabase {
     this.idbName = idbName;
     this.idb = null;
     this.idbAvailable = false;
-    
+
     this.initDatabase();
   }
 
@@ -279,15 +279,28 @@ export class AppDatabase {
     this.reviews = this._loadTable('video_reviews', []);
     this.criterionRatings = this._loadTable('criterion_ratings', []);
     this.tags = this._loadTable('tags', []);
-    this.videoTags = this._loadTable('video_tags', []);
-    this.timelineNotes = this._loadTable('timeline_notes', []);
     
+    const versionKey = `${this.prefix}schema_version`;
+    const currentVersion = this.storage ? this.storage.getItem(versionKey) : null;
+    if (!currentVersion || currentVersion !== '4') {
+      this._legacyVideoTags = this._loadTable('video_tags', []);
+    } else {
+      this._legacyVideoTags = [];
+    }
+
+    this.timelineNotes = this._loadTable('timeline_notes', []);
+
     // Directory Sources table setup
     this.directorySources = this._loadTable('directory_sources', []);
 
     // Genres & templates tables
     this.genres = this._loadTable('genres', []);
     this.templates = this._loadTable('evaluation_templates', []);
+
+    // Schema v4 tables
+    this.reviewers = this._loadTable('reviewers', []);
+    this.reviewTags = this._loadTable('review_tags', []);
+    this.pendingSharedReviews = this._loadTable('pending_shared_reviews', []);
   }
 
   async initAsync() {
@@ -312,6 +325,11 @@ export class AppDatabase {
 
     // Perform media assets & file locations migration (v3)
     await this._migrateToV3MediaIdentity();
+
+    // Perform multi-reviewer and Schema v4 migration (v4)
+    await this._migrateToV4MultiReview();
+
+
 
     // Backfill Schema v3 conflict fields and recover calculating status to pending
     let assetsModified = false;
@@ -371,7 +389,7 @@ export class AppDatabase {
     }
 
     console.log('Running IndexedDB image storage schema migration (v2)...');
-    
+
     try {
       const videos = this._loadTable('videos', []);
       const timelineNotes = this._loadTable('timeline_notes', []);
@@ -487,11 +505,11 @@ export class AppDatabase {
           const review = this.reviews.find(r => r.id === cr.videoReviewId);
           const mediaAssetId = review ? review.mediaAssetId : null;
           const asset = mediaAssetId ? this.mediaAssets.find(a => a.id === mediaAssetId) : null;
-          
+
           const gId = asset ? (asset.genreId || defaultGenre.id) : defaultGenre.id;
           const g = this.genres.find(genre => genre.id === gId) || defaultGenre;
           const c = this.criteria.find(crit => crit.id === cr.criterionId);
-          
+
           cr.genreId = g.id;
           cr.genreName = g.name;
           cr.criterionName = c ? c.name : (cr.criterionName || '不明な項目');
@@ -520,11 +538,11 @@ export class AppDatabase {
           const review = this.reviews.find(r => r.id === cr.videoReviewId);
           const videoId = review ? review.videoId : null;
           const video = videos.find(v => v.id === videoId);
-          
+
           const gId = video ? (video.genreId || defaultGenre.id) : defaultGenre.id;
           const g = this.genres.find(genre => genre.id === gId) || defaultGenre;
           const c = this.criteria.find(crit => crit.id === cr.criterionId);
-          
+
           cr.genreId = g.id;
           cr.genreName = g.name;
           cr.criterionName = c ? c.name : (cr.criterionName || '不明な項目');
@@ -555,7 +573,7 @@ export class AppDatabase {
     }
 
     console.log('Running Content Hash Separation and Media Identity migration (v3)...');
-    
+
     const originalVideos = this._loadTable('videos', []);
     const originalReviews = this._loadTable('video_reviews', []);
     const originalVideoTags = this._loadTable('video_tags', []);
@@ -646,7 +664,7 @@ export class AppDatabase {
       this.mediaAssets = mediaAssets;
       this.fileLocations = fileLocations;
       this.reviews = reviews;
-      this.videoTags = videoTags;
+      this._legacyVideoTags = videoTags;
       this.timelineNotes = timelineNotes;
       this.videos = undefined;
 
@@ -660,6 +678,347 @@ export class AppDatabase {
       this._saveTable('timeline_notes', originalTimelineNotes);
       throw err;
     }
+  }
+
+  async _migrateToV4MultiReview() {
+    if (!this.storage) return;
+    const versionKey = `${this.prefix}schema_version`;
+    const currentVersion = this.storage.getItem(versionKey);
+
+    if (currentVersion === '4') {
+      return;
+    }
+
+    console.log('Running Multi-Reviewer and Schema v4 migration...');
+
+    // 1. Snapshot original collections for rollback
+    const inMemorySnapshot = {
+      mediaAssets: JSON.parse(JSON.stringify(this.mediaAssets || [])),
+      fileLocations: JSON.parse(JSON.stringify(this.fileLocations || [])),
+      criteria: JSON.parse(JSON.stringify(this.criteria || [])),
+      reviews: JSON.parse(JSON.stringify(this.reviews || [])),
+      criterionRatings: JSON.parse(JSON.stringify(this.criterionRatings || [])),
+      tags: JSON.parse(JSON.stringify(this.tags || [])),
+      _legacyVideoTags: JSON.parse(JSON.stringify(this._legacyVideoTags || [])),
+      timelineNotes: JSON.parse(JSON.stringify(this.timelineNotes || [])),
+      directorySources: JSON.parse(JSON.stringify(this.directorySources || [])),
+      genres: JSON.parse(JSON.stringify(this.genres || [])),
+      templates: JSON.parse(JSON.stringify(this.templates || [])),
+      reviewers: JSON.parse(JSON.stringify(this.reviewers || [])),
+      reviewTags: JSON.parse(JSON.stringify(this.reviewTags || [])),
+      pendingSharedReviews: JSON.parse(JSON.stringify(this.pendingSharedReviews || []))
+    };
+
+    const originalLocalData = {};
+    const localKeys = [
+      'media_assets', 'file_locations', 'rating_criteria', 'video_reviews', 'criterion_ratings',
+      'tags', 'video_tags', 'timeline_notes', 'directory_sources',
+      'genres', 'evaluation_templates', 'reviewers', 'review_tags', 'pending_shared_reviews'
+    ];
+    localKeys.forEach(k => {
+      originalLocalData[k] = this.storage.getItem(`${this.prefix}${k}`);
+    });
+
+    try {
+      await this._migrateInMemoryToV4();
+
+      const validationErrors = this.validateV4Structure({
+        reviewers: this.reviewers,
+        media_assets: this.mediaAssets,
+        file_locations: this.fileLocations,
+        video_reviews: this.reviews,
+        criterion_ratings: this.criterionRatings,
+        tags: this.tags,
+        review_tags: this.reviewTags,
+        timeline_notes: this.timelineNotes,
+        directory_sources: this.directorySources,
+        genres: this.genres,
+        evaluation_templates: this.templates,
+        pending_shared_reviews: this.pendingSharedReviews
+      });
+
+      if (validationErrors.length > 0) {
+        throw new Error('V4 Schema Validation Failed: ' + validationErrors.join('; '));
+      }
+
+      this._saveTable('reviewers', this.reviewers);
+      this._saveTable('video_reviews', this.reviews);
+      this._saveTable('review_tags', this.reviewTags);
+      this._saveTable('pending_shared_reviews', this.pendingSharedReviews);
+
+      if (this.storage) {
+        this.storage.removeItem(`${this.prefix}video_tags`);
+      }
+
+      this.storage.setItem(versionKey, '4');
+      console.log('Migration to Schema v4 completed successfully.');
+    } catch (err) {
+      console.error('Migration to Schema v4 failed. Rolling back changes...', err);
+      // Rollback memory state
+      this.mediaAssets = inMemorySnapshot.mediaAssets;
+      this.fileLocations = inMemorySnapshot.fileLocations;
+      this.criteria = inMemorySnapshot.criteria;
+      this.reviews = inMemorySnapshot.reviews;
+      this.criterionRatings = inMemorySnapshot.criterionRatings;
+      this.tags = inMemorySnapshot.tags;
+      this._legacyVideoTags = inMemorySnapshot._legacyVideoTags;
+      this.timelineNotes = inMemorySnapshot.timelineNotes;
+      this.directorySources = inMemorySnapshot.directorySources;
+      this.genres = inMemorySnapshot.genres;
+      this.templates = inMemorySnapshot.templates;
+      this.reviewers = inMemorySnapshot.reviewers;
+      this.reviewTags = inMemorySnapshot.reviewTags;
+      this.pendingSharedReviews = inMemorySnapshot.pendingSharedReviews;
+
+      // Rollback localStorage
+      localKeys.forEach(k => {
+        if (originalLocalData[k] !== null && originalLocalData[k] !== undefined) {
+          this.storage.setItem(`${this.prefix}${k}`, originalLocalData[k]);
+        } else {
+          this.storage.removeItem(`${this.prefix}${k}`);
+        }
+      });
+      throw err;
+    }
+  }
+
+  async _migrateInMemoryToV4() {
+    const localReviewer = this._ensureLocalReviewerDuringInitialization();
+
+    // Check duplicate mediaAssetId in reviews
+    const assetReviewMap = new Map();
+    this.reviews.forEach(r => {
+      if (!assetReviewMap.has(r.mediaAssetId)) {
+        assetReviewMap.set(r.mediaAssetId, []);
+      }
+      assetReviewMap.get(r.mediaAssetId).push(r);
+    });
+
+    for (const [mediaAssetId, revs] of assetReviewMap.entries()) {
+      if (revs.length > 1) {
+        throw new Error(`同一media asset [${mediaAssetId}] に対する複数のレビューが検出されました。重複レビューID: [${revs.map(r=>r.id).join(', ')}]`);
+      }
+    }
+
+    const migratedReviews = [];
+    this.reviews.forEach(r => {
+      let score = null;
+      if (r.overallScore !== undefined) {
+        score = r.overallScore;
+      } else {
+        score = overallGradeToScore(r.overallGrade);
+      }
+
+      migratedReviews.push({
+        id: r.id,
+        mediaAssetId: r.mediaAssetId,
+        reviewerId: localReviewer.id,
+        origin: r.origin || 'local',
+        overallScore: score,
+        comment: r.comment || '',
+        createdAt: r.createdAt || new Date().toISOString(),
+        updatedAt: r.updatedAt || new Date().toISOString()
+      });
+    });
+
+    // Migrate timeline notes to Schema v4 (assign videoReviewId strictly)
+    this.timelineNotes.forEach(note => {
+      if (note.videoReviewId) {
+        const review = migratedReviews.find(r => r.id === note.videoReviewId);
+        if (!review) {
+          throw new Error(`Timeline note ${note.id} references non-existent review ${note.videoReviewId}`);
+        }
+        const assetId = note.mediaAssetId || note.videoId;
+        if (assetId && review.mediaAssetId !== assetId) {
+          throw new Error(`Timeline note ${note.id} references review ${review.id} with mediaAssetId ${review.mediaAssetId} which contradicts note's video reference ${assetId}`);
+        }
+        note.mediaAssetId = review.mediaAssetId;
+        delete note.videoId;
+      } else {
+        const assetId = note.mediaAssetId || note.videoId;
+        if (!assetId) {
+          throw new Error(`Timeline note ${note.id} is missing video reference (videoId/mediaAssetId)`);
+        }
+        const matchingReviews = migratedReviews.filter(r => r.mediaAssetId === assetId && r.reviewerId === localReviewer.id);
+        if (matchingReviews.length === 0) {
+          throw new Error(`Timeline note ${note.id} has 0 matching owner reviews for asset ${assetId}`);
+        }
+        if (matchingReviews.length > 1) {
+          throw new Error(`Timeline note ${note.id} has multiple matching owner reviews for asset ${assetId}`);
+        }
+        note.videoReviewId = matchingReviews[0].id;
+        note.mediaAssetId = assetId;
+        delete note.videoId;
+      }
+    });
+
+    const migratedReviewTags = [];
+    const seenReviewTags = new Set();
+    const vtags = this._legacyVideoTags || [];
+    vtags.forEach(vt => {
+      let targetReview = migratedReviews.find(r => r.mediaAssetId === vt.mediaAssetId);
+      if (!targetReview) {
+        targetReview = {
+          id: 'rev-' + generateUUID(),
+          mediaAssetId: vt.mediaAssetId,
+          reviewerId: localReviewer.id,
+          origin: 'local',
+          overallScore: null,
+          comment: '',
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString()
+        };
+        migratedReviews.push(targetReview);
+      }
+
+      const rtagKey = `${targetReview.id}::${vt.tagId}`;
+      if (!seenReviewTags.has(rtagKey)) {
+        migratedReviewTags.push({
+          id: 'review-tag-' + generateUUID(),
+          videoReviewId: targetReview.id,
+          tagId: vt.tagId,
+          createdAt: new Date().toISOString()
+        });
+        seenReviewTags.add(rtagKey);
+      }
+    });
+
+    this.reviews = migratedReviews;
+    this.reviewTags = migratedReviewTags;
+    this.pendingSharedReviews = this.pendingSharedReviews || [];
+    this._legacyVideoTags = [];
+  }
+
+  validateV4Structure(data) {
+    const errors = [];
+
+    // 1. Reviewer validation
+    const reviewers = data.reviewers || [];
+    const reviewerIds = new Set();
+    let localReviewerCount = 0;
+    reviewers.forEach((r, idx) => {
+      if (!r.id) errors.push(`reviewer[${idx}] id is missing`);
+      if (reviewerIds.has(r.id)) errors.push(`Duplicate reviewer ID: ${r.id}`);
+      reviewerIds.add(r.id);
+      if (!r.displayName || String(r.displayName).trim() === '') {
+        errors.push(`reviewer ${r.id || idx} displayName is empty`);
+      }
+      if (r.isLocal === true) {
+        localReviewerCount++;
+      }
+    });
+    if (localReviewerCount !== 1) {
+      errors.push(`local reviewer count must be exactly 1, found ${localReviewerCount}`);
+    }
+
+    // 2. Media asset checks
+    const mediaAssets = data.media_assets || [];
+    mediaAssets.forEach(v => {
+      if (v.sourceType === 'url' || (v.videoUrl !== undefined && v.videoUrl !== null && v.videoUrl !== '')) {
+        errors.push(`URL video source found in media asset ${v.id}. This is deprecated.`);
+      }
+    });
+
+    // 3. Review validation
+    const reviews = data.video_reviews || [];
+    const reviewIds = new Set();
+    const uniqueReviews = new Set();
+    reviews.forEach((r, idx) => {
+      if (!r.id) errors.push(`video_review[${idx}] id is missing`);
+      if (reviewIds.has(r.id)) errors.push(`Duplicate review ID: ${r.id}`);
+      reviewIds.add(r.id);
+
+      const uniqueKey = `${r.mediaAssetId}::${r.reviewerId}`;
+      if (uniqueReviews.has(uniqueKey)) {
+        errors.push(`Duplicate review for mediaAssetId + reviewerId: ${uniqueKey}`);
+      }
+      uniqueReviews.add(uniqueKey);
+
+      // Check reviewer exists
+      if (!reviewerIds.has(r.reviewerId)) {
+        errors.push(`Review ${r.id} references non-existent reviewer: ${r.reviewerId}`);
+      }
+      // Check media asset exists
+      if (!mediaAssets.some(v => v.id === r.mediaAssetId)) {
+        errors.push(`Review ${r.id} references non-existent media asset: ${r.mediaAssetId}`);
+      }
+      // Check overallScore
+      if (r.overallScore !== null && r.overallScore !== undefined) {
+        const score = parseInt(r.overallScore, 10);
+        if (isNaN(score) || score < 1 || score > 5) {
+          errors.push(`Review ${r.id} has invalid overallScore: ${r.overallScore}`);
+        }
+      }
+      // Check origin
+      if (r.origin !== 'local' && r.origin !== 'imported') {
+        errors.push(`Review ${r.id} has invalid origin: ${r.origin}`);
+      }
+      // Check comment type
+      if (r.comment !== null && r.comment !== undefined && typeof r.comment !== 'string') {
+        errors.push(`Review ${r.id} has invalid comment type: ${typeof r.comment}`);
+      }
+    });
+
+    // 4. Criterion rating validation
+    const ratings = data.criterion_ratings || [];
+    ratings.forEach(cr => {
+      if (!reviewIds.has(cr.videoReviewId)) {
+        errors.push(`Criterion rating ${cr.id} references non-existent review: ${cr.videoReviewId}`);
+      }
+    });
+
+    // 5. Review tags validation
+    const reviewTags = data.review_tags || [];
+    const tagIds = new Set((data.tags || []).map(t => t.id));
+    const reviewTagIds = new Set();
+    const seenReviewTags = new Set();
+    reviewTags.forEach(rt => {
+      if (!rt.id) errors.push(`review_tag id is missing`);
+      if (reviewTagIds.has(rt.id)) errors.push(`Duplicate review tag ID: ${rt.id}`);
+      reviewTagIds.add(rt.id);
+
+      const rtagKey = `${rt.videoReviewId}::${rt.tagId}`;
+      if (seenReviewTags.has(rtagKey)) {
+        errors.push(`Duplicate review tag association for videoReviewId + tagId: ${rtagKey}`);
+      }
+      seenReviewTags.add(rtagKey);
+
+      if (!reviewIds.has(rt.videoReviewId)) {
+        errors.push(`Review tag ${rt.id} references non-existent review: ${rt.videoReviewId}`);
+      }
+      if (!tagIds.has(rt.tagId)) {
+        errors.push(`Review tag ${rt.id} references non-existent tag: ${rt.tagId}`);
+      }
+    });
+
+    // 6. Timeline notes validation
+    const notes = data.timeline_notes || [];
+    notes.forEach(n => {
+      if (!reviewIds.has(n.videoReviewId)) {
+        errors.push(`Timeline note ${n.id} references non-existent review: ${n.videoReviewId}`);
+      }
+    });
+
+    // 7. Pending shared reviews validation
+    const pending = data.pending_shared_reviews || [];
+    const pendingIds = new Set();
+    pending.forEach(p => {
+      if (!p.id) errors.push(`pending_shared_review id is missing`);
+      if (pendingIds.has(p.id)) errors.push(`Duplicate pending ID: ${p.id}`);
+      pendingIds.add(p.id);
+
+      if (!/^[0-9a-f]{64}$/.test(p.videoHash)) {
+        errors.push(`Pending review ${p.id} has invalid videoHash: ${p.videoHash}`);
+      }
+      if (p.hashAlgorithm !== 'sha256') {
+        errors.push(`Pending review ${p.id} has invalid hashAlgorithm: ${p.hashAlgorithm}`);
+      }
+      if (p.status !== 'pending') {
+        errors.push(`Pending review ${p.id} has invalid status: ${p.status}`);
+      }
+    });
+
+    return errors;
   }
 
   // --- IMAGE STORES ---
@@ -968,14 +1327,14 @@ export class AppDatabase {
     if (candidates.length === 1) {
       // Exactly 1 candidate -> provisional match!
       const matchedAsset = candidates[0];
-      
+
       if (matchedAsset.isArchived) {
         matchedAsset.isArchived = false;
         matchedAsset.archivedAt = null;
         matchedAsset.updatedAt = new Date().toISOString();
         this._saveTable('media_assets', this.mediaAssets);
       }
-      
+
       const normPath = normalizePath(sf.relativePath);
       let existingLoc = this.fileLocations.find(l => l.directoryId === directoryId && normalizePath(l.relativePath) === normPath);
       if (!existingLoc) {
@@ -1089,7 +1448,7 @@ export class AppDatabase {
       } else {
         // The provisional match was incorrect! (Full hash mismatch)
         // We must undo the match and separate this location into a new asset!
-        
+
         let targetAsset = existingAsset;
         if (!targetAsset) {
           // Create a new verified asset
@@ -1446,10 +1805,10 @@ export class AppDatabase {
     const snapLocations = JSON.parse(JSON.stringify(this.fileLocations));
     const snapReviews = JSON.parse(JSON.stringify(this.reviews));
     const snapRatings = JSON.parse(JSON.stringify(this.criterionRatings));
-    const snapVideoTags = JSON.parse(JSON.stringify(this.videoTags));
+    const snapReviewTags = JSON.parse(JSON.stringify(this.reviewTags));
     const snapNotes = JSON.parse(JSON.stringify(this.timelineNotes));
 
-    const keys = ['media_assets', 'file_locations', 'video_reviews', 'criterion_ratings', 'video_tags', 'timeline_notes'];
+    const keys = ['media_assets', 'file_locations', 'video_reviews', 'criterion_ratings', 'review_tags', 'timeline_notes'];
     const storageSnap = {};
     if (this.storage) {
       keys.forEach(k => {
@@ -1468,42 +1827,49 @@ export class AppDatabase {
         }
       });
 
-      const targetTagIds = new Set(this.videoTags.filter(vt => vt.mediaAssetId === canonicalTargetId).map(vt => vt.tagId));
-      this.videoTags.forEach(vt => {
-        if (vt.mediaAssetId === canonicalSourceId) {
-          if (!targetTagIds.has(vt.tagId)) {
-            vt.mediaAssetId = canonicalTargetId;
-            targetTagIds.add(vt.tagId);
-          }
+      // Merge reviews, timeline notes, and review tags per reviewer
+      const sourceReviews = this.reviews.filter(r => r.mediaAssetId === canonicalSourceId);
+      sourceReviews.forEach(srcReview => {
+        const reviewerId = srcReview.reviewerId;
+        const targetReview = this.reviews.find(r => r.mediaAssetId === canonicalTargetId && r.reviewerId === reviewerId);
+        if (!targetReview) {
+          // Move review to target asset
+          srcReview.mediaAssetId = canonicalTargetId;
+          srcReview.updatedAt = new Date().toISOString();
+
+          // Move timeline notes referencing this review to target asset
+          this.timelineNotes.forEach(note => {
+            if (note.videoReviewId === srcReview.id) {
+              note.mediaAssetId = canonicalTargetId;
+              note.updatedAt = new Date().toISOString();
+            }
+          });
+        } else {
+          // Merge review tags from source review to target review
+          const targetTagIds = new Set(this.reviewTags.filter(rt => rt.videoReviewId === targetReview.id).map(rt => rt.tagId));
+          const srcReviewTags = this.reviewTags.filter(rt => rt.videoReviewId === srcReview.id);
+          srcReviewTags.forEach(rt => {
+            if (!targetTagIds.has(rt.tagId)) {
+              rt.videoReviewId = targetReview.id;
+            } else {
+              this.reviewTags = this.reviewTags.filter(x => x.id !== rt.id);
+            }
+          });
+
+          // Move timeline notes referencing source review to target review
+          this.timelineNotes.forEach(note => {
+            if (note.videoReviewId === srcReview.id) {
+              note.videoReviewId = targetReview.id;
+              note.mediaAssetId = canonicalTargetId;
+              note.updatedAt = new Date().toISOString();
+            }
+          });
+
+          // Delete duplicate source review and its ratings
+          this.reviews = this.reviews.filter(r => r.id !== srcReview.id);
+          this.criterionRatings = this.criterionRatings.filter(cr => cr.videoReviewId !== srcReview.id);
         }
       });
-      this.videoTags = this.videoTags.filter(vt => vt.mediaAssetId !== canonicalSourceId);
-
-      const canonicalTargetReview = this.reviews.find(r => r.mediaAssetId === canonicalTargetId);
-      const canonicalSourceReview = this.reviews.find(r => r.mediaAssetId === canonicalSourceId);
-      
-      let activeReview = canonicalTargetReview;
-      if (!activeReview && canonicalSourceReview) {
-        canonicalSourceReview.mediaAssetId = canonicalTargetId;
-        activeReview = canonicalSourceReview;
-      }
-      
-      this.timelineNotes.forEach(note => {
-        if (note.mediaAssetId === canonicalSourceId) {
-          note.mediaAssetId = canonicalTargetId;
-          if (activeReview) {
-            note.videoReviewId = activeReview.id;
-          }
-          note.updatedAt = new Date().toISOString();
-        }
-      });
-
-      if (!canonicalTargetReview && canonicalSourceReview) {
-        canonicalSourceReview.mediaAssetId = canonicalTargetId;
-      } else if (canonicalSourceReview && canonicalTargetReview) {
-        this.reviews = this.reviews.filter(r => r.id !== canonicalSourceReview.id);
-        this.criterionRatings = this.criterionRatings.filter(cr => cr.videoReviewId !== canonicalSourceReview.id);
-      }
 
       if (!target.thumbnailId && source.thumbnailId) {
         target.thumbnailId = source.thumbnailId;
@@ -1515,7 +1881,7 @@ export class AppDatabase {
       this._saveTable('file_locations', this.fileLocations);
       this._saveTable('video_reviews', this.reviews);
       this._saveTable('criterion_ratings', this.criterionRatings);
-      this._saveTable('video_tags', this.videoTags);
+      this._saveTable('review_tags', this.reviewTags);
       this._saveTable('timeline_notes', this.timelineNotes);
 
       return { merged: true, targetAssetId: canonicalTargetId, sourceAssetId: canonicalSourceId };
@@ -1524,7 +1890,7 @@ export class AppDatabase {
       this.fileLocations = snapLocations;
       this.reviews = snapReviews;
       this.criterionRatings = snapRatings;
-      this.videoTags = snapVideoTags;
+      this.reviewTags = snapReviewTags;
       this.timelineNotes = snapNotes;
 
       if (this.storage) {
@@ -1561,7 +1927,7 @@ export class AppDatabase {
           return { merged: true, conflict: false, targetAssetId: mergeResult.targetAssetId, sourceAssetId: mergeResult.sourceAssetId };
         } else if (mergeResult.conflict) {
           const conflictGroupId = existingAsset.identityConflictGroupId || ('conflict-' + generateUUID());
-          
+
           existingAsset.identityStatus = 'conflict';
           existingAsset.identityConflictGroupId = conflictGroupId;
           existingAsset.updatedAt = new Date().toISOString();
@@ -1697,35 +2063,35 @@ export class AppDatabase {
     if (asset) {
       const assetKeys = ['contentHash', 'hashAlgorithm', 'quickHash', 'hashStatus', 'fileSize', 'duration', 'displayTitle', 'genreId', 'thumbnailId'];
       const locKeys = ['directoryId', 'relativePath', 'fileName', 'fileSize', 'lastModified', 'availabilityStatus'];
-      
+
       const assetUpdates = {};
       const locUpdates = {};
-      
+
       for (const [k, v] of Object.entries(updates)) {
         if (k === 'title' || k === 'displayTitle') {
           assetUpdates.displayTitle = normalizeDisplayTitle(v);
         } else if (assetKeys.includes(k)) {
           assetUpdates[k] = v;
         }
-        
+
         if (locKeys.includes(k)) {
           locUpdates[k] = v;
         }
       }
-      
+
       Object.assign(asset, assetUpdates);
       asset.updatedAt = new Date().toISOString();
       this._saveTable('media_assets', this.mediaAssets);
 
       if (Object.keys(locUpdates).length > 0) {
-        let loc = this.fileLocations.find(l => l.mediaAssetId === id && 
+        let loc = this.fileLocations.find(l => l.mediaAssetId === id &&
                     (updates.directoryId === undefined || l.directoryId === updates.directoryId) &&
                     (updates.relativePath === undefined || l.relativePath === updates.relativePath));
-                    
+
         if (!loc) {
           loc = this.fileLocations.find(l => l.mediaAssetId === id);
         }
-        
+
         if (loc) {
           Object.assign(loc, locUpdates);
           loc.lastVerifiedAt = new Date().toISOString();
@@ -1733,7 +2099,7 @@ export class AppDatabase {
           this._saveTable('file_locations', this.fileLocations);
         }
       }
-      
+
       return this._buildVirtualVideo(asset);
     }
     return null;
@@ -1802,8 +2168,8 @@ export class AppDatabase {
     this.criterionRatings = this.criterionRatings.filter(cr => !reviewIds.includes(cr.videoReviewId));
     this._saveTable('criterion_ratings', this.criterionRatings);
 
-    this.videoTags = this.videoTags.filter(vt => vt.mediaAssetId !== mediaAssetId);
-    this._saveTable('video_tags', this.videoTags);
+    this.reviewTags = this.reviewTags.filter(rt => !reviewIds.includes(rt.videoReviewId));
+    this._saveTable('review_tags', this.reviewTags);
 
     this.timelineNotes = this.timelineNotes.filter(n => n.mediaAssetId !== mediaAssetId && !reviewIds.includes(n.videoReviewId));
     this._saveTable('timeline_notes', this.timelineNotes);
@@ -1905,8 +2271,58 @@ export class AppDatabase {
 
   // --- REVIEW & RATING OPERATIONS ---
 
+  _ensureLocalReviewerDuringInitialization() {
+    if (!this.reviewers) {
+      this.reviewers = [];
+    }
+    let local = this.reviewers.find(r => r.isLocal);
+    if (!local) {
+      const reviewerName = (this.storage && (this.storage.getItem(`${this.prefix}reviewer_name`) || this.storage.getItem('vreview_reviewer_name') || this.storage.getItem('reviewerName'))) || '自分';
+      local = {
+        id: 'reviewer-' + generateUUID(),
+        displayName: reviewerName,
+        isLocal: true,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      };
+      this.reviewers.push(local);
+      this._saveTable('reviewers', this.reviewers);
+    }
+    return local;
+  }
+
+  getLocalReviewer() {
+    return this.reviewers.find(r => r.isLocal) || null;
+  }
+
+  getReviewers() {
+    return this.reviewers;
+  }
+
+  getReviewsForVideo(mediaAssetId) {
+    return this.reviews.filter(r => r.mediaAssetId === mediaAssetId);
+  }
+
+  getOwnerReviewForVideo(mediaAssetId) {
+    const localRev = this.getLocalReviewer();
+    if (!localRev) return null;
+    return this.reviews.find(r => r.mediaAssetId === mediaAssetId && r.reviewerId === localRev.id) || null;
+  }
+
+  getTagsForReview(videoReviewId) {
+    const associationIds = this.reviewTags
+      .filter(rt => rt.videoReviewId === videoReviewId)
+      .map(rt => rt.tagId);
+    return this.tags.filter(t => associationIds.includes(t.id));
+  }
+
   getReviewForVideo(mediaAssetId) {
-    return this.reviews.find(r => r.mediaAssetId === mediaAssetId);
+    const review = this.getOwnerReviewForVideo(mediaAssetId);
+    if (!review) return undefined;
+    return {
+      ...review,
+      overallGrade: overallScoreToGrade(review.overallScore)
+    };
   }
 
   getCriterionRatingsForReview(reviewId) {
@@ -1914,22 +2330,39 @@ export class AppDatabase {
   }
 
   async saveReview(mediaAssetId, { overallGrade, comment, ratings }) {
-    let review = this.getReviewForVideo(mediaAssetId);
+    const localReviewer = this.getLocalReviewer();
+    if (!localReviewer) {
+      throw new Error('Local owner reviewer is not initialized.');
+    }
+
+    let review = this.getOwnerReviewForVideo(mediaAssetId);
     const now = new Date().toISOString();
+    const score = overallGradeToScore(overallGrade);
+
+    let finalComment = '';
+    if (comment === null) {
+      finalComment = null;
+    } else if (comment !== undefined) {
+      finalComment = String(comment);
+    } else {
+      finalComment = review ? review.comment : '';
+    }
 
     if (!review) {
       review = {
         id: 'rev-' + generateUUID(),
         mediaAssetId,
-        overallGrade: overallGrade || null,
-        comment: comment || '',
+        reviewerId: localReviewer.id,
+        origin: 'local',
+        overallScore: score,
+        comment: finalComment,
         createdAt: now,
         updatedAt: now
       };
       this.reviews.push(review);
     } else {
-      review.overallGrade = overallGrade || null;
-      review.comment = comment || '';
+      review.overallScore = score;
+      review.comment = finalComment;
       review.updatedAt = now;
     }
 
@@ -1943,8 +2376,8 @@ export class AppDatabase {
     const genreName = genre ? genre.name : '一般';
 
     if (ratings && typeof ratings === 'object') {
-      for (const [criterionId, score] of Object.entries(ratings)) {
-        if (score !== null && score !== undefined) {
+      for (const [criterionId, scoreVal] of Object.entries(ratings)) {
+        if (scoreVal !== null && scoreVal !== undefined) {
           const criterion = this.criteria.find(c => c.id === criterionId);
           const criterionName = criterion ? criterion.name : '';
 
@@ -1955,7 +2388,7 @@ export class AppDatabase {
             criterionName,
             genreId,
             genreName,
-            score: parseInt(score, 10),
+            score: parseInt(scoreVal, 10),
             createdAt: now,
             updatedAt: now
           });
@@ -1966,7 +2399,27 @@ export class AppDatabase {
     this._saveTable('criterion_ratings', this.criterionRatings);
     await this.updateVideo(mediaAssetId, {});
 
-    return review;
+    return {
+      ...review,
+      overallGrade: overallScoreToGrade(review.overallScore)
+    };
+  }
+
+  get videoTags() {
+    if (!this.reviewTags) return [];
+    const localReviewer = this.reviewers ? this.reviewers.find(r => r.isLocal) : null;
+    if (!localReviewer) return [];
+
+    const ownerReviewIds = new Set(this.reviews.filter(r => r.reviewerId === localReviewer.id).map(r => r.id));
+    return this.reviewTags
+      .filter(rt => rt && ownerReviewIds.has(rt.videoReviewId))
+      .map(rt => {
+        const review = this.reviews.find(r => r.id === rt.videoReviewId);
+        return {
+          mediaAssetId: review ? review.mediaAssetId : null,
+          tagId: rt.tagId
+        };
+      }).filter(vt => vt && vt.mediaAssetId !== null);
   }
 
   // --- TAG OPERATIONS ---
@@ -1976,9 +2429,12 @@ export class AppDatabase {
   }
 
   getVideoTags(mediaAssetId) {
-    const associationIds = this.videoTags
-      .filter(vt => vt.mediaAssetId === mediaAssetId)
-      .map(vt => vt.tagId);
+    const review = this.getOwnerReviewForVideo(mediaAssetId);
+    if (!review) return [];
+
+    const associationIds = this.reviewTags
+      .filter(rt => rt.videoReviewId === review.id)
+      .map(rt => rt.tagId);
     return this.tags.filter(t => associationIds.includes(t.id));
   }
 
@@ -1987,7 +2443,7 @@ export class AppDatabase {
     if (!cleanedName) return null;
 
     const normalized = cleanedName.toLowerCase();
-    
+
     let tag = this.tags.find(t => t.normalizedName === normalized);
     if (!tag) {
       tag = {
@@ -1999,10 +2455,20 @@ export class AppDatabase {
       this._saveTable('tags', this.tags);
     }
 
-    const alreadyAssociated = this.videoTags.some(vt => vt.mediaAssetId === mediaAssetId && vt.tagId === tag.id);
+    let review = this.getOwnerReviewForVideo(mediaAssetId);
+    if (!review) {
+      review = await this.saveReview(mediaAssetId, { overallGrade: null, comment: '', ratings: {} });
+    }
+
+    const alreadyAssociated = this.reviewTags.some(rt => rt.videoReviewId === review.id && rt.tagId === tag.id);
     if (!alreadyAssociated) {
-      this.videoTags.push({ mediaAssetId, tagId: tag.id });
-      this._saveTable('video_tags', this.videoTags);
+      this.reviewTags.push({
+        id: 'review-tag-' + generateUUID(),
+        videoReviewId: review.id,
+        tagId: tag.id,
+        createdAt: new Date().toISOString()
+      });
+      this._saveTable('review_tags', this.reviewTags);
       await this.updateVideo(mediaAssetId, {});
     }
 
@@ -2010,10 +2476,13 @@ export class AppDatabase {
   }
 
   async removeTagFromVideo(mediaAssetId, tagId) {
-    const initialLength = this.videoTags.length;
-    this.videoTags = this.videoTags.filter(vt => !(vt.mediaAssetId === mediaAssetId && vt.tagId === tagId));
-    if (this.videoTags.length !== initialLength) {
-      this._saveTable('video_tags', this.videoTags);
+    const review = this.getOwnerReviewForVideo(mediaAssetId);
+    if (!review) return false;
+
+    const initialLength = this.reviewTags.length;
+    this.reviewTags = this.reviewTags.filter(rt => !(rt.videoReviewId === review.id && rt.tagId === tagId));
+    if (this.reviewTags.length !== initialLength) {
+      this._saveTable('review_tags', this.reviewTags);
       await this.updateVideo(mediaAssetId, {});
       return true;
     }
@@ -2023,18 +2492,18 @@ export class AppDatabase {
   // --- TIMELINE NOTES OPERATIONS ---
 
   getTimelineNotes(mediaAssetId) {
-    const review = this.getReviewForVideo(mediaAssetId);
+    const review = this.getOwnerReviewForVideo(mediaAssetId);
     if (!review) return [];
-    
+
     return this.timelineNotes
       .filter(n => n.videoReviewId === review.id)
       .sort((a, b) => a.timestampSeconds - b.timestampSeconds);
   }
 
   async addTimelineNote(mediaAssetId, { timestampSeconds, timestampLabel, comment, thumbnailBlob }) {
-    let review = this.getReviewForVideo(mediaAssetId);
+    let review = this.getOwnerReviewForVideo(mediaAssetId);
     const now = new Date().toISOString();
-    
+
     if (!review) {
       review = await this.saveReview(mediaAssetId, { overallGrade: null, comment: '', ratings: {} });
     }
@@ -2074,7 +2543,7 @@ export class AppDatabase {
         updatedAt: new Date().toISOString()
       };
       this._saveTable('timeline_notes', this.timelineNotes);
-      
+
       const review = this.reviews.find(r => r.id === this.timelineNotes[idx].videoReviewId);
       if (review) {
         await this.updateVideo(review.mediaAssetId, {});
@@ -2130,15 +2599,19 @@ export class AppDatabase {
       this._saveTable('video_reviews', this.reviews);
       this._saveTable('criterion_ratings', this.criterionRatings);
       this._saveTable('tags', this.tags);
-      this._saveTable('video_tags', this.videoTags);
+      this._saveTable('review_tags', this.reviewTags);
       this._saveTable('timeline_notes', this.timelineNotes);
       this._saveTable('directory_sources', this.directorySources);
       this._saveTable('genres', this.genres);
       this._saveTable('evaluation_templates', this.templates);
+      this._saveTable('reviewers', this.reviewers);
+      this._saveTable('pending_shared_reviews', this.pendingSharedReviews);
     } finally {
       this._allowSaveDuringRestore = prevAllow;
     }
   }
+
+
 
   normalizeBackupData(inputDb) {
     if (!inputDb || typeof inputDb !== 'object') {
@@ -2201,8 +2674,8 @@ export class AppDatabase {
     if (!manifest || typeof manifest !== 'object') {
       fatalErrors.push('マニフェストファイルがありません。');
     } else {
-      // 2. Verify schemaVersion is exactly 3
-      if (!Number.isInteger(manifest.schemaVersion) || manifest.schemaVersion !== 3) {
+      // 2. Verify schemaVersion is 3 or 4
+      if (!Number.isInteger(manifest.schemaVersion) || (manifest.schemaVersion !== 3 && manifest.schemaVersion !== 4)) {
         fatalErrors.push(`サポートされていないスキーマバージョンです: ${manifest.schemaVersion}`);
       }
 
@@ -2216,6 +2689,9 @@ export class AppDatabase {
         fatalErrors.push('マニフェストに counts が存在しません。');
       } else {
         const reqCounts = ['media_assets', 'file_locations', 'reviews', 'images'];
+        if (manifest.schemaVersion === 4) {
+          reqCounts.push('reviewers', 'review_tags', 'pending_shared_reviews');
+        }
         reqCounts.forEach(c => {
           const val = manifest.counts[c];
           if (typeof val !== 'number' || !Number.isInteger(val) || val < 0) {
@@ -2242,21 +2718,35 @@ export class AppDatabase {
 
     if (fatalErrors.length === 0 && rawDb && typeof rawDb === 'object') {
       // 7. Match counts
-      if (manifest.counts.media_assets !== rawDb.media_assets.length) {
+      if (manifest.counts.media_assets !== (rawDb.media_assets || []).length) {
         fatalErrors.push('動画アセットの件数がマニフェストのカウントと一致しません。');
       }
-      if (manifest.counts.file_locations !== rawDb.file_locations.length) {
+      if (manifest.counts.file_locations !== (rawDb.file_locations || []).length) {
         fatalErrors.push('ファイル所在地の件数がマニフェストのカウントと一致しません。');
       }
-      if (manifest.counts.reviews !== rawDb.video_reviews.length) {
+      if (manifest.counts.reviews !== (rawDb.video_reviews || []).length) {
         fatalErrors.push('レビューの件数がマニフェストのカウントと一致しません。');
       }
       if (manifest.counts.images !== imageIds.length) {
         fatalErrors.push('画像の件数がマニフェストのカウントと一致しません。');
       }
+      if (manifest.schemaVersion === 4) {
+        if (manifest.counts.reviewers !== (rawDb.reviewers || []).length) {
+          fatalErrors.push('レビュアーの件数がマニフェストのカウントと一致しません。');
+        }
+        if (manifest.counts.review_tags !== (rawDb.review_tags || []).length) {
+          fatalErrors.push('レビュータグの件数がマニフェストのカウントと一致しません。');
+        }
+        if (manifest.counts.pending_shared_reviews !== (rawDb.pending_shared_reviews || []).length) {
+          fatalErrors.push('保留中レビューの件数がマニフェストのカウントと一致しません。');
+        }
+      }
 
       // 8. Validate duplicate IDs within each table
       const tablesWithId = ['media_assets', 'file_locations', 'rating_criteria', 'video_reviews', 'tags', 'timeline_notes', 'directory_sources', 'genres', 'evaluation_templates'];
+      if (manifest.schemaVersion === 4) {
+        tablesWithId.push('reviewers', 'review_tags', 'pending_shared_reviews');
+      }
       tablesWithId.forEach(t => {
         if (Array.isArray(rawDb[t])) {
           const ids = new Set();
@@ -2387,9 +2877,10 @@ export class AppDatabase {
 
     rawDb.timeline_notes = keptTimelineNotes;
 
-    // 6. Validate using JSON Schema v3 on the repaired/cleaned database
+    // 6. Validate using JSON Schema v3/v4 on the repaired/cleaned database
     if (rawDb && typeof rawDb === 'object') {
-      const schemaErrors = validateDataByJsonSchema(rawDb, BACKUP_SCHEMA);
+      const schemaToUse = (manifest && manifest.schemaVersion === 4) ? BACKUP_SCHEMA_V4 : BACKUP_SCHEMA;
+      const schemaErrors = validateDataByJsonSchema(rawDb, schemaToUse);
       if (schemaErrors && schemaErrors.length > 0) {
         fatalErrors.push(...schemaErrors);
       }
@@ -2415,6 +2906,13 @@ export class AppDatabase {
 
     // Cross-table references (referential integrity check) on valid kept entries
     if (rawDb && fatalErrors.length === 0) {
+      if (manifest && manifest.schemaVersion === 4) {
+        const v4Errors = this.validateV4Structure(rawDb);
+        if (v4Errors.length > 0) {
+          fatalErrors.push(...v4Errors);
+        }
+      }
+
       if (Array.isArray(rawDb.video_reviews)) {
         rawDb.video_reviews.forEach(r => {
           if (!rawDb.media_assets.some(v => v.id === r.mediaAssetId)) {
@@ -2508,11 +3006,14 @@ export class AppDatabase {
       reviews: JSON.parse(JSON.stringify(this.reviews || [])),
       criterionRatings: JSON.parse(JSON.stringify(this.criterionRatings || [])),
       tags: JSON.parse(JSON.stringify(this.tags || [])),
-      videoTags: JSON.parse(JSON.stringify(this.videoTags || [])),
+      _legacyVideoTags: JSON.parse(JSON.stringify(this._legacyVideoTags || [])),
       timelineNotes: JSON.parse(JSON.stringify(this.timelineNotes || [])),
       directorySources: JSON.parse(JSON.stringify(this.directorySources || [])),
       genres: JSON.parse(JSON.stringify(this.genres || [])),
-      templates: JSON.parse(JSON.stringify(this.templates || []))
+      templates: JSON.parse(JSON.stringify(this.templates || [])),
+      reviewers: JSON.parse(JSON.stringify(this.reviewers || [])),
+      reviewTags: JSON.parse(JSON.stringify(this.reviewTags || [])),
+      pendingSharedReviews: JSON.parse(JSON.stringify(this.pendingSharedReviews || []))
     };
 
     // 2. Snapshot original localStorage entries
@@ -2520,7 +3021,7 @@ export class AppDatabase {
     const localKeys = [
       'media_assets', 'file_locations', 'rating_criteria', 'video_reviews', 'criterion_ratings',
       'tags', 'video_tags', 'timeline_notes', 'directory_sources',
-      'genres', 'evaluation_templates'
+      'genres', 'evaluation_templates', 'reviewers', 'review_tags', 'pending_shared_reviews'
     ];
     localKeys.forEach(k => {
       originalLocalData[k] = this.storage ? this.storage.getItem(`${this.prefix}${k}`) : null;
@@ -2557,8 +3058,11 @@ export class AppDatabase {
       this.reviews = normalizedDb.video_reviews || [];
       this.criterionRatings = normalizedDb.criterion_ratings || [];
       this.tags = normalizedDb.tags || [];
-      this.videoTags = normalizedDb.video_tags || [];
+      this._legacyVideoTags = normalizedDb.video_tags || [];
       this.timelineNotes = normalizedDb.timeline_notes || [];
+      this.reviewers = normalizedDb.reviewers || [];
+      this.reviewTags = normalizedDb.review_tags || [];
+      this.pendingSharedReviews = normalizedDb.pending_shared_reviews || [];
 
       // Reconcile directory sources with existing DirectoryHandles in IndexedDB
       const reconciledSources = [];
@@ -2585,9 +3089,9 @@ export class AppDatabase {
 
           // Priority 3: Restored src.name matches origSrc.name where exactly one candidates has a handle
           if (!matchedHandleKey) {
-            const candidates = inMemorySnapshot.directorySources.filter(os => 
-              os.name === src.name && 
-              os.handleKey && 
+            const candidates = inMemorySnapshot.directorySources.filter(os =>
+              os.name === src.name &&
+              os.handleKey &&
               originalHandles.some(h => h.id === os.handleKey)
             );
             if (candidates.length === 1) {
@@ -2624,6 +3128,32 @@ export class AppDatabase {
       this.genres = normalizedDb.genres || [];
       this.templates = normalizedDb.evaluation_templates || [];
 
+      // 4d. Memory upgrade from v3 to v4 if needed
+      const restoreSchemaVersion = normalizedDb.schemaVersion || 3;
+      if (restoreSchemaVersion === 3) {
+        await this._migrateInMemoryToV4();
+      }
+
+      // 4e. Validate final memory V4 structure
+      const v4Errors = this.validateV4Structure({
+        reviewers: this.reviewers,
+        media_assets: this.mediaAssets,
+        file_locations: this.fileLocations,
+        video_reviews: this.reviews,
+        criterion_ratings: this.criterionRatings,
+        tags: this.tags,
+        review_tags: this.reviewTags,
+        timeline_notes: this.timelineNotes,
+        directory_sources: this.directorySources,
+        genres: this.genres,
+        evaluation_templates: this.templates,
+        pending_shared_reviews: this.pendingSharedReviews
+      });
+
+      if (v4Errors.length > 0) {
+        throw new Error('V4 Schema Validation Failed during restore: ' + v4Errors.join('; '));
+      }
+
       // 4c. Persist all tables to storage
       this._saveAll();
 
@@ -2640,11 +3170,14 @@ export class AppDatabase {
       this.reviews = inMemorySnapshot.reviews;
       this.criterionRatings = inMemorySnapshot.criterionRatings;
       this.tags = inMemorySnapshot.tags;
-      this.videoTags = inMemorySnapshot.videoTags;
+      this._legacyVideoTags = inMemorySnapshot._legacyVideoTags;
       this.timelineNotes = inMemorySnapshot.timelineNotes;
       this.directorySources = inMemorySnapshot.directorySources;
       this.genres = inMemorySnapshot.genres;
       this.templates = inMemorySnapshot.templates;
+      this.reviewers = inMemorySnapshot.reviewers;
+      this.reviewTags = inMemorySnapshot.reviewTags;
+      this.pendingSharedReviews = inMemorySnapshot.pendingSharedReviews;
 
       // 5b. Rollback localStorage
       localKeys.forEach(k => {
@@ -2693,7 +3226,7 @@ export class AppDatabase {
   async addGenre(name) {
     if (!name || !name.trim()) throw new Error('ジャンル名を入力してください。');
     const cleanName = name.trim();
-    
+
     const dup = this.genres.find(g => g.name === cleanName && g.isActive);
     if (dup) throw new Error('同名のジャンルが既に存在します。');
 
@@ -2830,20 +3363,20 @@ export class AppDatabase {
   getCriteriaForVideoReview(mediaAssetId) {
     const video = this.getVideo(mediaAssetId);
     if (!video) return [];
-    
+
     const genreId = video.genreId || 'genre-default';
     const template = this.templates.find(t => t.genreId === genreId);
     const templateId = template ? template.id : null;
-    
+
     const active = this.criteria.filter(c => c.templateId === templateId && c.isActive);
     const review = this.getReviewForVideo(mediaAssetId);
     if (!review) {
       return active.sort((a, b) => a.displayOrder - b.displayOrder);
     }
-    
+
     const ratings = this.criterionRatings.filter(cr => cr.videoReviewId === review.id);
     const result = [...active];
-    
+
     ratings.forEach(r => {
       const exists = result.find(c => c.id === r.criterionId);
       if (!exists) {
@@ -2856,7 +3389,7 @@ export class AppDatabase {
         });
       }
     });
-    
+
     return result.sort((a, b) => a.displayOrder - b.displayOrder);
   }
 
@@ -3215,3 +3748,319 @@ export function validateDataByJsonSchema(data, schema) {
   }
   return errors;
 }
+
+export function overallGradeToScore(grade) {
+  if (grade === null || grade === undefined) return null;
+  const upper = String(grade).toUpperCase().trim();
+  if (upper === '') return null;
+  if (upper === 'A') return 5;
+  if (upper === 'B') return 4;
+  if (upper === 'C') return 3;
+  if (upper === 'D') return 2;
+  if (upper === 'E') return 1;
+  throw new Error(`Invalid grade value: ${grade}`);
+}
+
+export function overallScoreToGrade(score) {
+  if (score === null || score === undefined || score === '') return null;
+  const num = parseInt(score, 10);
+  if (num === 5) return 'A';
+  if (num === 4) return 'B';
+  if (num === 3) return 'C';
+  if (num === 2) return 'D';
+  if (num === 1) return 'E';
+  throw new Error(`Invalid score value: ${score}`);
+}
+
+export const BACKUP_SCHEMA_V4 = {
+  "type": "object",
+  "required": [
+    "schemaVersion",
+    "reviewers",
+    "media_assets",
+    "file_locations",
+    "rating_criteria",
+    "video_reviews",
+    "criterion_ratings",
+    "tags",
+    "review_tags",
+    "timeline_notes",
+    "directory_sources",
+    "genres",
+    "evaluation_templates",
+    "pending_shared_reviews"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "type": "integer",
+      "enum": [4]
+    },
+    "reviewers": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "displayName",
+          "isLocal",
+          "createdAt",
+          "updatedAt"
+        ],
+        "properties": {
+          "id": { "type": "string", "pattern": "^reviewer-[a-zA-Z0-9-]{8,64}$" },
+          "displayName": { "type": "string", "minLength": 1 },
+          "isLocal": { "type": "boolean" },
+          "createdAt": { "type": "string" },
+          "updatedAt": { "type": "string" }
+        }
+      }
+    },
+    "media_assets": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "contentHash",
+          "hashAlgorithm",
+          "quickHash",
+          "hashStatus",
+          "fileSize",
+          "duration",
+          "displayTitle",
+          "genreId",
+          "identityStatus",
+          "identityConflictGroupId",
+          "createdAt",
+          "updatedAt"
+        ],
+        "properties": {
+          "id": { "type": "string", "pattern": "^(vid-|ast-)[a-zA-Z0-9-]{8,64}$" },
+          "contentHash": { "type": "string" },
+          "hashAlgorithm": { "type": "string", "enum": ["SHA-256"] },
+          "quickHash": { "type": "string" },
+          "hashStatus": { "type": "string", "enum": ["pending", "calculating", "completed", "failed"] },
+          "fileSize": { "type": "integer", "minimum": 0 },
+          "duration": { "type": "number", "minimum": 0 },
+          "displayTitle": { "type": ["string", "null"] },
+          "genreId": { "type": "string", "pattern": "^genre-[a-zA-Z0-9-]{1,64}$" },
+          "thumbnailId": { "type": "string" },
+          "identityStatus": { "type": "string", "enum": ["normal", "conflict", "provisional", "verified"] },
+          "identityConflictGroupId": { "type": ["string", "null"] },
+          "createdAt": { "type": "string" },
+          "updatedAt": { "type": "string" },
+          "isArchived": { "type": "boolean" },
+          "archivedAt": { "type": ["string", "null"] }
+        }
+      }
+    },
+    "file_locations": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "mediaAssetId",
+          "relativePath",
+          "fileName",
+          "fileSize",
+          "lastModified",
+          "availabilityStatus",
+          "lastVerifiedAt",
+          "createdAt",
+          "updatedAt"
+        ],
+        "properties": {
+          "id": { "type": "string", "pattern": "^loc-[a-zA-Z0-9-]{8,64}$" },
+          "mediaAssetId": { "type": "string", "pattern": "^(vid-|ast-)[a-zA-Z0-9-]{8,64}$" },
+          "directoryId": { "type": "string" },
+          "relativePath": { "type": "string" },
+          "fileName": { "type": "string" },
+          "fileSize": { "type": "integer", "minimum": 0 },
+          "lastModified": { "type": "integer" },
+          "availabilityStatus": { "type": "string", "enum": ["available", "permission-required", "missing", "unsupported", "scan-error"] },
+          "lastVerifiedAt": { "type": "string" },
+          "verificationStatus": { "type": "string", "enum": ["provisional", "verified", "failed"] },
+          "createdAt": { "type": "string" },
+          "updatedAt": { "type": "string" }
+        }
+      }
+    },
+    "rating_criteria": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "name", "description"],
+        "properties": {
+          "id": { "type": "string", "pattern": "^crit-[a-zA-Z0-9-]{1,64}$" },
+          "name": { "type": "string", "minLength": 1 },
+          "description": { "type": "string" }
+        }
+      }
+    },
+    "video_reviews": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "mediaAssetId",
+          "reviewerId",
+          "origin",
+          "overallScore",
+          "comment",
+          "createdAt",
+          "updatedAt"
+        ],
+        "properties": {
+          "id": { "type": "string", "pattern": "^rev-[a-zA-Z0-9-]{8,64}$" },
+          "mediaAssetId": { "type": "string", "pattern": "^(vid-|ast-)[a-zA-Z0-9-]{8,64}$" },
+          "reviewerId": { "type": "string", "pattern": "^reviewer-[a-zA-Z0-9-]{8,64}$" },
+          "origin": { "type": "string", "enum": ["local", "imported"] },
+          "overallScore": { "type": ["integer", "null"], "minimum": 1, "maximum": 5 },
+          "comment": { "type": "string" },
+          "createdAt": { "type": "string" },
+          "updatedAt": { "type": "string" }
+        }
+      }
+    },
+    "criterion_ratings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "videoReviewId", "criterionId", "score"],
+        "properties": {
+          "id": { "type": "string", "pattern": "^rate-[a-zA-Z0-9-]{8,64}$" },
+          "videoReviewId": { "type": "string", "pattern": "^rev-[a-zA-Z0-9-]{8,64}$" },
+          "criterionId": { "type": "string", "pattern": "^crit-[a-zA-Z0-9-]{1,64}$" },
+          "score": { "type": "integer", "minimum": 1, "maximum": 5 }
+        }
+      }
+    },
+    "tags": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "name"],
+        "properties": {
+          "id": { "type": "string", "pattern": "^tag-[a-zA-Z0-9-]{8,64}$" },
+          "name": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    "review_tags": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "videoReviewId", "tagId", "createdAt"],
+        "properties": {
+          "id": { "type": "string", "pattern": "^review-tag-[a-zA-Z0-9-]{8,64}$" },
+          "videoReviewId": { "type": "string", "pattern": "^rev-[a-zA-Z0-9-]{8,64}$" },
+          "tagId": { "type": "string", "pattern": "^tag-[a-zA-Z0-9-]{8,64}$" },
+          "createdAt": { "type": "string" }
+        }
+      }
+    },
+    "timeline_notes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "videoReviewId",
+          "mediaAssetId",
+          "timestampSeconds",
+          "timestampLabel",
+          "comment",
+          "createdAt"
+        ],
+        "properties": {
+          "id": { "type": "string", "pattern": "^note-[a-zA-Z0-9-]{8,64}$" },
+          "videoReviewId": { "type": "string", "pattern": "^rev-[a-zA-Z0-9-]{8,64}$" },
+          "mediaAssetId": { "type": "string", "pattern": "^(vid-|ast-)[a-zA-Z0-9-]{8,64}$" },
+          "timestampSeconds": { "type": "number", "minimum": 0 },
+          "timestampLabel": { "type": "string" },
+          "comment": { "type": "string" },
+          "thumbnailId": { "type": "string" },
+          "createdAt": { "type": "string" }
+        }
+      }
+    },
+    "directory_sources": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "name", "includeSubdirectories", "permissionStatus", "handleKey", "createdAt", "updatedAt"],
+        "properties": {
+          "id": { "type": "string", "pattern": "^dir-[a-zA-Z0-9-]{8,64}$" },
+          "name": { "type": "string", "minLength": 1 },
+          "includeSubdirectories": { "type": "boolean" },
+          "permissionStatus": { "type": "string", "enum": ["granted", "denied", "prompt", "disconnected"] },
+          "handleKey": { "type": "string" },
+          "createdAt": { "type": "string" },
+          "updatedAt": { "type": "string" }
+        }
+      }
+    },
+    "genres": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "name", "displayTitle", "description", "createdAt", "updatedAt"],
+        "properties": {
+          "id": { "type": "string", "pattern": "^genre-[a-zA-Z0-9-]{1,64}$" },
+          "name": { "type": "string", "minLength": 1 },
+          "displayTitle": { "type": "string", "minLength": 1 },
+          "description": { "type": "string" },
+          "createdAt": { "type": "string" },
+          "updatedAt": { "type": "string" }
+        }
+      }
+    },
+    "evaluation_templates": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "genreId", "name", "criteriaIds", "createdAt", "updatedAt"],
+        "properties": {
+          "id": { "type": "string", "pattern": "^temp-[a-zA-Z0-9-]{1,64}$" },
+          "genreId": { "type": "string", "pattern": "^genre-[a-zA-Z0-9-]{1,64}$" },
+          "name": { "type": "string", "minLength": 1 },
+          "criteriaIds": { "type": "string" },
+          "createdAt": { "type": "string" },
+          "updatedAt": { "type": "string" }
+        }
+      }
+    },
+    "pending_shared_reviews": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "packageId",
+          "videoHash",
+          "hashAlgorithm",
+          "reviewerId",
+          "payload",
+          "status",
+          "importedAt",
+          "createdAt",
+          "updatedAt"
+        ],
+        "properties": {
+          "id": { "type": "string", "pattern": "^pending-review-[a-zA-Z0-9-]{8,64}$" },
+          "packageId": { "type": "string" },
+          "videoHash": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+          "hashAlgorithm": { "type": "string", "enum": ["sha256"] },
+          "reviewerId": { "type": "string", "pattern": "^reviewer-[a-zA-Z0-9-]{8,64}$" },
+          "payload": { "type": "object" },
+          "status": { "type": "string", "enum": ["pending"] },
+          "importedAt": { "type": "string" },
+          "createdAt": { "type": "string" },
+          "updatedAt": { "type": "string" }
+        }
+      }
+    }
+  }
+};

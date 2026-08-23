@@ -147,7 +147,7 @@ export async function runGroup11Tests(runTest, assert) {
     testDb.mediaAssets = [];
     testDb.fileLocations = [];
     testDb.reviews = [];
-    testDb.videoTags = [];
+    testDb.reviewTags = [];
     testDb.timelineNotes = [];
 
     const source = await testDb.addDirectorySource({ name: 'FolderA' });
@@ -372,7 +372,7 @@ export async function runGroup11Tests(runTest, assert) {
     testDb.mediaAssets = [];
     testDb.fileLocations = [];
     testDb.reviews = [];
-    testDb.videoTags = [];
+    testDb.reviewTags = [];
     testDb.timelineNotes = [];
 
     const source = await testDb.addDirectorySource({ name: 'FolderA' });
@@ -541,7 +541,7 @@ export async function runGroup11Tests(runTest, assert) {
     testDb.mediaAssets = [];
     testDb.fileLocations = [];
     testDb.reviews = [];
-    testDb.videoTags = [];
+    testDb.reviewTags = [];
     testDb.timelineNotes = [];
 
     const source1 = await testDb.addDirectorySource({ name: 'FolderA' });
@@ -847,7 +847,7 @@ export async function runGroup11Tests(runTest, assert) {
     testDb.mediaAssets = [];
     testDb.fileLocations = [];
     testDb.reviews = [];
-    testDb.videoTags = [];
+    testDb.reviewTags = [];
     testDb.timelineNotes = [];
 
     const source = await testDb.addDirectorySource({ name: 'FolderA' });
@@ -991,7 +991,7 @@ export async function runGroup11Tests(runTest, assert) {
     testDb.fileLocations = [];
     testDb.reviews = [];
     testDb.criterionRatings = [];
-    testDb.videoTags = [];
+    testDb.reviewTags = [];
     testDb.timelineNotes = [];
 
     // Create verified asset with review, ratings, tags, notes
@@ -1053,6 +1053,7 @@ export async function runGroup11Tests(runTest, assert) {
 
   await runTest('11-18. Provisional video editing is not blocked', async () => {
     const testDb = new AppDatabase();
+    await testDb.initAsync();
 
     const video = await testDb.addVideo({
       fileName: 'provisional.mp4',

@@ -2155,19 +2155,22 @@ function renderSettingsGenreControls() {
 
 // Helper to generate a ZIP Blob of the current database state
 async function generateLocalBackupZipBlob() {
+  const images = await db.getAllImages();
   const dbData = {
-    schemaVersion: 3,
+    schemaVersion: 4,
+    reviewers: db.reviewers || [],
     media_assets: db.mediaAssets,
     file_locations: db.fileLocations,
     rating_criteria: db.criteria,
     video_reviews: db.reviews,
     criterion_ratings: db.criterionRatings,
     tags: db.tags,
-    video_tags: db.videoTags,
+    review_tags: db.reviewTags || [],
     timeline_notes: db.timelineNotes,
     directory_sources: db.directorySources,
     genres: db.genres,
-    evaluation_templates: db.templates
+    evaluation_templates: db.templates,
+    pending_shared_reviews: db.pendingSharedReviews || []
   };
 
   // Strip DirectoryHandles and reset status to 'prompt'
@@ -2176,18 +2179,19 @@ async function generateLocalBackupZipBlob() {
     permissionStatus: 'prompt'
   }));
 
-  const images = await db.getAllImages();
-
   const manifest = {
     application: "VideoReviewer",
-    schemaVersion: 3,
+    schemaVersion: 4,
     createdAt: new Date().toISOString(),
     appVersion: "1.0.0",
     counts: {
       media_assets: db.mediaAssets.length,
       file_locations: db.fileLocations.length,
       reviews: db.reviews.length,
-      images: images.length
+      images: images.length,
+      reviewers: (db.reviewers || []).length,
+      review_tags: (db.reviewTags || []).length,
+      pending_shared_reviews: (db.pendingSharedReviews || []).length
     }
   };
 

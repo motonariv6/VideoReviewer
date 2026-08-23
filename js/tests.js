@@ -8,6 +8,7 @@ import { runGroup11Tests } from './tests/hash-media-identity.tests.js';
 import { runFolderManagementTests } from './tests/folder-management.tests.js';
 import { runArchiveManagementTests } from './tests/archive-management.tests.js';
 import { runReviewEditorTests } from './tests/review-editor.tests.js';
+import { runMultiReviewSchemaTests } from './tests/multi-review-schema.tests.js';
 
 export const VALID_HASH_A = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
 export const VALID_HASH_B = 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
@@ -104,7 +105,7 @@ export class MockFileSystemDirectoryHandle {
  */
 export async function runTests(groupFilter = null) {
   const results = [];
-  
+
   const assert = (condition, message) => {
     if (!condition) {
       throw new Error(message || 'Assertion failed');
@@ -134,7 +135,7 @@ export async function runTests(groupFilter = null) {
 
   if (runAll) {
     // --- GROUP 1: RECONNECTION UI TESTS (1-5) ---
-  
+
   await runTest('1-5. Player reconnect warning UI element safety checks', async () => {
     // Mock DOM elements to verify innerHTML actions do not occur
     const container = document.createElement('div');
@@ -147,7 +148,7 @@ export async function runTests(groupFilter = null) {
         </label>
       </div>
     `;
-    
+
     const fileInput = container.querySelector('#player-reconnect-file');
     const label = container.querySelector('#player-file-reconnect-label');
     const folderBtn = container.querySelector('#player-folder-permission-button');
@@ -160,7 +161,7 @@ export async function runTests(groupFilter = null) {
     // Simulate warning logic under permission required
     folderBtn.classList.remove('hidden');
     label.classList.add('hidden');
-    
+
     // Test 1 & 2: Verify input remains in DOM and reference is preserved
     assert(container.querySelector('#player-reconnect-file') === fileInput, 'DOM replacement must not destroy reconnect-file input');
 
@@ -250,7 +251,7 @@ export async function runTests(groupFilter = null) {
     // 4. Add criteria to the new genre
     const c1 = await testDb.addCriterionToGenre(newGenre.id, '声量');
     const c2 = await testDb.addCriterionToGenre(newGenre.id, '話すテンポ');
-    
+
     const criteria = testDb.getActiveCriteriaForGenre(newGenre.id);
     assert(criteria.length === 2, 'Should have 2 criteria added');
     assert(criteria[0].name === '声量', 'First item name matches');
@@ -365,7 +366,7 @@ export async function runTests(groupFilter = null) {
     assert(dbFile !== null, 'ZIP must contain database.json');
 
     const restoredDbData = JSON.parse(await dbFile.async('string'));
-    
+
     const memoryStorage2 = new MemoryStorage();
     const testDb2 = new AppDatabase(memoryStorage2, 'test_v7_restored_');
     await testDb2.initAsync();
@@ -385,7 +386,7 @@ export async function runTests(groupFilter = null) {
     const restoredVideo = testDb2.getVideo(newVideo.id);
     assert(restoredVideo !== null, 'Restored database must contain our test video');
     assert(restoredVideo.genreId === customGenre.id, 'Restored video genre link must be preserved');
-    
+
     const restoredReview = testDb2.getReviewForVideo(newVideo.id);
     assert(restoredReview !== undefined, 'Restored database must contain video reviews');
     assert(restoredReview.overallGrade === 'A', 'Restored review overall grade matches');
@@ -502,21 +503,21 @@ export async function runTests(groupFilter = null) {
     const memoryStorage = new MemoryStorage();
     const testDb = new AppDatabase(memoryStorage, 'test_v7_tx_');
     await testDb.initAsync();
-    
+
     // Seed initial database state with distinct objects in all collections
     testDb.mediaAssets = [{ id: 'vid-original', contentHash: 'hash-orig', hashAlgorithm: 'SHA-256', quickHash: 'qo', hashStatus: 'completed', fileSize: 100, duration: 10, displayTitle: 'Original', genreId: 'genre-original', thumbnailId: 'img-original', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }];
     testDb.fileLocations = [{ id: 'loc-original', mediaAssetId: 'vid-original', directoryId: 'dir-original', relativePath: 'orig.mp4', fileName: 'orig.mp4', fileSize: 100, lastModified: 0, availabilityStatus: 'available', lastVerifiedAt: new Date().toISOString(), createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }];
     testDb.criteria = [{ id: 'crit-original', name: 'Original', description: 'Original' }];
-    testDb.reviews = [{ id: 'rev-original', mediaAssetId: 'vid-original', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }];
+    testDb.reviews = [{ id: 'rev-original', mediaAssetId: 'vid-original', reviewerId: testDb.getLocalReviewer().id, origin: 'local', overallScore: 4, comment: 'Nice', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }];
     testDb.criterionRatings = [{ id: 'rate-original', videoReviewId: 'rev-original', criterionId: 'crit-original', score: 3 }];
     testDb.tags = [{ id: 'tag-original', name: 'Original' }];
-    testDb.videoTags = [{ mediaAssetId: 'vid-original', tagId: 'tag-original' }];
+    testDb.reviewTags = [{ id: 'rt-original', videoReviewId: 'rev-original', tagId: 'tag-original', createdAt: new Date().toISOString() }];
     testDb.timelineNotes = [{ id: 'note-original', videoReviewId: 'rev-original', mediaAssetId: 'vid-original', timestampSeconds: 0, timestampLabel: '00:00', comment: 'Original', createdAt: new Date().toISOString() }];
     testDb.directorySources = [{ id: 'dir-original', name: 'Original', includeSubdirectories: true, permissionStatus: 'granted', handleKey: 'handle-orig', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }];
     testDb.genres = [{ id: 'genre-original', name: 'Original', displayTitle: 'Original Genre', description: 'Original', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }];
     testDb.templates = [{ id: 'template-original', genreId: 'genre-original', name: 'Original Template', criteriaIds: 'crit-original', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }];
     testDb._saveAll();
-    
+
     // Mock IndexedDB
     testDb.idbAvailable = true;
     testDb.idb = {
@@ -572,7 +573,7 @@ export async function runTests(groupFilter = null) {
 
     // --- TEST 1: Injected image put failure ---
     testDb.idb.shouldFailPut = true;
-    
+
     let restoreSucceeded = false;
     try {
       await testDb.restoreWithRollback(restoredData, newImages);
@@ -600,7 +601,7 @@ export async function runTests(groupFilter = null) {
 
     // --- TEST 2: Injected localStorage write failure ---
     testDb.idb.shouldFailPut = false;
-    
+
     // Inject localStorage save failure via _saveTable mock
     const origSaveTable = testDb._saveTable;
     testDb._saveTable = function(key, data) {
@@ -619,7 +620,7 @@ export async function runTests(groupFilter = null) {
     testDb._saveTable = origSaveTable;
 
     assert(restoreSucceeded === false, 'Restore should have failed due to localStorage write error');
-    
+
     // Verify rollback integrity for every in-memory collection on localStorage failure
     assert(testDb.getVideos()[0].id === 'vid-original', 'Original videos must be preserved on localStorage write error');
     assert(testDb.getVideos().some(v => v.id === 'vid-new') === false, 'New videos must not be present on localStorage write error');
@@ -673,7 +674,7 @@ export async function runTests(groupFilter = null) {
 
     assert(sequenceLog[0] === 'clearImages', 'Images cleared first');
     assert(sequenceLog[1] === 'put:images', 'New images written');
-    
+
     assert(sequenceLog.includes('clearHandles') === false, 'Handles must not be cleared on successful restore');
   });
 
@@ -738,15 +739,15 @@ export async function runTests(groupFilter = null) {
     // Assertions
     assert(validationResult.isValid === true, 'Validation is valid because warnings are not fatal');
     assert(validationResult.fatalErrors.length === 0, 'No fatal errors');
-    
+
     // Warnings check
     const repairableWarning = validationResult.warnings.find(w => w.noteId === 'note-repairable');
     const irreparableWarning = validationResult.warnings.find(w => w.noteId === 'note-irreparable');
-    
+
     assert(repairableWarning !== undefined, 'Has warning for repairable note');
     assert(repairableWarning.repaired === true, 'Repairable note is marked repaired');
     assert(repairableWarning.repairedToReviewId === 'rev-test-review-1', 'Repairable note is mapped to rev-test-review-1');
-    
+
     assert(irreparableWarning !== undefined, 'Has warning for irreparable note');
     assert(irreparableWarning.repaired === false, 'Irreparable note is marked not repaired');
 
@@ -947,7 +948,7 @@ export async function runTests(groupFilter = null) {
     const content = new Uint8Array([10, 20, 30]);
     const file1 = new MockFileSystemFileHandle('video1.mp4', content.length, 100, content);
     const file2 = new MockFileSystemFileHandle('video2.mp4', content.length, 101, content);
-    
+
     const hash = await computeFileSHA256(await file1.getFile(), { useWorker: false });
 
     const video1 = await testDb.addVideo({
@@ -1112,11 +1113,11 @@ export async function runTests(groupFilter = null) {
     });
 
     assert(video.id === movedVideo.id, 'Moved file shares the same logical asset ID');
-    
+
     // Check that evaluations, tags, and notes are preserved
-    const retrievedReview = testDb.reviews.find(r => r.mediaAssetId === video.id);
-    assert(retrievedReview.overallGrade === 'A', 'Review grade preserved');
-    
+    const retrievedReview = testDb.getReviewForVideo(video.id);
+    assert(retrievedReview && retrievedReview.overallGrade === 'A', 'Review grade preserved');
+
     const hasTag = testDb.videoTags.some(vt => vt.mediaAssetId === video.id && vt.tagId === tag.id);
     assert(hasTag, 'Tag association preserved');
 
@@ -1150,7 +1151,7 @@ export async function runTests(groupFilter = null) {
     assert(updatedVideo.hashStatus === 'failed', 'Status is failed');
     assert(updatedVideo.contentHash === '', 'Hash remains empty');
 
-    const review = testDb.reviews.find(r => r.mediaAssetId === video.id);
+    const review = testDb.getReviewForVideo(video.id);
     assert(review && review.overallGrade === 'B', 'Review remains intact');
   });
 
@@ -1162,7 +1163,7 @@ export async function runTests(groupFilter = null) {
     testDb.fileLocations = [];
     testDb.reviews = [];
     testDb.criterionRatings = [];
-    testDb.videoTags = [];
+    testDb.reviewTags = [];
     testDb.timelineNotes = [];
 
     const videoA = await testDb.addVideo({
@@ -1484,6 +1485,9 @@ export async function runTests(groupFilter = null) {
     const originalVideoTags = [
       { mediaAssetId: 'vid-1', videoId: 'vid-1', tagId: 'tag-action' }
     ];
+    const originalTags = [
+      { id: 'tag-action', name: 'Action', normalizedName: 'action' }
+    ];
     const originalTimelineNotes = [
       { id: 'note-1', videoId: 'vid-1', timestampSeconds: 2, timestampLabel: '00:02', comment: 'Cool scene', thumbnailId: 'img-note-1', createdAt: new Date().toISOString() }
     ];
@@ -1491,6 +1495,7 @@ export async function runTests(groupFilter = null) {
     memory.setItem('test_v2_schema_version', '2');
     memory.setItem('test_v2_videos', JSON.stringify(originalVideos));
     memory.setItem('test_v2_video_reviews', JSON.stringify(originalReviews));
+    memory.setItem('test_v2_tags', JSON.stringify(originalTags));
     memory.setItem('test_v2_video_tags', JSON.stringify(originalVideoTags));
     memory.setItem('test_v2_timeline_notes', JSON.stringify(originalTimelineNotes));
 
@@ -1500,7 +1505,7 @@ export async function runTests(groupFilter = null) {
     assert(testDb.mediaAssets.length === 1, 'Video migrated to media asset');
     assert(testDb.fileLocations.length === 1, 'Location created');
 
-    const review = testDb.reviews.find(r => r.mediaAssetId === 'vid-v2-1' || r.mediaAssetId === 'vid-1');
+    const review = testDb.getReviewForVideo('vid-1');
     assert(review && review.overallGrade === 'A', 'Review overallGrade preserved');
 
     const hasTag = testDb.videoTags.some(vt => (vt.mediaAssetId === 'vid-1' || vt.mediaAssetId === 'vid-v2-1') && vt.tagId === 'tag-action');
@@ -1766,9 +1771,9 @@ export async function runTests(groupFilter = null) {
 
     await testDb.completeVideoHashing(vidA.id, VALID_HASH_A);
     const res = await testDb.completeVideoHashing(vidB.id, VALID_HASH_A);
-    
+
     assert(res.conflict, 'Conflict returned');
-    
+
     assert(testDb.mediaAssets.length === 2, 'Both assets retained');
     assert(testDb.fileLocations.length === 2, 'Both locations retained');
     assert(testDb.reviews.length === 2, 'Both reviews retained');
@@ -2245,6 +2250,12 @@ export async function runTests(groupFilter = null) {
     results.push(...editorResults);
   }
 
+  // --- GROUP 17: MULTI-REVIEWER DATABASE SCHEMA V4 TESTS ---
+  if (runAll || groupFilter === 'schema') {
+    const schemaResults = await runMultiReviewSchemaTests();
+    results.push(...schemaResults);
+  }
+
   if (runAll) {
     console.group('Group 13: Progress Panel UI Layout & Control Tests');
 
@@ -2253,7 +2264,7 @@ export async function runTests(groupFilter = null) {
     bgHashState.panelMinimized = false;
     bgHashState.targetKeys.clear();
     bgHashState.targetKeys.add('test-key-1');
-    
+
     updateBackgroundHashingUI(0, 1);
 
     const indicator = document.getElementById('bg-hash-indicator');
@@ -2262,7 +2273,7 @@ export async function runTests(groupFilter = null) {
 
     const styleEl = document.getElementById('bg-hash-styles');
     assert(styleEl !== null, 'Dynamic styles tag for hashing panel must be present');
-    
+
     const cssText = styleEl.textContent;
     assert(cssText.includes('position: fixed'), 'Must be fixed positioned');
     assert(cssText.includes('top: 76px'), 'Must be positioned at top: 76px below sticky header');
@@ -2347,7 +2358,7 @@ export async function runTests(groupFilter = null) {
 
     const source = await testDb.addDirectorySource({ name: 'FolderA' });
     await testDb.updateDirectorySource(source.id, { permissionStatus: 'granted' });
-    
+
     const mockHandle = new MockFileSystemDirectoryHandle('FolderA', {
       'new_batch_video.mp4': new MockFileSystemFileHandle('new_batch_video.mp4', 100, 1000)
     });
@@ -2355,9 +2366,9 @@ export async function runTests(groupFilter = null) {
 
     globalHashQueue.queuedKeys.clear();
     globalHashQueue.runningKeys.clear();
-    
+
     bgHashState.panelClosed = true;
-    
+
     if (globalHashQueue.queuedKeys.size === 0 && globalHashQueue.runningKeys.size === 0) {
       bgHashState.batchId = 'batch-' + Math.random().toString(36).slice(2);
       bgHashState.generation++;
