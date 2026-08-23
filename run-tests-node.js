@@ -176,7 +176,7 @@ async function run() {
     }
   }
 
-  const validGroups = ['hash', 'folder', 'archive', 'review', 'all'];
+  const validGroups = ['hash', 'folder', 'archive', 'review', 'schema', 'all'];
   if (hasInvalidArg || (testGroup !== null && !validGroups.includes(testGroup))) {
     console.error(`
 利用方法 (Usage):
@@ -187,6 +187,7 @@ async function run() {
   - folder  : フォルダ管理・スキャン関連テストのみ実行
   - archive : アーカイブ・完全削除関連テストのみ実行
   - review  : レビュー編集（Review Editor）関連テストのみ実行
+  - schema  : Schema v4・複数レビュアー関連テストのみ実行
   - all     : すべてのテストを実行
 
 例 (Examples):
@@ -194,6 +195,7 @@ async function run() {
   node run-tests-node.js --group hash
   node run-tests-node.js --group archive
   node run-tests-node.js --group review
+  node run-tests-node.js --group schema
   node run-tests-node.js --all
     `);
     process.exitCode = 1;
