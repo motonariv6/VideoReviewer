@@ -1,6 +1,8 @@
 import { AppDatabase } from './db.js';
 import { formatTime, parseTime, generateFileSignature, captureVideoFrame, getFileHandleFromRelativePath, filterVideosByTag } from './video-helper.js';
 import { RadarChart } from './radar.js';
+import { ReviewEditorUI } from './review/review-editor-ui.js';
+import { ReviewEditorController } from './review/review-editor-controller.js';
 import { scanDirectory, classifyScanResults, applyScanDifferentials, isIgnoredSystemEntry } from './directory-scanner.js';
 import { computeQuickHash, computeFileSHA256, globalHashQueue, logMetric } from './hash-helper.js';
 import {
@@ -48,8 +50,6 @@ export function setDbForTesting(mockDb) {
 let radar;
 
 // IME Composition State Tracking
-let isTagInputComposing = false;
-let isTimelineCommentComposing = false;
 let isSettingsNewNameComposing = false;
 let isFilterSearchComposing = false;
 
@@ -225,10 +225,38 @@ const els = {
   btnCleanOrphanData: document.getElementById('btn-clean-orphan-data')
 };
 
+export let reviewEditorUI = new ReviewEditorUI({ els });
+export let reviewEditorController = new ReviewEditorController({
+  db,
+  ui: reviewEditorUI,
+  state,
+  radar: null, // set during DOMContentLoaded
+  showToast,
+  markDirty,
+  clearDirty,
+  getCurrentTime: () => els.video.currentTime || 0,
+  seekTo: (secs) => {
+    els.video.currentTime = secs;
+    els.video.pause();
+  },
+  captureFrame: () => captureVideoFrame(els.video),
+  loadImageToElement,
+  clearImageBlobUrls,
+  formatTime,
+  renderLibrary,
+  handleBackToLibrary,
+  deleteFileLocationAction,
+  handleLocationsRemoved,
+  updateBackgroundHashingProgress,
+  loadVideoMediaSource,
+  confirm: (msg) => confirm(msg)
+});
+
 // Initialize Application
 if (typeof window !== 'undefined' && !window.__TEST_ENV__) {
   document.addEventListener('DOMContentLoaded', async () => {
     radar = new RadarChart(document.getElementById('radar-chart-container'));
+    reviewEditorController.radar = radar;
 
     // Connect to IndexedDB and run legacy image migration
     await db.initAsync();
@@ -291,75 +319,41 @@ function initEventListeners() {
   els.settingsBtnAdd.addEventListener('click', handleSettingsAddCriterion);
   els.settingsBtnSave.addEventListener('click', closeSettingsModal);
 
-  // 1. Display Title Editor Events
-  els.btnEditDisplayTitle.addEventListener('click', () => {
-    const video = db.getVideo(state.currentVideoId);
-    if (video) {
-      els.displayTitleInput.value = video.displayTitle || '';
-      els.titleDisplayContainer.classList.add('hidden');
-      els.titleEditContainer.classList.remove('hidden');
-      els.displayTitleInput.focus();
+  // Review Editor UI Event Listeners
+  reviewEditorUI.setupEventListeners({
+    onGradeClick: (grade) => {
+      reviewEditorController.handleGradeClick(grade);
+    },
+    onClearGradeClick: () => {
+      reviewEditorController.handleClearGradeClick();
+    },
+    onGenreChange: () => {
+      reviewEditorController.changeGenre();
+    },
+    onTitleSave: () => {
+      reviewEditorController.saveDisplayTitle();
+    },
+    onTagInput: () => {
+      reviewEditorController.handleTagInputFieldAutocomplete();
+    },
+    onTagKeydown: (e, isComposing) => {
+      reviewEditorController.handleTagInputKeydown(e, isComposing);
+    },
+    onCaptureTimeClick: () => {
+      reviewEditorController.captureTimelineTimestamp();
+    },
+    onAddTimelineNoteClick: () => {
+      reviewEditorController.addTimelineNote();
+    },
+    onTimelineCommentKeydown: (e, isComposing) => {
+      reviewEditorController.handleTimelineCommentKeydown(e, isComposing);
+    },
+    onCommentInput: () => {
+      markDirty();
+    },
+    onCommentBlur: () => {
+      reviewEditorController.saveReviewForm(true);
     }
-  });
-
-  els.btnCancelDisplayTitle.addEventListener('click', () => {
-    els.titleDisplayContainer.classList.remove('hidden');
-    els.titleEditContainer.classList.add('hidden');
-  });
-
-  els.btnSaveDisplayTitle.addEventListener('click', async () => {
-    const video = db.getVideo(state.currentVideoId);
-    if (!video) return;
-
-    // Sanitize input: strip HTML tags and trim
-    let titleVal = els.displayTitleInput.value.replace(/<\/?[^>]+(>|$)/g, "").trim();
-
-    // Save to DB
-    await db.updateVideo(video.id, { displayTitle: titleVal || null });
-
-    // Update UI headers
-    els.editorTitle.textContent = titleVal || video.title;
-    els.titleDisplayContainer.classList.remove('hidden');
-    els.titleEditContainer.classList.add('hidden');
-
-    showToast('表示タイトルを更新しました。');
-
-    // Re-render library in background so it's correct when we go back
-    renderLibrary();
-  });
-
-  // Keep Enter/ESC shortcuts for display title input
-  els.displayTitleInput.addEventListener('keydown', async (e) => {
-    if (e.key === 'Enter') {
-      e.preventDefault();
-      els.btnSaveDisplayTitle.click();
-    } else if (e.key === 'Escape') {
-      e.preventDefault();
-      els.btnCancelDisplayTitle.click();
-    }
-  });
-
-  els.videoGenreSelect.addEventListener('change', async () => {
-    const videoId = state.currentVideoId;
-    if (!videoId) return;
-
-    const genreId = els.videoGenreSelect.value;
-    await db.updateVideo(videoId, { genreId });
-
-    // Reload ratings workspace
-    const review = db.getReviewForVideo(videoId);
-
-    // Load individual ratings stars map
-    const scores = review ? db.getCriterionRatingsForReview(review.id) : [];
-    state.currentRatings = {};
-    scores.forEach(s => {
-      state.currentRatings[s.criterionId] = s.score;
-    });
-
-    renderStarCriteriaPanel();
-    updateRadar();
-    markDirty();
-    showToast('動画のジャンルを切り替えました。');
   });
 
   // 3. Settings Modal - Genre Select Dropdown
@@ -548,59 +542,7 @@ function initEventListeners() {
   // Keyboard Shortcuts Handler
   window.addEventListener('keydown', handleKeyboardShortcuts);
 
-  // Grade Ratings A-E Selector
-  els.gradeButtons.forEach(btn => {
-    btn.addEventListener('click', () => {
-      els.gradeButtons.forEach(b => b.classList.remove('active'));
-      btn.classList.add('active');
-      state.currentOverallGrade = btn.getAttribute('data-grade');
-      markDirty();
-      updateRadar();
-    });
-  });
-  els.btnClearGrade.addEventListener('click', () => {
-    els.gradeButtons.forEach(b => b.classList.remove('active'));
-    state.currentOverallGrade = null;
-    markDirty();
-    updateRadar();
-  });
 
-  // Tags Input composition tracking
-  els.tagInputField.addEventListener('compositionstart', () => {
-    isTagInputComposing = true;
-  });
-  els.tagInputField.addEventListener('compositionend', () => {
-    isTagInputComposing = false;
-  });
-  els.tagInputField.addEventListener('keydown', handleTagInputKeydown);
-  els.tagInputField.addEventListener('input', handleTagInputAutocomplete);
-  document.addEventListener('click', (e) => {
-    if (!els.tagInputField.contains(e.target) && !els.tagAutocomplete.contains(e.target)) {
-      els.tagAutocomplete.classList.add('hidden');
-    }
-  });
-
-  // Comments and ratings changes mark dirty
-  els.commentEditor.addEventListener('input', markDirty);
-
-  // Timeline capturing & adding composition tracking
-  els.timelineCommentField.addEventListener('compositionstart', () => {
-    isTimelineCommentComposing = true;
-  });
-  els.timelineCommentField.addEventListener('compositionend', () => {
-    isTimelineCommentComposing = false;
-  });
-  els.btnTimelineCapture.addEventListener('click', captureTimelineTimestamp);
-  els.btnTimelineAddNote.addEventListener('click', addTimelineNote);
-  els.timelineCommentField.addEventListener('keydown', (e) => {
-    if (e.isComposing || isTimelineCommentComposing || e.keyCode === 229) {
-      return;
-    }
-    if (e.key === 'Enter') {
-      e.preventDefault();
-      addTimelineNote();
-    }
-  });
 
   // Criteria input composition tracking (Settings modal)
   els.settingsNewNameInput.addEventListener('compositionstart', () => {
@@ -636,7 +578,7 @@ function initEventListeners() {
   });
 
   // Manual Save button
-  els.btnSaveReview.addEventListener('click', () => saveReviewForm());
+  els.btnSaveReview.addEventListener('click', () => reviewEditorController.saveReviewForm());
 }
 
 // Show/Hide Modals
@@ -1253,154 +1195,12 @@ function handleBackToLibrary() {
 }
 
 function renderLocationsListInEditor(video) {
-  els.infoLocationsContainer.style.display = 'block';
-  els.infoLocationsList.innerHTML = '';
-
-  const locations = video.locations || [];
-  locations.forEach(loc => {
-    const row = document.createElement('div');
-    row.style.display = 'flex';
-    row.style.justify = 'space-between';
-    row.style.alignItems = 'center';
-    row.style.gap = '8px';
-    row.style.fontSize = '0.75rem';
-    row.style.padding = '4px 8px';
-    row.style.backgroundColor = 'rgba(255,255,255,0.05)';
-    row.style.borderRadius = '4px';
-
-    const source = db.getDirectorySource(loc.directoryId);
-    const folderName = source ? source.name : 'フォルダ不明';
-
-    const pathSpan = document.createElement('span');
-    pathSpan.style.wordBreak = 'break-all';
-    pathSpan.textContent = `📁 ${folderName} / ${loc.relativePath}`;
-    if (loc.verificationStatus === 'provisional') {
-      pathSpan.textContent += ' (ハッシュ検証前)';
-      pathSpan.style.color = 'var(--color-warning, #f59e0b)';
-    }
-    row.appendChild(pathSpan);
-
-    const delBtn = document.createElement('button');
-    delBtn.className = 'btn btn-icon';
-    delBtn.title = 'ロケーション登録を削除 (評価データは残ります)';
-    delBtn.style.color = 'var(--color-text-muted)';
-    delBtn.style.cursor = 'pointer';
-    delBtn.style.padding = '2px';
-    delBtn.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" style="width:14px;height:14px" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-    </svg>`;
-
-    delBtn.addEventListener('click', async (e) => {
-      e.stopPropagation();
-      await deleteFileLocationAction({
-        db,
-        locId: loc.id,
-        videoId: video.id,
-        relativePath: loc.relativePath,
-        showToast,
-        handleBackToLibrary,
-        renderLocationsListInEditor,
-        onLocationsRemoved: (locIds) => {
-          handleLocationsRemoved(locIds, updateBackgroundHashingProgress);
-        },
-        confirm: (msg) => confirm(msg)
-      });
-    });
-
-    row.appendChild(delBtn);
-    els.infoLocationsList.appendChild(row);
-  });
+  reviewEditorController.renderLocationsListInEditor(video);
 }
 
 // Switch Screen: Editor Workspace
 function switchScreenToEditor(videoId) {
-  const video = db.getVideo(videoId);
-  if (!video) return;
-
-  state.currentVideoId = videoId;
-  state.currentView = 'editor';
-  els.viewLibrary.classList.add('hidden');
-  els.viewEditor.classList.remove('hidden');
-  els.btnBack.classList.remove('hidden');
-
-  // Set header details safely
-  els.editorTitle.textContent = video.displayTitle || video.title;
-  els.infoFileName.textContent = video.fileName || 'フォルダ内動画';
-  els.infoFileSize.textContent = video.fileSize ? (video.fileSize / 1024 / 1024).toFixed(1) + ' MB' : '-';
-  els.infoDuration.textContent = formatTime(video.duration);
-
-  // Reset display title edit widgets
-  els.titleDisplayContainer.classList.remove('hidden');
-  els.titleEditContainer.classList.add('hidden');
-  els.displayTitleInput.value = video.displayTitle || '';
-
-  // Populate and select Video Genre select dropdown options
-  els.videoGenreSelect.innerHTML = '';
-  const allGenres = db.getGenres();
-  allGenres.forEach(g => {
-    if (g.isActive || g.id === video.genreId) {
-      const opt = document.createElement('option');
-      opt.value = g.id;
-      opt.textContent = g.isActive ? g.name : `${g.name} (無効)`;
-      els.videoGenreSelect.appendChild(opt);
-    }
-  });
-  els.videoGenreSelect.value = video.genreId || 'genre-default';
-
-  // Load ratings content
-  const review = db.getReviewForVideo(videoId);
-
-  // Load overall grade button state
-  els.gradeButtons.forEach(btn => btn.classList.remove('active'));
-  state.currentOverallGrade = review ? review.overallGrade : null;
-  if (state.currentOverallGrade) {
-    const activeBtn = document.querySelector(`.grade-btn[data-grade="${state.currentOverallGrade}"]`);
-    if (activeBtn) activeBtn.classList.add('active');
-  }
-
-  // Load individual ratings stars map
-  const scores = review ? db.getCriterionRatingsForReview(review.id) : [];
-  state.currentRatings = {};
-  scores.forEach(s => {
-    state.currentRatings[s.criterionId] = s.score;
-  });
-
-  // Render individual star lists
-  renderStarCriteriaPanel();
-
-  // Load comment
-  els.commentEditor.value = review ? review.comment : '';
-
-  // Render tags
-  renderVideoTagsList();
-
-  // Render timeline notes
-  renderTimelineNotesList();
-
-  // Render locations list
-  renderLocationsListInEditor(video);
-
-  // Initialize dynamic captured timestamp label
-  state.capturedNoteTime = 0;
-  state.capturedNoteThumb = null;
-  els.capturedTimestampLabel.textContent = '[00:00]';
-  els.timelineCommentField.value = '';
-
-  // Disable or enable fields based on whether the asset itself is provisional
-  const isProvisional = video.identityStatus === 'provisional';
-  if (isProvisional) {
-    els.provisionalWarningBanner.classList.remove('hidden');
-  } else {
-    els.provisionalWarningBanner.classList.add('hidden');
-  }
-
-  // Draw chart
-  updateRadar();
-
-  // Load media source in player
-  loadVideoMediaSource(video);
-
-  clearDirty();
+  reviewEditorController.switchScreenToEditor(videoId);
 }
 
 // Show specific errors on the player warning card
@@ -1846,378 +1646,47 @@ function navigateAdjacentVideo(direction) {
 
 // Individual Criteria Stars panel
 function renderStarCriteriaPanel() {
-  const activeCriteria = db.getCriteriaForVideoReview(state.currentVideoId);
-  els.criteriaPanel.innerHTML = '';
-
-  if (activeCriteria.length === 0) {
-    const p = document.createElement('p');
-    p.style.fontSize = '0.8125rem';
-    p.style.color = 'var(--color-text-dim)';
-    p.style.textAlign = 'center';
-    p.style.padding = '12px';
-    p.textContent = '有効な評価項目が登録されていません。「評価項目設定」から項目を追加してください。';
-    els.criteriaPanel.appendChild(p);
-    return;
-  }
-
-  activeCriteria.forEach(crit => {
-    const currentScore = state.currentRatings[crit.id] || 0;
-
-    const row = document.createElement('div');
-    row.className = 'star-rating-row';
-
-    const labelSpan = document.createElement('span');
-    labelSpan.className = 'star-rating-label';
-    if (crit.isActive === false) {
-      labelSpan.textContent = crit.name + ' (非表示)';
-      labelSpan.style.color = 'var(--color-text-muted)';
-    } else {
-      labelSpan.textContent = crit.name;
-    }
-    row.appendChild(labelSpan);
-
-    const interactiveDiv = document.createElement('div');
-    interactiveDiv.className = 'stars-interactive-container';
-
-    const starsGroup = document.createElement('div');
-    starsGroup.className = 'stars-group';
-    starsGroup.setAttribute('data-criterion-id', crit.id);
-
-    for (let s = 1; s <= 5; s++) {
-      const starSvg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-      starSvg.setAttribute('class', `star-elem ${s <= currentScore ? 'active' : ''}`);
-      starSvg.setAttribute('data-star', s.toString());
-      starSvg.setAttribute('fill', 'currentColor');
-      starSvg.setAttribute('viewBox', '0 0 20 20');
-      starSvg.innerHTML = `<path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z" />`;
-
-      starSvg.addEventListener('click', () => {
-        const starVal = s;
-        if (state.currentRatings[crit.id] === starVal) {
-          state.currentRatings[crit.id] = 0;
-        } else {
-          state.currentRatings[crit.id] = starVal;
-        }
-
-        const rowStars = starsGroup.querySelectorAll('.star-elem');
-        rowStars.forEach((st, idx) => {
-          if (idx < (state.currentRatings[crit.id] || 0)) {
-            st.classList.add('active');
-          } else {
-            st.classList.remove('active');
-          }
-        });
-
-        markDirty();
-        updateRadar();
-      });
-      starsGroup.appendChild(starSvg);
-    }
-    interactiveDiv.appendChild(starsGroup);
-
-    const clearBtn = document.createElement('button');
-    clearBtn.className = 'star-clear-btn';
-    clearBtn.title = '評価をクリア';
-    clearBtn.textContent = 'クリア';
-    clearBtn.addEventListener('click', () => {
-      state.currentRatings[crit.id] = 0;
-      starsGroup.querySelectorAll('.star-elem').forEach(st => st.classList.remove('active'));
-      markDirty();
-      updateRadar();
-    });
-    interactiveDiv.appendChild(clearBtn);
-    row.appendChild(interactiveDiv);
-
-    els.criteriaPanel.appendChild(row);
-  });
+  reviewEditorController.renderStarCriteriaPanel();
 }
 
 // Redraw custom Radar
 function updateRadar() {
-  const criteria = db.getCriteriaForVideoReview(state.currentVideoId);
-  radar.render(criteria, state.currentRatings);
+  reviewEditorController.updateRadar();
 }
 
 // Render video tags chips (XSS Safe DOM)
 function renderVideoTagsList() {
-  if (!state.currentVideoId) return;
-  const tags = db.getVideoTags(state.currentVideoId);
-  els.tagsChipsList.innerHTML = '';
-
-  if (tags.length === 0) {
-    const span = document.createElement('span');
-    span.style.fontSize = '0.75rem';
-    span.style.color = 'var(--color-text-dim)';
-    span.textContent = 'タグ登録がありません';
-    els.tagsChipsList.appendChild(span);
-  } else {
-    tags.forEach(t => {
-      const chip = document.createElement('span');
-      chip.className = 'tag-chip';
-
-      const label = document.createElement('span');
-      label.textContent = t.name;
-      chip.appendChild(label);
-
-      const removeBtn = document.createElement('button');
-      removeBtn.className = 'tag-chip-remove';
-      removeBtn.title = 'タグを削除';
-      removeBtn.innerHTML = `<svg fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clip-rule="evenodd" /></svg>`;
-      removeBtn.addEventListener('click', async () => {
-        try {
-          await db.removeTagFromVideo(state.currentVideoId, t.id);
-          renderVideoTagsList();
-        } catch (err) {
-          showToast(`タグの削除に失敗しました: ${err.message}`, 'error');
-        }
-      });
-      chip.appendChild(removeBtn);
-
-      els.tagsChipsList.appendChild(chip);
-    });
-  }
+  reviewEditorController.renderVideoTagsList();
 }
 
 // Tags Autocomplete dropdown
 function handleTagInputAutocomplete() {
-  const val = els.tagInputField.value.trim().toLowerCase();
-  if (!val) {
-    els.tagAutocomplete.classList.add('hidden');
-    return;
-  }
-
-  const matches = db.getTags()
-    .filter(t => t.normalizedName.includes(val))
-    .slice(0, 5);
-
-  if (matches.length === 0) {
-    els.tagAutocomplete.classList.add('hidden');
-    return;
-  }
-
-  els.tagAutocomplete.innerHTML = '';
-  matches.forEach(t => {
-    const item = document.createElement('div');
-    item.className = 'autocomplete-item';
-    item.textContent = t.name;
-    item.addEventListener('click', async () => {
-      if (state.currentVideoId) {
-        try {
-          await db.addTagToVideo(state.currentVideoId, t.name);
-          els.tagInputField.value = '';
-          els.tagAutocomplete.classList.add('hidden');
-          renderVideoTagsList();
-        } catch (err) {
-          showToast(err.message, 'error');
-        }
-      }
-    });
-    els.tagAutocomplete.appendChild(item);
-  });
-  els.tagAutocomplete.classList.remove('hidden');
+  reviewEditorController.handleTagInputFieldAutocomplete();
 }
 
 // Handle enter button inside tag input field
 async function handleTagInputKeydown(e) {
-  if (e.isComposing || isTagInputComposing || e.keyCode === 229) {
-    return;
-  }
-  if (e.key === 'Enter') {
-    e.preventDefault();
-    const val = els.tagInputField.value.trim();
-    if (val && state.currentVideoId) {
-      try {
-        // Prevent duplicate tag assignment
-        const existingTags = db.getVideoTags(state.currentVideoId);
-        if (existingTags.some(t => t.name.toLowerCase() === val.toLowerCase())) {
-          showToast('このタグは既に追加されています', 'error');
-          els.tagInputField.value = '';
-          els.tagAutocomplete.classList.add('hidden');
-          return;
-        }
-
-        await db.addTagToVideo(state.currentVideoId, val);
-        els.tagInputField.value = '';
-        els.tagAutocomplete.classList.add('hidden');
-        renderVideoTagsList();
-      } catch (err) {
-        showToast(err.message, 'error');
-      }
-    }
-  }
+  await reviewEditorController.handleTagInputKeydown(e, isTagInputComposing);
 }
 
 // Render Timeline notes (XSS Safe DOM)
 function renderTimelineNotesList() {
-  if (!state.currentVideoId) return;
-
-  clearImageBlobUrls();
-
-  const notes = db.getTimelineNotes(state.currentVideoId);
-  els.timelineNotesList.innerHTML = '';
-
-  if (notes.length === 0) {
-    const p = document.createElement('p');
-    p.style.fontSize = '0.8125rem';
-    p.style.color = 'var(--color-text-dim)';
-    p.style.textAlign = 'center';
-    p.style.padding = '20px';
-    p.textContent = 'タイムライン引用メモはまだありません。';
-    els.timelineNotesList.appendChild(p);
-    return;
-  }
-
-  notes.forEach(note => {
-    const item = document.createElement('div');
-    item.className = 'timeline-note-item';
-
-    // Thumbnail container
-    const thumbDiv = document.createElement('div');
-    thumbDiv.className = 'timeline-note-thumb';
-
-    const img = document.createElement('img');
-    img.alt = 'Scene capture';
-    loadImageToElement(img, note.thumbnailId, note.thumbnailUrl);
-    thumbDiv.appendChild(img);
-
-    const fallbackIcon = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-    fallbackIcon.setAttribute('class', 'timeline-note-thumb-icon');
-    fallbackIcon.setAttribute('fill', 'none');
-    fallbackIcon.setAttribute('viewBox', '0 0 24 24');
-    fallbackIcon.setAttribute('stroke', 'currentColor');
-    fallbackIcon.innerHTML = `<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />`;
-    thumbDiv.appendChild(fallbackIcon);
-
-    // Content container
-    const contentBox = document.createElement('div');
-    contentBox.className = 'timeline-note-content-box';
-
-    const metaRow = document.createElement('div');
-    metaRow.className = 'timeline-note-meta-row';
-
-    const tsBtn = document.createElement('button');
-    tsBtn.className = 'timeline-note-timestamp';
-    tsBtn.title = 'この再生位置へ移動';
-    tsBtn.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" style="width:12px;height:12px" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" /></svg>`;
-    const tsLabelText = document.createTextNode(` ${note.timestampLabel}`);
-    tsBtn.appendChild(tsLabelText);
-    tsBtn.addEventListener('click', () => {
-      els.video.currentTime = note.timestampSeconds;
-      els.video.pause();
-    });
-    metaRow.appendChild(tsBtn);
-
-    const actionsDiv = document.createElement('div');
-    actionsDiv.className = 'timeline-note-actions';
-
-    const delBtn = document.createElement('button');
-    delBtn.className = 'timeline-note-action-btn delete';
-    delBtn.title = 'メモを削除';
-    delBtn.innerHTML = `<svg fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>`;
-    delBtn.addEventListener('click', async () => {
-      if (confirm('タイムラインメモを削除しますか？')) {
-        try {
-          await db.deleteTimelineNote(note.id);
-          renderTimelineNotesList();
-          showToast('メモを削除しました');
-        } catch (err) {
-          showToast(`削除に失敗しました: ${err.message}`, 'error');
-        }
-      }
-    });
-    actionsDiv.appendChild(delBtn);
-    metaRow.appendChild(actionsDiv);
-
-    const commentP = document.createElement('p');
-    commentP.className = 'timeline-note-comment';
-    if (note.comment) {
-      commentP.textContent = note.comment;
-    } else {
-      const italicSpan = document.createElement('span');
-      italicSpan.style.color = 'var(--color-text-dim)';
-      italicSpan.style.fontStyle = 'italic';
-      italicSpan.textContent = 'コメント未入力';
-      commentP.appendChild(italicSpan);
-    }
-
-    contentBox.appendChild(metaRow);
-    contentBox.appendChild(commentP);
-
-    item.appendChild(thumbDiv);
-    item.appendChild(contentBox);
-    els.timelineNotesList.appendChild(item);
-  });
+  reviewEditorController.renderTimelineNotesList();
 }
 
 // Capture current video timestamp context details
 async function captureTimelineTimestamp() {
-  if (!state.currentVideoId) return;
-
-  const currentSecs = els.video.currentTime || 0;
-  state.capturedNoteTime = currentSecs;
-  els.capturedTimestampLabel.textContent = `[${formatTime(currentSecs)}]`;
-
-  els.timelineCommentField.focus();
-
-  // Snatch frame image Blob from Canvas
-  state.capturedNoteThumb = await captureVideoFrame(els.video);
+  await reviewEditorController.captureTimelineTimestamp();
 }
 
 // Add Timeline note item save to DB
 async function addTimelineNote() {
-  const comment = els.timelineCommentField.value.trim();
-  if (!state.currentVideoId) return;
-
-  const label = formatTime(state.capturedNoteTime);
-
-  try {
-    await db.addTimelineNote(state.currentVideoId, {
-      timestampSeconds: state.capturedNoteTime,
-      timestampLabel: label,
-      comment: comment,
-      thumbnailBlob: state.capturedNoteThumb
-    });
-
-    els.timelineCommentField.value = '';
-    state.capturedNoteThumb = null;
-    state.capturedNoteTime = 0;
-    els.capturedTimestampLabel.textContent = '[00:00]';
-
-    renderTimelineNotesList();
-    showToast('タイムラインメモを追加しました');
-  } catch (err) {
-    showToast(`保存できませんでした: ${err.message}`, 'error');
-  }
+  await reviewEditorController.addTimelineNote();
 }
 
 // Save Ratings review data
 async function saveReviewForm(isAutosave = false) {
-  if (!state.currentVideoId) return;
-
-  try {
-    await db.saveReview(state.currentVideoId, {
-      overallGrade: state.currentOverallGrade,
-      comment: els.commentEditor.value,
-      ratings: state.currentRatings
-    });
-
-    clearDirty();
-
-    if (!isAutosave) {
-      showToast('評価内容を保存しました');
-    } else {
-      els.autosaveIndicator.textContent = '自動保存しました';
-      els.autosaveIndicator.style.color = 'var(--color-success)';
-      setTimeout(() => {
-        if (!state.isDirty && state.currentView === 'editor') {
-          els.autosaveIndicator.textContent = '自動保存: 有効';
-          els.autosaveIndicator.style.color = 'var(--color-text-dim)';
-        }
-      }, 1500);
-    }
-  } catch (err) {
-    showToast(`保存できませんでした: ${err.message}`, 'error');
-  }
+  await reviewEditorController.saveReviewForm(isAutosave);
 }
 
 // --- SETTINGS VIEW PANEL OVERLAYS ---
@@ -2613,14 +2082,14 @@ function handleKeyboardShortcuts(e) {
   if (e.key === 't' || e.key === 'T') {
     e.preventDefault();
     if (state.currentView === 'editor') {
-      captureTimelineTimestamp();
+      reviewEditorController.captureTimelineTimestamp();
     }
   }
 
   if ((e.ctrlKey || e.metaKey) && (e.key === 's' || e.key === 'S')) {
     e.preventDefault();
     if (state.currentView === 'editor') {
-      saveReviewForm();
+      reviewEditorController.saveReviewForm();
     }
   }
 }
