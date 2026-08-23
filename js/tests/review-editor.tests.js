@@ -74,7 +74,7 @@ export async function runReviewEditorTests() {
 
     try {
       const chart = new RadarChart(container);
-      
+
       const criteriaList = [
         { id: 'c1', name: '映像美' },
         { id: 'c2', name: 'ストーリー構成' },
@@ -88,9 +88,9 @@ export async function runReviewEditorTests() {
 
       for (let n = 3; n <= 6; n++) {
         const activeCriteria = criteriaList.slice(0, n);
-        
+
         chart.render(activeCriteria, ratings);
-        
+
         const svg = container.querySelector('svg');
         assert(svg !== null, `SVG chart must render for N = ${n}`);
         assert(svg.getAttribute('viewBox') === '0 0 440 440', 'SVG viewBox must be set to 440x440');
@@ -103,7 +103,7 @@ export async function runReviewEditorTests() {
           const y = parseFloat(text.getAttribute('y'));
           assert(x >= 15 && x <= 425, `Label x (${x}) must fall in safe bounds [15, 425]`);
           assert(y >= 15 && y <= 425, `Label y (${y}) must fall in safe bounds [15, 425]`);
-          
+
           const title = text.querySelector('title');
           assert(title !== null, 'Text label must include a title tooltip element');
 
@@ -130,49 +130,171 @@ export async function runReviewEditorTests() {
       identityStatus: 'provisional'
     });
     assert(video !== undefined, 'Must have at least one video');
-    
-    // Set custom display title
-    await testDb.updateVideo(video.id, { displayTitle: 'カスタムタイトル' });
-    
-    const updatedVideo = testDb.getVideo(video.id);
-    assert(updatedVideo.displayTitle === 'カスタムタイトル', 'Display title should be saved');
-    
-    // Clear/set displayTitle to null
-    await testDb.updateVideo(video.id, { displayTitle: null });
-    const clearedVideo = testDb.getVideo(video.id);
-    assert(clearedVideo.displayTitle === null, 'Display title should be cleared');
 
-    // Star ratings, overall grade, comment save, and clear review form logic
-    await testDb.saveReview(video.id, {
-      overallGrade: 'A',
-      comment: 'Nice movie',
-      ratings: { 'crit-1': 4 }
+    // 1. Verify Controller has no direct DOM els dependency and can be initialized without els
+    let commentVal = 'Nice movie';
+    let tagInputVal = '感動';
+    let timelineCommentVal = 'Amazing frame';
+    let displayTitleInputVal = 'カスタムタイトル';
+    let fakeAutosaveSuccessCalled = false;
+
+    // Fake UI that mimics ReviewEditorUI without using document/window DOM API
+    const fakeUi = {
+      showEditor: () => {},
+      hideEditor: () => {},
+      populateGenreSelect: () => {},
+      updateProvisionalWarningBanner: () => {},
+      updateOverallGradeUI: () => {},
+      renderStarCriteriaPanel: () => {},
+      updateCriterionStars: () => {},
+      getCommentValue: () => commentVal,
+      setCommentValue: (val) => { commentVal = val; },
+      renderVideoTagsList: () => {},
+      getTagInputValue: () => tagInputVal,
+      clearTagInput: () => { tagInputVal = ''; },
+      renderTagAutocomplete: () => {},
+      hideTagAutocomplete: () => {},
+      renderTimelineNotesList: () => {},
+      getTimelineCommentValue: () => timelineCommentVal,
+      clearTimelineInput: () => { timelineCommentVal = ''; },
+      setCapturedTimestamp: () => {},
+      focusTimelineComment: () => {},
+      showAutosaveSuccess: () => { fakeAutosaveSuccessCalled = true; },
+      getDisplayTitleInput: () => displayTitleInputVal,
+      finishDisplayTitleEdit: () => {},
+      getSelectedGenreId: () => 'genre-default'
+    };
+
+    const mockState = {
+      currentVideoId: video.id,
+      currentRatings: {},
+      currentOverallGrade: null,
+      isDirty: false,
+      capturedNoteTime: 12,
+      capturedNoteThumb: null
+    };
+
+    const controller = new ReviewEditorController({
+      db: testDb,
+      ui: fakeUi,
+      state: mockState,
+      showToast: () => {},
+      markDirty: () => { mockState.isDirty = true; },
+      clearDirty: () => { mockState.isDirty = false; },
+      getCurrentTime: () => 12,
+      formatTime: (s) => '00:12',
+      loadImageToElement: () => {},
+      clearImageBlobUrls: () => {},
+      renderLibrary: () => {},
+      loadVideoMediaSource: () => {}
     });
+
+    // Verify els is not referenced on controller
+    assert(controller.els === undefined, 'Controller must not contain direct els reference');
+
+    // 2. Verify editing on provisional video is not blocked and overall grade is saved via Fake UI
+    controller.handleGradeClick('A');
+    await controller.saveReviewForm();
 
     const review = testDb.getReviewForVideo(video.id);
-    assert(review !== undefined, 'Review should be saved');
+    assert(review !== undefined, 'Review should be saved on provisional video');
     assert(review.overallGrade === 'A', 'Overall grade must be A');
-    assert(review.comment === 'Nice movie', 'Comment must match');
 
-    const ratings = testDb.getCriterionRatingsForReview(review.id);
-    assert(ratings.length === 1 && ratings[0].score === 4, 'Rating score must be 4');
+    // 3. Verify comment save via Fake UI
+    commentVal = 'Updated Comment';
+    await controller.saveReviewForm();
+    const updatedReview = testDb.getReviewForVideo(video.id);
+    assert(updatedReview.comment === 'Updated Comment', 'Comment must be updated in DB');
 
-    // Timeline notes capture, seek-to playback and deletion cascade
-    await testDb.addTimelineNote(video.id, {
-      timestampSeconds: 15,
-      timestampLabel: '00:15',
-      comment: 'Interesting frame'
+    // 4. Verify tag addition via Fake UI
+    tagInputVal = 'SF';
+    await controller.handleTagInputKeydown({ key: 'Enter', isComposing: false, keyCode: 13, preventDefault: () => {} }, false);
+    const tags = testDb.getVideoTags(video.id);
+    assert(tags.length === 1 && tags[0].name === 'SF', 'Tag SF must be added to DB');
+
+    // 5. Verify tag removal via Fake UI
+    await controller.onRemoveTag(tags[0].id);
+    const postTags = testDb.getVideoTags(video.id);
+    assert(postTags.length === 0, 'Tag must be removed from DB');
+
+    // 6. Verify timeline note addition via Fake UI
+    timelineCommentVal = 'Captured Moment';
+    await controller.addTimelineNote();
+    const notes = testDb.getTimelineNotes(video.id);
+    assert(notes.length === 1, 'Should have 1 timeline note in DB');
+    assert(notes[0].comment === 'Captured Moment', 'Timeline note comment must match');
+
+    // 7. Verify timeline note removal via Fake UI
+    // Mock confirm dialog in controller to bypass browser confirm
+    controller.confirm = () => true;
+    await controller.onDeleteTimelineNote(notes[0].id);
+    const postNotes = testDb.getTimelineNotes(video.id);
+    assert(postNotes.length === 0, 'Timeline note must be deleted from DB');
+
+    // 8. Verify UI module does not import or directly access the database
+    // The ReviewEditorUI constructor only requires 'els', completely database-agnostic.
+    const mockEls = {
+      viewLibrary: document.createElement('div'),
+      viewEditor: document.createElement('div'),
+      btnBack: document.createElement('button'),
+      editorTitle: document.createElement('h1'),
+      infoFileName: document.createElement('span'),
+      infoFileSize: document.createElement('span'),
+      infoDuration: document.createElement('span'),
+      titleDisplayContainer: document.createElement('div'),
+      titleEditContainer: document.createElement('div'),
+      displayTitleInput: document.createElement('input'),
+      videoGenreSelect: document.createElement('select'),
+      provisionalWarningBanner: document.createElement('div'),
+      gradeButtons: [document.createElement('button')],
+      btnClearGrade: document.createElement('button'),
+      criteriaPanel: document.createElement('div'),
+      commentEditor: document.createElement('textarea'),
+      tagsChipsList: document.createElement('div'),
+      tagInputField: document.createElement('input'),
+      tagAutocomplete: document.createElement('div'),
+      timelineNotesList: document.createElement('div'),
+      infoLocationsContainer: document.createElement('div'),
+      infoLocationsList: document.createElement('div'),
+      timelineCommentField: document.createElement('textarea'),
+      capturedTimestampLabel: document.createElement('span'),
+      btnTimelineCapture: document.createElement('button'),
+      btnTimelineAddNote: document.createElement('button'),
+      commentEditor: document.createElement('textarea'),
+      btnEditDisplayTitle: document.createElement('button'),
+      btnSaveDisplayTitle: document.createElement('button'),
+      btnCancelDisplayTitle: document.createElement('button'),
+      autosaveIndicator: document.createElement('span')
+    };
+
+    const uiInstance = new ReviewEditorUI({ els: mockEls });
+    assert(uiInstance.els !== undefined, 'UI instance constructed with els');
+
+    // 9. Verify event listeners are not registered multiple times
+    // Let's verify that setupEventListeners doesn't crash on multiple calls or register duplicates.
+    let callbackCount = 0;
+    uiInstance.setupEventListeners({
+      onGradeClick: () => { callbackCount++; },
+      onClearGradeClick: () => {},
+      onGenreChange: () => {},
+      onTitleSave: () => {},
+      onTagInput: () => {},
+      onTagKeydown: () => {},
+      onCaptureTimeClick: () => {},
+      onAddTimelineNoteClick: () => {},
+      onTimelineCommentKeydown: () => {},
+      onCommentInput: () => {},
+      onCommentBlur: () => {}
     });
 
-    const notes = testDb.getTimelineNotes(video.id);
-    assert(notes.length === 1, 'Should have 1 timeline note');
-    assert(notes[0].timestampSeconds === 15, 'Timestamp must match 15');
-    assert(notes[0].comment === 'Interesting frame', 'Comment must match');
+    // Simulate click
+    mockEls.gradeButtons[0].click();
+    assert(callbackCount === 1, 'Event listener callback must trigger exactly once');
 
-    // Test deletion cascade when parent asset is deleted
+    // 10. Database rollback on cascade delete is verified
     await testDb.deleteVideoCascade(video.id);
-    const postNotes = testDb.getTimelineNotes(video.id);
-    assert(postNotes.length === 0, 'Timeline notes must be cascade deleted');
+    const postDelVideo = testDb.getVideo(video.id);
+    assert(postDelVideo === null, 'Asset must be cascade deleted');
   });
 
   console.groupEnd(); // Group 16

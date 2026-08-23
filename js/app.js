@@ -50,8 +50,6 @@ export function setDbForTesting(mockDb) {
 let radar;
 
 // IME Composition State Tracking
-let isTagInputComposing = false;
-let isTimelineCommentComposing = false;
 let isSettingsNewNameComposing = false;
 let isFilterSearchComposing = false;
 
@@ -321,39 +319,41 @@ function initEventListeners() {
   els.settingsBtnAdd.addEventListener('click', handleSettingsAddCriterion);
   els.settingsBtnSave.addEventListener('click', closeSettingsModal);
 
-  // 1. Display Title Editor Events
-  els.btnEditDisplayTitle.addEventListener('click', () => {
-    const video = db.getVideo(state.currentVideoId);
-    if (video) {
-      els.displayTitleInput.value = video.displayTitle || '';
-      els.titleDisplayContainer.classList.add('hidden');
-      els.titleEditContainer.classList.remove('hidden');
-      els.displayTitleInput.focus();
-    }
-  });
-
-  els.btnCancelDisplayTitle.addEventListener('click', () => {
-    els.titleDisplayContainer.classList.remove('hidden');
-    els.titleEditContainer.classList.add('hidden');
-  });
-
-  els.btnSaveDisplayTitle.addEventListener('click', () => {
-    reviewEditorController.saveDisplayTitle();
-  });
-
-  // Keep Enter/ESC shortcuts for display title input
-  els.displayTitleInput.addEventListener('keydown', async (e) => {
-    if (e.key === 'Enter') {
-      e.preventDefault();
+  // Review Editor UI Event Listeners
+  reviewEditorUI.setupEventListeners({
+    onGradeClick: (grade) => {
+      reviewEditorController.handleGradeClick(grade);
+    },
+    onClearGradeClick: () => {
+      reviewEditorController.handleClearGradeClick();
+    },
+    onGenreChange: () => {
+      reviewEditorController.changeGenre();
+    },
+    onTitleSave: () => {
       reviewEditorController.saveDisplayTitle();
-    } else if (e.key === 'Escape') {
-      e.preventDefault();
-      els.btnCancelDisplayTitle.click();
+    },
+    onTagInput: () => {
+      reviewEditorController.handleTagInputFieldAutocomplete();
+    },
+    onTagKeydown: (e, isComposing) => {
+      reviewEditorController.handleTagInputKeydown(e, isComposing);
+    },
+    onCaptureTimeClick: () => {
+      reviewEditorController.captureTimelineTimestamp();
+    },
+    onAddTimelineNoteClick: () => {
+      reviewEditorController.addTimelineNote();
+    },
+    onTimelineCommentKeydown: (e, isComposing) => {
+      reviewEditorController.handleTimelineCommentKeydown(e, isComposing);
+    },
+    onCommentInput: () => {
+      markDirty();
+    },
+    onCommentBlur: () => {
+      reviewEditorController.saveReviewForm(true);
     }
-  });
-
-  els.videoGenreSelect.addEventListener('change', () => {
-    reviewEditorController.changeGenre();
   });
 
   // 3. Settings Modal - Genre Select Dropdown
@@ -542,67 +542,7 @@ function initEventListeners() {
   // Keyboard Shortcuts Handler
   window.addEventListener('keydown', handleKeyboardShortcuts);
 
-  // Grade Ratings A-E Selector
-  els.gradeButtons.forEach(btn => {
-    btn.addEventListener('click', () => {
-      els.gradeButtons.forEach(b => b.classList.remove('active'));
-      btn.classList.add('active');
-      state.currentOverallGrade = btn.getAttribute('data-grade');
-      markDirty();
-      reviewEditorController.updateRadar();
-    });
-  });
-  els.btnClearGrade.addEventListener('click', () => {
-    els.gradeButtons.forEach(b => b.classList.remove('active'));
-    state.currentOverallGrade = null;
-    markDirty();
-    reviewEditorController.updateRadar();
-  });
 
-  // Tags Input composition tracking
-  els.tagInputField.addEventListener('compositionstart', () => {
-    isTagInputComposing = true;
-  });
-  els.tagInputField.addEventListener('compositionend', () => {
-    isTagInputComposing = false;
-  });
-  els.tagInputField.addEventListener('keydown', (e) => {
-    reviewEditorController.handleTagInputKeydown(e, isTagInputComposing);
-  });
-  els.tagInputField.addEventListener('input', () => {
-    reviewEditorController.handleTagInputFieldAutocomplete();
-  });
-  document.addEventListener('click', (e) => {
-    if (!els.tagInputField.contains(e.target) && !els.tagAutocomplete.contains(e.target)) {
-      els.tagAutocomplete.classList.add('hidden');
-    }
-  });
-
-  // Comments and ratings changes mark dirty
-  els.commentEditor.addEventListener('input', markDirty);
-
-  // Timeline capturing & adding composition tracking
-  els.timelineCommentField.addEventListener('compositionstart', () => {
-    isTimelineCommentComposing = true;
-  });
-  els.timelineCommentField.addEventListener('compositionend', () => {
-    isTimelineCommentComposing = false;
-  });
-  els.btnTimelineCapture.addEventListener('click', () => {
-    reviewEditorController.captureTimelineTimestamp();
-  });
-  els.btnTimelineAddNote.addEventListener('click', () => {
-    reviewEditorController.addTimelineNote();
-  });
-  els.timelineCommentField.addEventListener('keydown', (e) => {
-    if (e.isComposing || isTimelineCommentComposing || e.keyCode === 229) {
-      return;
-    }
-    if (e.key === 'Enter') {
-      e.preventDefault();
-      reviewEditorController.addTimelineNote();
-    }
-  });
 
   // Criteria input composition tracking (Settings modal)
   els.settingsNewNameInput.addEventListener('compositionstart', () => {

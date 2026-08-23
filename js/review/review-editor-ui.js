@@ -9,9 +9,58 @@ export class ReviewEditorUI {
     this.els = els;
   }
 
-  /**
-   * Render individual criteria star ratings list
-   */
+  showEditor(video, formattedDuration) {
+    this.els.viewLibrary.classList.add('hidden');
+    this.els.viewEditor.classList.remove('hidden');
+    this.els.btnBack.classList.remove('hidden');
+
+    this.els.editorTitle.textContent = video.displayTitle || video.title;
+    this.els.infoFileName.textContent = video.fileName || 'フォルダ内動画';
+    this.els.infoFileSize.textContent = video.fileSize ? (video.fileSize / 1024 / 1024).toFixed(1) + ' MB' : '-';
+    this.els.infoDuration.textContent = formattedDuration;
+
+    this.els.titleDisplayContainer.classList.remove('hidden');
+    this.els.titleEditContainer.classList.add('hidden');
+    this.els.displayTitleInput.value = video.displayTitle || '';
+  }
+
+  hideEditor() {
+    this.els.viewLibrary.classList.remove('hidden');
+    this.els.viewEditor.classList.add('hidden');
+    this.els.btnBack.classList.add('hidden');
+  }
+
+  populateGenreSelect(allGenres, currentGenreId) {
+    this.els.videoGenreSelect.innerHTML = '';
+    allGenres.forEach(g => {
+      const opt = document.createElement('option');
+      opt.value = g.id;
+      opt.textContent = g.isActive ? g.name : `${g.name} (無効)`;
+      this.els.videoGenreSelect.appendChild(opt);
+    });
+    this.els.videoGenreSelect.value = currentGenreId || 'genre-default';
+  }
+
+  getSelectedGenreId() {
+    return this.els.videoGenreSelect.value;
+  }
+
+  updateProvisionalWarningBanner(isProvisional) {
+    if (isProvisional) {
+      this.els.provisionalWarningBanner.classList.remove('hidden');
+    } else {
+      this.els.provisionalWarningBanner.classList.add('hidden');
+    }
+  }
+
+  updateOverallGradeUI(grade) {
+    this.els.gradeButtons.forEach(btn => btn.classList.remove('active'));
+    if (grade) {
+      const activeBtn = document.querySelector(`.grade-btn[data-grade="${grade}"]`);
+      if (activeBtn) activeBtn.classList.add('active');
+    }
+  }
+
   renderStarCriteriaPanel(activeCriteria, currentRatings, onStarClick, onStarClear) {
     this.els.criteriaPanel.innerHTML = '';
 
@@ -58,7 +107,7 @@ export class ReviewEditorUI {
         starSvg.innerHTML = `<path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z" />`;
 
         starSvg.addEventListener('click', () => {
-          onStarClick(crit.id, s, starsGroup);
+          onStarClick(crit.id, s);
         });
         starsGroup.appendChild(starSvg);
       }
@@ -69,7 +118,7 @@ export class ReviewEditorUI {
       clearBtn.title = '評価をクリア';
       clearBtn.textContent = 'クリア';
       clearBtn.addEventListener('click', () => {
-        onStarClear(crit.id, starsGroup);
+        onStarClear(crit.id);
       });
       interactiveDiv.appendChild(clearBtn);
       row.appendChild(interactiveDiv);
@@ -78,9 +127,27 @@ export class ReviewEditorUI {
     });
   }
 
-  /**
-   * Render tag chips
-   */
+  updateCriterionStars(critId, score) {
+    const starsGroup = this.els.criteriaPanel.querySelector(`[data-criterion-id="${critId}"]`);
+    if (!starsGroup) return;
+    const rowStars = starsGroup.querySelectorAll('.star-elem');
+    rowStars.forEach((st, idx) => {
+      if (idx < score) {
+        st.classList.add('active');
+      } else {
+        st.classList.remove('active');
+      }
+    });
+  }
+
+  getCommentValue() {
+    return this.els.commentEditor.value;
+  }
+
+  setCommentValue(value) {
+    this.els.commentEditor.value = value || '';
+  }
+
   renderVideoTagsList(tags, onRemoveClick) {
     this.els.tagsChipsList.innerHTML = '';
 
@@ -113,9 +180,14 @@ export class ReviewEditorUI {
     }
   }
 
-  /**
-   * Render tags autocomplete options list
-   */
+  getTagInputValue() {
+    return this.els.tagInputField.value;
+  }
+
+  clearTagInput() {
+    this.els.tagInputField.value = '';
+  }
+
   renderTagAutocomplete(matches, onMatchClick) {
     if (matches.length === 0) {
       this.els.tagAutocomplete.classList.add('hidden');
@@ -135,9 +207,10 @@ export class ReviewEditorUI {
     this.els.tagAutocomplete.classList.remove('hidden');
   }
 
-  /**
-   * Render timeline notes list
-   */
+  hideTagAutocomplete() {
+    this.els.tagAutocomplete.classList.add('hidden');
+  }
+
   renderTimelineNotesList(notes, onTimeSeekClick, onDeleteClick, loadImageToElement, clearImageBlobUrls) {
     if (clearImageBlobUrls) {
       clearImageBlobUrls();
@@ -160,7 +233,6 @@ export class ReviewEditorUI {
       const item = document.createElement('div');
       item.className = 'timeline-note-item';
 
-      // Thumbnail container
       const thumbDiv = document.createElement('div');
       thumbDiv.className = 'timeline-note-thumb';
 
@@ -176,10 +248,9 @@ export class ReviewEditorUI {
       fallbackIcon.setAttribute('fill', 'none');
       fallbackIcon.setAttribute('viewBox', '0 0 24 24');
       fallbackIcon.setAttribute('stroke', 'currentColor');
-      fallbackIcon.innerHTML = `<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />;`;
+      fallbackIcon.innerHTML = `<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />`;
       thumbDiv.appendChild(fallbackIcon);
 
-      // Content container
       const contentBox = document.createElement('div');
       contentBox.className = 'timeline-note-content-box';
 
@@ -231,9 +302,6 @@ export class ReviewEditorUI {
     });
   }
 
-  /**
-   * Render file locations list inside editor panel
-   */
   renderLocationsListInEditor(locations, onDeleteLocationClick) {
     this.els.infoLocationsContainer.style.display = 'block';
     this.els.infoLocationsList.innerHTML = '';
@@ -279,39 +347,149 @@ export class ReviewEditorUI {
     });
   }
 
-  /**
-   * Populate genre dropdown options
-   */
-  populateGenreSelect(allGenres, currentGenreId) {
-    this.els.videoGenreSelect.innerHTML = '';
-    allGenres.forEach(g => {
-      const opt = document.createElement('option');
-      opt.value = g.id;
-      opt.textContent = g.isActive ? g.name : `${g.name} (無効)`;
-      this.els.videoGenreSelect.appendChild(opt);
+  getTimelineCommentValue() {
+    return this.els.timelineCommentField.value.trim();
+  }
+
+  clearTimelineInput() {
+    this.els.timelineCommentField.value = '';
+    this.els.capturedTimestampLabel.textContent = '[00:00]';
+  }
+
+  setCapturedTimestamp(formattedTime) {
+    this.els.capturedTimestampLabel.textContent = `[${formattedTime}]`;
+  }
+
+  focusTimelineComment() {
+    this.els.timelineCommentField.focus();
+  }
+
+  showAutosaveSuccess(isDirty, currentView) {
+    this.els.autosaveIndicator.textContent = '自動保存しました';
+    this.els.autosaveIndicator.style.color = 'var(--color-success)';
+    setTimeout(() => {
+      if (!isDirty && currentView === 'editor') {
+        this.els.autosaveIndicator.textContent = '自動保存: 有効';
+        this.els.autosaveIndicator.style.color = 'var(--color-text-dim)';
+      }
+    }, 1500);
+  }
+
+  getDisplayTitleInput() {
+    return this.els.displayTitleInput.value;
+  }
+
+  finishDisplayTitleEdit(title) {
+    this.els.editorTitle.textContent = title;
+    this.els.titleDisplayContainer.classList.remove('hidden');
+    this.els.titleEditContainer.classList.add('hidden');
+  }
+
+  setupEventListeners({
+    onGradeClick,
+    onClearGradeClick,
+    onGenreChange,
+    onTitleSave,
+    onTagInput,
+    onTagKeydown,
+    onCaptureTimeClick,
+    onAddTimelineNoteClick,
+    onTimelineCommentKeydown,
+    onCommentInput,
+    onCommentBlur
+  }) {
+    // 1. Overall Grade buttons
+    this.els.gradeButtons.forEach(btn => {
+      btn.addEventListener('click', () => {
+        const grade = btn.getAttribute('data-grade');
+        onGradeClick(grade);
+      });
     });
-    this.els.videoGenreSelect.value = currentGenreId || 'genre-default';
-  }
 
-  /**
-   * Toggle provisional warning banner visibility
-   */
-  updateProvisionalWarningBanner(isProvisional) {
-    if (isProvisional) {
-      this.els.provisionalWarningBanner.classList.remove('hidden');
-    } else {
-      this.els.provisionalWarningBanner.classList.add('hidden');
-    }
-  }
+    this.els.btnClearGrade.addEventListener('click', () => {
+      onClearGradeClick();
+    });
 
-  /**
-   * Toggle overall grade active button states
-   */
-  updateOverallGradeUI(grade) {
-    this.els.gradeButtons.forEach(btn => btn.classList.remove('active'));
-    if (grade) {
-      const activeBtn = document.querySelector(`.grade-btn[data-grade="${grade}"]`);
-      if (activeBtn) activeBtn.classList.add('active');
-    }
+    // 2. Genre Select dropdown
+    this.els.videoGenreSelect.addEventListener('change', () => {
+      onGenreChange();
+    });
+
+    // 3. Title Display edit click
+    this.els.btnEditDisplayTitle.addEventListener('click', () => {
+      this.els.titleDisplayContainer.classList.add('hidden');
+      this.els.titleEditContainer.classList.remove('hidden');
+      this.els.displayTitleInput.focus();
+    });
+
+    // 4. Title Input keydown
+    this.els.displayTitleInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        onTitleSave();
+      } else if (e.key === 'Escape') {
+        e.preventDefault();
+        this.els.titleDisplayContainer.classList.remove('hidden');
+        this.els.titleEditContainer.classList.add('hidden');
+      }
+    });
+
+    // 5. Title Save & Cancel buttons
+    this.els.btnSaveDisplayTitle.addEventListener('click', () => {
+      onTitleSave();
+    });
+    this.els.btnCancelDisplayTitle.addEventListener('click', () => {
+      this.els.titleDisplayContainer.classList.remove('hidden');
+      this.els.titleEditContainer.classList.add('hidden');
+    });
+
+    // 6. Tag Input field
+    this.isTagInputComposing = false;
+    this.els.tagInputField.addEventListener('compositionstart', () => {
+      this.isTagInputComposing = true;
+    });
+    this.els.tagInputField.addEventListener('compositionend', () => {
+      this.isTagInputComposing = false;
+    });
+    this.els.tagInputField.addEventListener('keydown', (e) => {
+      onTagKeydown(e, this.isTagInputComposing);
+    });
+    this.els.tagInputField.addEventListener('input', () => {
+      onTagInput();
+    });
+
+    // Close autocomplete on clicking outside
+    document.addEventListener('click', (e) => {
+      if (!this.els.tagInputField.contains(e.target) && !this.els.tagAutocomplete.contains(e.target)) {
+        this.hideTagAutocomplete();
+      }
+    });
+
+    // 7. Timeline buttons & keydown
+    this.els.btnTimelineCapture.addEventListener('click', () => {
+      onCaptureTimeClick();
+    });
+    this.els.btnTimelineAddNote.addEventListener('click', () => {
+      onAddTimelineNoteClick();
+    });
+
+    this.isTimelineCommentComposing = false;
+    this.els.timelineCommentField.addEventListener('compositionstart', () => {
+      this.isTimelineCommentComposing = true;
+    });
+    this.els.timelineCommentField.addEventListener('compositionend', () => {
+      this.isTimelineCommentComposing = false;
+    });
+    this.els.timelineCommentField.addEventListener('keydown', (e) => {
+      onTimelineCommentKeydown(e, this.isTimelineCommentComposing);
+    });
+
+    // 8. Comment Editor autosave/dirty
+    this.els.commentEditor.addEventListener('input', () => {
+      onCommentInput();
+    });
+    this.els.commentEditor.addEventListener('blur', () => {
+      onCommentBlur();
+    });
   }
 }

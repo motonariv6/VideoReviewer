@@ -25,7 +25,6 @@ export class ReviewEditorController {
   }) {
     this.db = db;
     this.ui = ui;
-    this.els = ui.els;
     this.state = state;
     this.radar = radar;
     this.showToast = showToast;
@@ -48,7 +47,7 @@ export class ReviewEditorController {
 
   /**
    * Transition to review editor workspace screen and load all video review states
-   * @param {string} videoId 
+   * @param {string} videoId
    */
   async switchScreenToEditor(videoId) {
     const video = this.db.getVideo(videoId);
@@ -56,20 +55,9 @@ export class ReviewEditorController {
 
     this.state.currentVideoId = videoId;
     this.state.currentView = 'editor';
-    this.els.viewLibrary.classList.add('hidden');
-    this.els.viewEditor.classList.remove('hidden');
-    this.els.btnBack.classList.remove('hidden');
 
-    // Set header details safely
-    this.els.editorTitle.textContent = video.displayTitle || video.title;
-    this.els.infoFileName.textContent = video.fileName || 'フォルダ内動画';
-    this.els.infoFileSize.textContent = video.fileSize ? (video.fileSize / 1024 / 1024).toFixed(1) + ' MB' : '-';
-    this.els.infoDuration.textContent = this.formatTime(video.duration);
-
-    // Reset display title edit widgets
-    this.els.titleDisplayContainer.classList.remove('hidden');
-    this.els.titleEditContainer.classList.add('hidden');
-    this.els.displayTitleInput.value = video.displayTitle || '';
+    // UI screen transit & populate metadata
+    this.ui.showEditor(video, this.formatTime(video.duration));
 
     // Populate and select Video Genre select dropdown options
     const allGenres = this.db.getGenres();
@@ -93,7 +81,7 @@ export class ReviewEditorController {
     this.renderStarCriteriaPanel();
 
     // Load comment
-    this.els.commentEditor.value = review ? review.comment : '';
+    this.ui.setCommentValue(review ? review.comment : '');
 
     // Render tags
     this.renderVideoTagsList();
@@ -107,8 +95,7 @@ export class ReviewEditorController {
     // Initialize dynamic captured timestamp label
     this.state.capturedNoteTime = 0;
     this.state.capturedNoteThumb = null;
-    this.els.capturedTimestampLabel.textContent = '[00:00]';
-    this.els.timelineCommentField.value = '';
+    this.ui.clearTimelineInput();
 
     // Disable or enable fields based on whether the asset itself is provisional
     const isProvisional = video.identityStatus === 'provisional';
@@ -131,29 +118,22 @@ export class ReviewEditorController {
     this.ui.renderStarCriteriaPanel(
       activeCriteria,
       this.state.currentRatings,
-      (critId, starVal, starsGroup) => this.onStarClick(critId, starVal, starsGroup),
-      (critId, starsGroup) => this.onStarClear(critId, starsGroup)
+      (critId, starVal) => this.onStarClick(critId, starVal),
+      (critId) => this.onStarClear(critId)
     );
   }
 
   /**
    * Star rating click handler
    */
-  onStarClick(critId, starVal, starsGroup) {
+  onStarClick(critId, starVal) {
     if (this.state.currentRatings[critId] === starVal) {
       this.state.currentRatings[critId] = 0;
     } else {
       this.state.currentRatings[critId] = starVal;
     }
 
-    const rowStars = starsGroup.querySelectorAll('.star-elem');
-    rowStars.forEach((st, idx) => {
-      if (idx < (this.state.currentRatings[critId] || 0)) {
-        st.classList.add('active');
-      } else {
-        st.classList.remove('active');
-      }
-    });
+    this.ui.updateCriterionStars(critId, this.state.currentRatings[critId]);
 
     this.markDirty();
     this.updateRadar();
@@ -162,11 +142,31 @@ export class ReviewEditorController {
   /**
    * Star rating clear handler
    */
-  onStarClear(critId, starsGroup) {
+  onStarClear(critId) {
     this.state.currentRatings[critId] = 0;
-    starsGroup.querySelectorAll('.star-elem').forEach(st => st.classList.remove('active'));
+    this.ui.updateCriterionStars(critId, 0);
     this.markDirty();
     this.updateRadar();
+  }
+
+  /**
+   * Overall Grade click handler
+   */
+  handleGradeClick(grade) {
+    this.state.currentOverallGrade = grade;
+    this.markDirty();
+    this.updateRadar();
+    this.ui.updateOverallGradeUI(grade);
+  }
+
+  /**
+   * Clear Overall Grade click handler
+   */
+  handleClearGradeClick() {
+    this.state.currentOverallGrade = null;
+    this.markDirty();
+    this.updateRadar();
+    this.ui.updateOverallGradeUI(null);
   }
 
   /**
@@ -203,9 +203,9 @@ export class ReviewEditorController {
    * Auto-complete tags matching user text input
    */
   handleTagInputFieldAutocomplete() {
-    const val = this.els.tagInputField.value.trim().toLowerCase();
+    const val = this.ui.getTagInputValue().trim().toLowerCase();
     if (!val) {
-      this.els.tagAutocomplete.classList.add('hidden');
+      this.ui.hideTagAutocomplete();
       return;
     }
 
@@ -223,8 +223,8 @@ export class ReviewEditorController {
     if (this.state.currentVideoId) {
       try {
         await this.db.addTagToVideo(this.state.currentVideoId, tagName);
-        this.els.tagInputField.value = '';
-        this.els.tagAutocomplete.classList.add('hidden');
+        this.ui.clearTagInput();
+        this.ui.hideTagAutocomplete();
         this.renderVideoTagsList();
       } catch (err) {
         this.showToast(err.message, 'error');
@@ -241,20 +241,20 @@ export class ReviewEditorController {
     }
     if (e.key === 'Enter') {
       e.preventDefault();
-      const val = this.els.tagInputField.value.trim();
+      const val = this.ui.getTagInputValue().trim();
       if (val && this.state.currentVideoId) {
         try {
           const existingTags = this.db.getVideoTags(this.state.currentVideoId);
           if (existingTags.some(t => t.name.toLowerCase() === val.toLowerCase())) {
             this.showToast('このタグは既に追加されています', 'error');
-            this.els.tagInputField.value = '';
-            this.els.tagAutocomplete.classList.add('hidden');
+            this.ui.clearTagInput();
+            this.ui.hideTagAutocomplete();
             return;
           }
 
           await this.db.addTagToVideo(this.state.currentVideoId, val);
-          this.els.tagInputField.value = '';
-          this.els.tagAutocomplete.classList.add('hidden');
+          this.ui.clearTagInput();
+          this.ui.hideTagAutocomplete();
           this.renderVideoTagsList();
         } catch (err) {
           this.showToast(err.message, 'error');
@@ -301,9 +301,9 @@ export class ReviewEditorController {
 
     const currentSecs = this.getCurrentTime();
     this.state.capturedNoteTime = currentSecs;
-    this.els.capturedTimestampLabel.textContent = `[${this.formatTime(currentSecs)}]`;
+    this.ui.setCapturedTimestamp(this.formatTime(currentSecs));
 
-    this.els.timelineCommentField.focus();
+    this.ui.focusTimelineComment();
 
     this.state.capturedNoteThumb = await this.captureFrame();
   }
@@ -312,7 +312,7 @@ export class ReviewEditorController {
    * Add timeline note to DB
    */
   async addTimelineNote() {
-    const comment = this.els.timelineCommentField.value.trim();
+    const comment = this.ui.getTimelineCommentValue();
     if (!this.state.currentVideoId) return;
 
     const label = this.formatTime(this.state.capturedNoteTime);
@@ -325,15 +325,27 @@ export class ReviewEditorController {
         thumbnailBlob: this.state.capturedNoteThumb
       });
 
-      this.els.timelineCommentField.value = '';
+      this.ui.clearTimelineInput();
       this.state.capturedNoteThumb = null;
       this.state.capturedNoteTime = 0;
-      this.els.capturedTimestampLabel.textContent = '[00:00]';
 
       this.renderTimelineNotesList();
       this.showToast('タイムラインメモを追加しました');
     } catch (err) {
       this.showToast(`保存できませんでした: ${err.message}`, 'error');
+    }
+  }
+
+  /**
+   * Keydown handler for timeline comment submission
+   */
+  handleTimelineCommentKeydown(e, isTimelineCommentComposing) {
+    if (e.isComposing || isTimelineCommentComposing || e.keyCode === 229) {
+      return;
+    }
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      this.addTimelineNote();
     }
   }
 
@@ -347,7 +359,7 @@ export class ReviewEditorController {
     try {
       await this.db.saveReview(this.state.currentVideoId, {
         overallGrade: this.state.currentOverallGrade,
-        comment: this.els.commentEditor.value,
+        comment: this.ui.getCommentValue(),
         ratings: this.state.currentRatings
       });
 
@@ -356,14 +368,7 @@ export class ReviewEditorController {
       if (!isAutosave) {
         this.showToast('評価内容を保存しました');
       } else {
-        this.els.autosaveIndicator.textContent = '自動保存しました';
-        this.els.autosaveIndicator.style.color = 'var(--color-success)';
-        setTimeout(() => {
-          if (!this.state.isDirty && this.state.currentView === 'editor') {
-            this.els.autosaveIndicator.textContent = '自動保存: 有効';
-            this.els.autosaveIndicator.style.color = 'var(--color-text-dim)';
-          }
-        }, 1500);
+        this.ui.showAutosaveSuccess(this.state.isDirty, this.state.currentView);
       }
     } catch (err) {
       this.showToast(`保存できませんでした: ${err.message}`, 'error');
@@ -415,14 +420,12 @@ export class ReviewEditorController {
     if (!video) return;
 
     // Sanitize input: strip HTML tags and trim
-    let titleVal = this.els.displayTitleInput.value.replace(/<\/?[^>]+(>|$)/g, "").trim();
+    let titleVal = this.ui.getDisplayTitleInput().replace(/<\/?[^>]+(>|$)/g, "").trim();
 
     await this.db.updateVideo(video.id, { displayTitle: titleVal || null });
 
     // Update UI headers
-    this.els.editorTitle.textContent = titleVal || video.title;
-    this.els.titleDisplayContainer.classList.remove('hidden');
-    this.els.titleEditContainer.classList.add('hidden');
+    this.ui.finishDisplayTitleEdit(titleVal || video.title);
 
     this.showToast('表示タイトルを更新しました。');
 
@@ -436,7 +439,7 @@ export class ReviewEditorController {
     const videoId = this.state.currentVideoId;
     if (!videoId) return;
 
-    const genreId = this.els.videoGenreSelect.value;
+    const genreId = this.ui.getSelectedGenreId();
     await this.db.updateVideo(videoId, { genreId });
 
     // Reload ratings workspace
