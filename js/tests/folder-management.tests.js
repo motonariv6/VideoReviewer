@@ -2,7 +2,7 @@ import { AppDatabase } from '../db.js';
 import { generateFileSignature, formatTime, parseTime, normalizePath, filterVideosByTag } from '../video-helper.js';
 import { isSupportedVideoFile, isPathCoveredByFailedDirectory, scanDirectory, classifyScanResults, applyScanDifferentials, isIgnoredSystemEntry } from '../directory-scanner.js';
 import { RadarChart } from '../radar.js';
-import { db, setDbForTesting, handleFolderSelect, handleFolderRequestPermission, processSingleLocationVerification } from '../app.js';
+import { db, setDbForTesting, handleFolderSelect, handleFolderRequestPermission, processSingleLocationVerification, els, openSettingsModal } from '../app.js';
 import { MemoryStorage, MockFileSystemFileHandle, MockFileSystemDirectoryHandle } from '../tests.js';
 
 export async function runFolderManagementTests(runTest, assert) {
@@ -888,6 +888,62 @@ export async function runFolderManagementTests(runTest, assert) {
     assert(testDb.getDirectorySources().length === 1, 'Only one directory source remains');
     assert(testDb.getDirectorySources()[0].id === sourceB.id, 'Remaining source is FolderB');
     assert(testDb.getDirectorySource(sourceA.id) === undefined, 'FolderA has been deleted');
+  });
+
+  await runTest('Settings button click opens settings modal regression test', async () => {
+    // 1. Mock the showDirectoryPicker function on window so that isFileSystemSupported is true
+    const originalShowDirectoryPicker = window.showDirectoryPicker;
+    window.showDirectoryPicker = () => {};
+
+    try {
+      // 2. Save original els properties
+      const originalEls = { ...els };
+
+      // 3. Mock required elements in els for openSettingsModal and renderFolderSettingsUI
+      els.folderApiFallbackMsg = document.createElement('div');
+      els.folderSettingsPanel = document.createElement('div');
+      els.modalSettings = document.createElement('div');
+
+      els.folderNameVal = document.createElement('span');
+      els.folderStatusVal = document.createElement('span');
+      els.folderPermissionVal = document.createElement('span');
+      els.folderVideoCountVal = document.createElement('span');
+      els.folderLastScanVal = document.createElement('span');
+
+      els.btnFolderRescan = document.createElement('button');
+      els.btnFolderRequestPerm = document.createElement('button');
+      els.btnFolderDisconnect = document.createElement('button');
+      els.btnFolderSelect = document.createElement('button');
+      els.folderRecursiveCheckbox = document.createElement('input');
+      els.folderRecursiveCheckbox.type = 'checkbox';
+
+      els.settingsGenreSelect = document.createElement('select');
+      els.settingsCopySourceSelect = document.createElement('select');
+      els.settingsNewGenreInput = document.createElement('input');
+      els.settingsBtnGenreToggleActive = document.createElement('button');
+      els.settingsBtnGenreAdd = document.createElement('button');
+      els.settingsBtnGenreUp = document.createElement('button');
+      els.settingsBtnGenreDown = document.createElement('button');
+      els.settingsNewNameInput = document.createElement('input');
+      els.settingsBtnAdd = document.createElement('button');
+      els.settingsCriteriaList = document.createElement('div');
+      els.backupLastTimeVal = document.createElement('span');
+
+      // Make sure the modal does not have 'open' class initially
+      els.modalSettings.classList.remove('open');
+
+      // 4. Call openSettingsModal()
+      openSettingsModal();
+
+      // 5. Assertions
+      assert(els.modalSettings.classList.contains('open'), 'Modal must have open class after opening');
+
+      // Restore els
+      Object.assign(els, originalEls);
+    } finally {
+      // Restore window.showDirectoryPicker
+      window.showDirectoryPicker = originalShowDirectoryPicker;
+    }
   });
 
   console.groupEnd(); // Group 14
