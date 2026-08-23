@@ -6,7 +6,8 @@ import { computeQuickHash, computeFileSHA256, globalHashQueue, logMetric } from 
 import {
   bgHashState,
   processBackgroundHashingQueue as processBackgroundHashingQueueController,
-  processSingleLocationVerification
+  processSingleLocationVerification,
+  handleLocationsRemoved
 } from './hashing/hash-verification-controller.js';
 import {
   updateBackgroundHashingProgress,
@@ -34,7 +35,8 @@ export {
   processSingleLocationVerification,
   updateBackgroundHashingProgress,
   updateBackgroundHashingUI,
-  clearCloseTimeout
+  clearCloseTimeout,
+  handleLocationsRemoved
 };
 
 // Instantiate DB & components
@@ -825,7 +827,6 @@ async function handleBulkDelete() {
     db,
     currentVideoId: state.currentVideoId,
     videoFilesMap: state.videoFilesMap,
-    bgHashState,
     onRevoke: () => {
       revokeActiveBlobUrl();
       state.activeVideoFile = null;
@@ -834,7 +835,9 @@ async function handleBulkDelete() {
     handleBackToLibrary,
     renderLibrary,
     getFilteredVideosList,
-    updateBackgroundHashingProgress,
+    onLocationsRemoved: (locIds) => {
+      handleLocationsRemoved(locIds, updateBackgroundHashingProgress);
+    },
     confirm: (msg) => confirm(msg)
   });
 }
@@ -1059,7 +1062,6 @@ function renderLibrary() {
           mediaAssetId: v.id,
           currentVideoId: state.currentVideoId,
           videoFilesMap: state.videoFilesMap,
-          bgHashState,
           onRevoke: () => {
             revokeActiveBlobUrl();
             state.activeVideoFile = null;
@@ -1067,7 +1069,9 @@ function renderLibrary() {
           showToast,
           handleBackToLibrary,
           renderLibrary,
-          updateBackgroundHashingProgress,
+          onLocationsRemoved: (locIds) => {
+            handleLocationsRemoved(locIds, updateBackgroundHashingProgress);
+          },
           confirm: (msg) => confirm(msg)
         });
       });
@@ -1095,7 +1099,6 @@ function renderLibrary() {
           mediaAssetId: v.id,
           currentVideoId: state.currentVideoId,
           videoFilesMap: state.videoFilesMap,
-          bgHashState,
           onRevoke: () => {
             revokeActiveBlobUrl();
             state.activeVideoFile = null;
@@ -1103,7 +1106,9 @@ function renderLibrary() {
           showToast,
           handleBackToLibrary,
           renderLibrary,
-          updateBackgroundHashingProgress,
+          onLocationsRemoved: (locIds) => {
+            handleLocationsRemoved(locIds, updateBackgroundHashingProgress);
+          },
           confirm: (msg) => confirm(msg)
         });
       });
@@ -1292,11 +1297,12 @@ function renderLocationsListInEditor(video) {
         locId: loc.id,
         videoId: video.id,
         relativePath: loc.relativePath,
-        bgHashState,
         showToast,
         handleBackToLibrary,
         renderLocationsListInEditor,
-        updateBackgroundHashingProgress,
+        onLocationsRemoved: (locIds) => {
+          handleLocationsRemoved(locIds, updateBackgroundHashingProgress);
+        },
         confirm: (msg) => confirm(msg)
       });
     });

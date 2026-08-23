@@ -5,12 +5,11 @@ export async function archiveVideoAction({
   mediaAssetId,
   currentVideoId,
   videoFilesMap,
-  bgHashState,
   onRevoke,
   showToast,
   handleBackToLibrary,
   renderLibrary,
-  updateBackgroundHashingProgress,
+  onLocationsRemoved,
   confirm
 }) {
   const asset = db.mediaAssets.find(a => a.id === mediaAssetId);
@@ -18,13 +17,13 @@ export async function archiveVideoAction({
 
   const displayTitle = asset.displayTitle || asset.title;
   const confirmMsg = `一覧からこの動画を削除します。評価データは保持され、再スキャン時に復元可能です。実際の動画ファイルは削除されません。\n\n動画: 「${displayTitle}」\n本当に削除しますか？`;
-  
+
   if (confirm(confirmMsg)) {
     try {
       if (currentVideoId === mediaAssetId) {
         onRevoke();
       }
-      
+
       const locsToDelete = db.fileLocations.filter(l => l.mediaAssetId === mediaAssetId);
       const locIds = locsToDelete.map(l => l.id);
 
@@ -33,13 +32,9 @@ export async function archiveVideoAction({
         videoFilesMap.delete(mediaAssetId);
         showToast('動画をアーカイブ削除しました。');
 
-        for (const id of locIds) {
-          bgHashState.targetKeys.delete(id);
-          bgHashState.completedKeys.delete(id);
-          bgHashState.failedKeys.delete(id);
-          bgHashState.skippedKeys.delete(id);
+        if (onLocationsRemoved) {
+          onLocationsRemoved(locIds);
         }
-        updateBackgroundHashingProgress(true);
 
         const currentVideoStillExists = db.getVideo(currentVideoId);
         if (currentVideoId && !currentVideoStillExists) {
@@ -61,12 +56,11 @@ export async function deleteVideoCascadeAction({
   mediaAssetId,
   currentVideoId,
   videoFilesMap,
-  bgHashState,
   onRevoke,
   showToast,
   handleBackToLibrary,
   renderLibrary,
-  updateBackgroundHashingProgress,
+  onLocationsRemoved,
   confirm
 }) {
   const asset = db.mediaAssets.find(a => a.id === mediaAssetId);
@@ -74,7 +68,7 @@ export async function deleteVideoCascadeAction({
 
   const displayTitle = asset.displayTitle || asset.title;
   const confirmMsg = `完全に削除します。\n評価・タグ・コメント・タイムラインメモも削除され、再スキャンしても復元できません。実際の動画ファイルは削除されません。\n\n動画: 「${displayTitle}」\n本当に完全に削除しますか？`;
-  
+
   if (confirm(confirmMsg)) {
     try {
       if (currentVideoId === mediaAssetId) {
@@ -89,13 +83,9 @@ export async function deleteVideoCascadeAction({
         videoFilesMap.delete(mediaAssetId);
         showToast('データベースから完全に削除しました。');
 
-        for (const id of locIds) {
-          bgHashState.targetKeys.delete(id);
-          bgHashState.completedKeys.delete(id);
-          bgHashState.failedKeys.delete(id);
-          bgHashState.skippedKeys.delete(id);
+        if (onLocationsRemoved) {
+          onLocationsRemoved(locIds);
         }
-        updateBackgroundHashingProgress(true);
 
         const currentVideoStillExists = db.getVideo(currentVideoId);
         if (currentVideoId && !currentVideoStillExists) {
@@ -117,26 +107,23 @@ export async function deleteFileLocationAction({
   locId,
   videoId,
   relativePath,
-  bgHashState,
   showToast,
   handleBackToLibrary,
   renderLocationsListInEditor,
-  updateBackgroundHashingProgress,
+  onLocationsRemoved,
   confirm
 }) {
   const confirmMsg = `このロケーション登録を削除しますか？\n他のロケーション、アセット、評価データは削除しないでおきます。\n\nパス: ${relativePath}`;
-  
+
   if (confirm(confirmMsg)) {
     try {
       const success = await db.deleteFileLocation(locId);
       if (success) {
         showToast('ロケーション登録を削除しました。');
 
-        bgHashState.targetKeys.delete(locId);
-        bgHashState.completedKeys.delete(locId);
-        bgHashState.failedKeys.delete(locId);
-        bgHashState.skippedKeys.delete(locId);
-        updateBackgroundHashingProgress(true);
+        if (onLocationsRemoved) {
+          onLocationsRemoved([locId]);
+        }
 
         const updatedVideo = db.getVideo(videoId);
         if (!updatedVideo || !updatedVideo.locations || updatedVideo.locations.length === 0) {
@@ -155,13 +142,12 @@ export async function handleBulkDeleteAction({
   db,
   currentVideoId,
   videoFilesMap,
-  bgHashState,
   onRevoke,
   showToast,
   handleBackToLibrary,
   renderLibrary,
   getFilteredVideosList,
-  updateBackgroundHashingProgress,
+  onLocationsRemoved,
   confirm
 }) {
   const filteredVideos = getFilteredVideosList();
@@ -172,6 +158,7 @@ export async function handleBulkDeleteAction({
 
   let successCount = 0;
   let failCount = 0;
+  const allDeletedLocIds = [];
 
   for (const v of filteredVideos) {
     try {
@@ -186,13 +173,7 @@ export async function handleBulkDeleteAction({
       if (success) {
         videoFilesMap.delete(v.id);
         successCount++;
-
-        for (const id of locIds) {
-          bgHashState.targetKeys.delete(id);
-          bgHashState.completedKeys.delete(id);
-          bgHashState.failedKeys.delete(id);
-          bgHashState.skippedKeys.delete(id);
-        }
+        allDeletedLocIds.push(...locIds);
       } else {
         failCount++;
       }
@@ -207,7 +188,9 @@ export async function handleBulkDeleteAction({
     showToast(`${failCount}本の動画の削除に失敗しました。`, 'error');
   }
 
-  updateBackgroundHashingProgress(true);
+  if (allDeletedLocIds.length > 0 && onLocationsRemoved) {
+    onLocationsRemoved(allDeletedLocIds);
+  }
 
   const currentVideoStillExists = db.getVideo(currentVideoId);
   if (currentVideoId && !currentVideoStillExists) {

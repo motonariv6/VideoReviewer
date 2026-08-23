@@ -232,3 +232,16 @@ export async function processBackgroundHashingQueue({
 
   onProgressChange(true);
 }
+
+export function handleLocationsRemoved(locationIds, updateProgressFn) {
+  const ids = Array.isArray(locationIds) ? locationIds : [locationIds];
+  for (const id of ids) {
+    bgHashState.targetKeys.delete(id);
+    bgHashState.completedKeys.delete(id);
+    bgHashState.failedKeys.delete(id);
+    bgHashState.skippedKeys.delete(id);
+  }
+  if (updateProgressFn) {
+    updateProgressFn(true);
+  }
+}

@@ -1,5 +1,12 @@
 import { AppDatabase } from '../db.js';
 import { MemoryStorage, MockFileSystemFileHandle, MockFileSystemDirectoryHandle } from '../tests.js';
+import {
+  archiveVideoAction,
+  deleteVideoCascadeAction,
+  deleteFileLocationAction,
+  handleBulkDeleteAction
+} from '../archive/archive-management-controller.js';
+import { bgHashState, handleLocationsRemoved } from '../hashing/hash-verification-controller.js';
 
 export async function runArchiveManagementTests(runTest, assert) {
   console.group('Group 12: Video Archiving, Rescanning, and Location Deletion');
@@ -82,7 +89,7 @@ export async function runArchiveManagementTests(runTest, assert) {
     // Assert reviews and ratings are cascaded
     assert(testDb.getReviewForVideo(vidA.id) === undefined, 'Review for Video A must be removed');
     assert(testDb.getReviewForVideo(vidB.id) !== undefined, 'Review for Video B must remain');
-    
+
     // Video A criterion ratings must be 0
     assert(testDb.criterionRatings.some(cr => cr.videoReviewId === revA.id) === false, 'Criterion ratings for Review A must be removed');
     // Video B criterion ratings must remain
@@ -282,8 +289,98 @@ export async function runArchiveManagementTests(runTest, assert) {
       overallGrade: 'B'
     });
 
-    const success = await testDb.deleteVideoCascade(asset.id);
-    assert(success === true, 'deleteVideoCascade returns true');
+    testDb.fileLocations = [];
+    await testDb._saveTable('file_locations', []);
+
+    // 1. Verify Archive Controller does not receive bgHashState and updateBackgroundHashingProgress
+    // Mock the callback target state
+    const mockBgHashState = {
+      targetKeys: new Set(['loc-1', 'loc-2']),
+      completedKeys: new Set(['loc-1']),
+      failedKeys: new Set(),
+      skippedKeys: new Set()
+    };
+
+    let removedIds = [];
+    let progressUpdateCount = 0;
+
+    const mockUpdateProgress = (force) => {
+      progressUpdateCount++;
+    };
+
+    const testHandleLocationsRemoved = (ids) => {
+      for (const id of ids) {
+        mockBgHashState.targetKeys.delete(id);
+        mockBgHashState.completedKeys.delete(id);
+        mockBgHashState.failedKeys.delete(id);
+        mockBgHashState.skippedKeys.delete(id);
+      }
+      mockUpdateProgress(true);
+    };
+
+    // Seed file locations for asset
+    const loc1 = {
+      id: 'loc-1',
+      mediaAssetId: asset.id,
+      directoryId: 'dir-1',
+      relativePath: 'perm.mp4',
+      fileName: 'perm.mp4',
+      fileSize: 100,
+      lastModified: 3000,
+      availabilityStatus: 'available',
+      verificationStatus: 'verified',
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    };
+    testDb.fileLocations.push(loc1);
+    await testDb._saveTable('file_locations', testDb.fileLocations);
+
+    let callbackCalled = false;
+    let callbackArgs = null;
+
+    // Call controller action WITHOUT bgHashState or updateBackgroundHashingProgress parameters
+    await deleteVideoCascadeAction({
+      db: testDb,
+      mediaAssetId: asset.id,
+      currentVideoId: asset.id,
+      videoFilesMap: new Map([[asset.id, {}]]),
+      onRevoke: () => {},
+      showToast: () => {},
+      handleBackToLibrary: () => {},
+      renderLibrary: () => {},
+      onLocationsRemoved: (ids) => {
+        callbackCalled = true;
+        callbackArgs = ids;
+        testHandleLocationsRemoved(ids);
+      },
+      confirm: () => true
+    });
+
+    assert(callbackCalled === true, 'onLocationsRemoved callback must be called');
+    assert(callbackArgs.length === 1 && callbackArgs[0] === 'loc-1', 'Correct location ID must be passed');
+    assert(!mockBgHashState.targetKeys.has('loc-1'), 'Deleted location must be removed from targetKeys');
+    assert(mockBgHashState.targetKeys.has('loc-2'), 'Other locations must remain in targetKeys');
+    assert(progressUpdateCount === 1, 'updateBackgroundHashingProgress must be called exactly once');
+
+    // Test calling handleLocationsRemoved multiple times with same ID does not break state
+    testHandleLocationsRemoved(['loc-1']);
+    assert(mockBgHashState.targetKeys.size === 1, 'State remains consistent on repeat notifications');
+
+    // Verify the real handleLocationsRemoved API function works directly on imported bgHashState
+    bgHashState.targetKeys.clear();
+    bgHashState.completedKeys.clear();
+    bgHashState.targetKeys.add('test-loc-a');
+    bgHashState.targetKeys.add('test-loc-b');
+    bgHashState.completedKeys.add('test-loc-a');
+
+    let realUIUpdateCalled = false;
+    handleLocationsRemoved(['test-loc-a'], (force) => {
+      realUIUpdateCalled = force;
+    });
+
+    assert(!bgHashState.targetKeys.has('test-loc-a'), 'Real handleLocationsRemoved cleans targetKeys');
+    assert(bgHashState.targetKeys.has('test-loc-b'), 'Real handleLocationsRemoved preserves others');
+    assert(realUIUpdateCalled === true, 'Real handleLocationsRemoved triggers progress updater');
 
     const freshAsset = testDb.mediaAssets.find(a => a.id === asset.id);
     assert(!freshAsset, 'Asset completely removed from DB');
@@ -310,6 +407,9 @@ export async function runArchiveManagementTests(runTest, assert) {
     await testDb.saveReview(asset.id, {
       overallGrade: 'S'
     });
+
+    testDb.fileLocations = [];
+    await testDb._saveTable('file_locations', []);
 
     const loc1 = {
       id: 'loc-1',
@@ -339,14 +439,71 @@ export async function runArchiveManagementTests(runTest, assert) {
     };
     testDb.fileLocations.push(loc1, loc2);
 
-    const success = await testDb.deleteFileLocation('loc-1');
-    assert(success === true, 'deleteFileLocation returns true');
+    let callbackIds = [];
+    await deleteFileLocationAction({
+      db: testDb,
+      locId: 'loc-1',
+      videoId: asset.id,
+      relativePath: 'path1.mp4',
+      showToast: () => {},
+      handleBackToLibrary: () => {},
+      renderLocationsListInEditor: () => {},
+      onLocationsRemoved: (ids) => {
+        callbackIds.push(...ids);
+      },
+      confirm: () => true
+    });
+
+    assert(callbackIds.length === 1 && callbackIds[0] === 'loc-1', 'deleteFileLocationAction notifies correct ID');
 
     assert(!testDb.fileLocations.some(l => l.id === 'loc-1'), 'loc-1 is deleted');
     assert(testDb.fileLocations.some(l => l.id === 'loc-2'), 'loc-2 remains');
 
     const freshReview = testDb.reviews.find(r => r.mediaAssetId === asset.id);
     assert(freshReview && freshReview.overallGrade === 'S', 'Evaluations remain intact');
+
+    // Test handleBulkDeleteAction with multiple location notifications
+    const mockBgHashState = {
+      targetKeys: new Set(['loc-2', 'loc-other']),
+      completedKeys: new Set(),
+      failedKeys: new Set(),
+      skippedKeys: new Set()
+    };
+
+    let bulkRemovedIds = [];
+    const testHandleLocationsRemoved = (ids, updateProgressFn) => {
+      for (const id of ids) {
+        mockBgHashState.targetKeys.delete(id);
+      }
+      bulkRemovedIds.push(...ids);
+      if (updateProgressFn) updateProgressFn(true);
+    };
+
+    let progressUpdateCount = 0;
+    const mockUpdateProgress = () => { progressUpdateCount++; };
+
+    const video = testDb.getVideo(asset.id);
+    video.availabilityStatus = 'missing';
+
+    await handleBulkDeleteAction({
+      db: testDb,
+      currentVideoId: asset.id,
+      videoFilesMap: new Map([[asset.id, {}]]),
+      onRevoke: () => {},
+      showToast: () => {},
+      handleBackToLibrary: () => {},
+      renderLibrary: () => {},
+      getFilteredVideosList: () => [video],
+      onLocationsRemoved: (ids) => {
+        testHandleLocationsRemoved(ids, mockUpdateProgress);
+      },
+      confirm: () => true
+    });
+
+    assert(bulkRemovedIds.length === 1 && bulkRemovedIds[0] === 'loc-2', 'Bulk delete notifies loc-2');
+    assert(!mockBgHashState.targetKeys.has('loc-2'), 'loc-2 removed from targetKeys');
+    assert(mockBgHashState.targetKeys.has('loc-other'), 'Other progress states maintained');
+    assert(progressUpdateCount === 1, 'Progress updater triggered');
   });
 
   console.groupEnd(); // Group 12
