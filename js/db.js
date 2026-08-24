@@ -4,6 +4,7 @@
  */
 
 import { base64ToBlob, normalizePath } from './video-helper.js';
+import { normalizeTag } from './review-sharing/review-share-model.js';
 
 // Helper to generate unique IDs
 function generateUUID() {
@@ -11,6 +12,17 @@ function generateUUID() {
     return crypto.randomUUID();
   }
   return 'id-' + Date.now().toString(36) + '-' + Math.random().toString(36).substr(2, 9);
+}
+
+function generateUUIDv4() {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+    const r = Math.random() * 16 | 0;
+    const v = c === 'x' ? r : (r & 0x3 | 0x8);
+    return v.toString(16);
+  });
 }
 
 // Normalizes displayTitle: null/undefined/blank becomes null, non-empty string is trimmed.
@@ -384,7 +396,7 @@ export class AppDatabase {
     const versionKey = `${this.prefix}schema_version`;
     const currentVersion = this.storage.getItem(versionKey);
 
-    if (currentVersion === '2' || currentVersion === '3') {
+    if (currentVersion === '2' || currentVersion === '3' || currentVersion === '4') {
       return;
     }
 
@@ -560,7 +572,7 @@ export class AppDatabase {
     const versionKey = `${this.prefix}schema_version`;
     const currentVersion = this.storage.getItem(versionKey);
 
-    if (currentVersion === '3') {
+    if (currentVersion === '3' || currentVersion === '4') {
       return;
     }
 
@@ -2589,6 +2601,170 @@ export class AppDatabase {
     return await this.idb.getAll('handles');
   }
 
+  // --- SHARED REVIEW OPERATIONS ---
+
+  getImportedReviewers() {
+    return this.reviewers.filter(r => !r.isLocal);
+  }
+
+  getPendingSharedReviews() {
+    return this.pendingSharedReviews;
+  }
+
+  addPendingSharedReview(pendingRecord) {
+    const exists = this.pendingSharedReviews.some(p =>
+      p.videoHash === pendingRecord.videoHash &&
+      p.payload.reviewId === pendingRecord.payload.reviewId &&
+      p.payload.reviewerId === pendingRecord.payload.reviewerId
+    );
+    if (exists) return;
+
+    this.pendingSharedReviews.push(pendingRecord);
+    this._saveTable('pending_shared_reviews', this.pendingSharedReviews);
+  }
+
+  findVideoByContentHash(contentHash) {
+    if (!contentHash) return null;
+    const lowerHash = contentHash.toLowerCase();
+    return this.mediaAssets.find(v => v.contentHash && v.contentHash.toLowerCase() === lowerHash) || null;
+  }
+
+  hasPendingSharedReview(videoHash, reviewId, reviewerId) {
+    if (!videoHash) return false;
+    const lowerHash = videoHash.toLowerCase();
+    return this.pendingSharedReviews.some(p =>
+      p.videoHash === lowerHash &&
+      p.payload.reviewId === reviewId &&
+      p.payload.reviewerId === reviewerId
+    );
+  }
+
+  getOrCreateTag(tagName) {
+    if (!tagName) return null;
+    const normalized = normalizeTag(tagName);
+    let dbTag = this.tags.find(t => normalizeTag(t.name) === normalized);
+    if (!dbTag) {
+      const newTagId = 'tag-' + generateUUIDv4();
+      dbTag = {
+        id: newTagId,
+        name: tagName
+      };
+      this.tags.push(dbTag);
+      this._saveTable('tags', this.tags);
+    }
+    return dbTag;
+  }
+
+  findReviewerBySourceId(sourceReviewerId) {
+    return this.reviewers.find(r => r.sourceReviewerId === sourceReviewerId) || null;
+  }
+
+  findReviewBySourceId(sourceReviewId, sourceReviewerId) {
+    return this.reviews.find(r => r.sourceReviewId === sourceReviewId && r.sourceReviewerId === sourceReviewerId) || null;
+  }
+
+  addImportedReviewer({ displayName, sourceReviewerId }) {
+    const now = new Date().toISOString();
+    const reviewer = {
+      id: 'reviewer-' + generateUUIDv4(), // Always generate local UUIDv4
+      displayName,
+      isLocal: false,
+      sourceReviewerId,
+      createdAt: now,
+      updatedAt: now
+    };
+    this.reviewers.push(reviewer);
+    this._saveTable('reviewers', this.reviewers);
+    return reviewer;
+  }
+
+  addImportedReview({ mediaAssetId, reviewerId, overallScore, comment, sourceReviewId, sourceReviewerId }) {
+    const now = new Date().toISOString();
+    const review = {
+      id: 'rev-' + generateUUIDv4(), // Always generate local UUIDv4
+      mediaAssetId,
+      reviewerId,
+      origin: 'imported',
+      overallScore,
+      comment: comment || '',
+      sourceReviewId,
+      sourceReviewerId,
+      createdAt: now,
+      updatedAt: now
+    };
+    this.reviews.push(review);
+    this._saveTable('video_reviews', this.reviews);
+    return review;
+  }
+
+  addImportedTagAssociation({ videoReviewId, tagId }) {
+    const now = new Date().toISOString();
+    const exists = this.reviewTags.some(rt => rt.videoReviewId === videoReviewId && rt.tagId === tagId);
+    if (exists) return null;
+
+    const rt = {
+      id: 'review-tag-' + generateUUID(),
+      videoReviewId,
+      tagId,
+      createdAt: now
+    };
+    this.reviewTags.push(rt);
+    this._saveTable('review_tags', this.reviewTags);
+    return rt;
+  }
+
+  addImportedTimelineNote({ videoReviewId, mediaAssetId, timestampSeconds, timestampLabel, comment, sourceCommentId }) {
+    const now = new Date().toISOString();
+    if (sourceCommentId) {
+      const exists = this.timelineNotes.some(n => n.videoReviewId === videoReviewId && n.sourceCommentId === sourceCommentId);
+      if (exists) return null;
+    }
+
+    const note = {
+      id: 'note-' + generateUUID(),
+      videoReviewId,
+      mediaAssetId,
+      timestampSeconds: parseFloat(timestampSeconds),
+      timestampLabel: timestampLabel || '00:00',
+      comment: comment || '',
+      thumbnailUrl: '',
+      thumbnailId: '',
+      sourceCommentId,
+      createdAt: now,
+      updatedAt: now
+    };
+    this.timelineNotes.push(note);
+    this._saveTable('timeline_notes', this.timelineNotes);
+    return note;
+  }
+
+  createTransactionSnapshot() {
+    return {
+      reviews: JSON.parse(JSON.stringify(this.reviews || [])),
+      timelineNotes: JSON.parse(JSON.stringify(this.timelineNotes || [])),
+      reviewers: JSON.parse(JSON.stringify(this.reviewers || [])),
+      reviewTags: JSON.parse(JSON.stringify(this.reviewTags || [])),
+      pendingSharedReviews: JSON.parse(JSON.stringify(this.pendingSharedReviews || [])),
+      tags: JSON.parse(JSON.stringify(this.tags || []))
+    };
+  }
+
+  rollbackTransactionSnapshot(snapshot) {
+    this.reviews = snapshot.reviews;
+    this.timelineNotes = snapshot.timelineNotes;
+    this.reviewers = snapshot.reviewers;
+    this.reviewTags = snapshot.reviewTags;
+    this.pendingSharedReviews = snapshot.pendingSharedReviews;
+    this.tags = snapshot.tags;
+
+    this._saveTable('video_reviews', this.reviews);
+    this._saveTable('timeline_notes', this.timelineNotes);
+    this._saveTable('reviewers', this.reviewers);
+    this._saveTable('review_tags', this.reviewTags);
+    this._saveTable('pending_shared_reviews', this.pendingSharedReviews);
+    this._saveTable('tags', this.tags);
+  }
+
   _saveAll() {
     const prevAllow = this._allowSaveDuringRestore;
     this._allowSaveDuringRestore = true;
@@ -3810,6 +3986,7 @@ export const BACKUP_SCHEMA_V4 = {
           "id": { "type": "string", "pattern": "^reviewer-[a-zA-Z0-9-]{8,64}$" },
           "displayName": { "type": "string", "minLength": 1 },
           "isLocal": { "type": "boolean" },
+          "sourceReviewerId": { "type": "string" },
           "createdAt": { "type": "string" },
           "updatedAt": { "type": "string" }
         }
@@ -3919,6 +4096,8 @@ export const BACKUP_SCHEMA_V4 = {
           "origin": { "type": "string", "enum": ["local", "imported"] },
           "overallScore": { "type": ["integer", "null"], "minimum": 1, "maximum": 5 },
           "comment": { "type": "string" },
+          "sourceReviewId": { "type": "string" },
+          "sourceReviewerId": { "type": "string" },
           "createdAt": { "type": "string" },
           "updatedAt": { "type": "string" }
         }
@@ -3982,6 +4161,7 @@ export const BACKUP_SCHEMA_V4 = {
           "timestampLabel": { "type": "string" },
           "comment": { "type": "string" },
           "thumbnailId": { "type": "string" },
+          "sourceCommentId": { "type": "string" },
           "createdAt": { "type": "string" }
         }
       }

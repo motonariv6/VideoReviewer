@@ -45,14 +45,32 @@
           <h2>動画ライブラリ</h2>
           <p style="color:var(--color-text-muted);font-size:0.875rem;margin-top:4px">登録動画の再生と評価データ管理を行います</p>
         </div>
-        <div style="display:flex;gap:12px">
-          <!-- Local Video File Input Form Trigger -->
-          <label class="btn btn-primary" style="cursor:pointer">
-            <input type="file" id="library-add-file" accept="video/*" style="display:none">
-            <svg xmlns="http://www.w3.org/2000/svg" style="width:16px;height:16px" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" />
-            </svg>
-            ローカル動画を追加
+        <div style="display:flex;gap:12px;align-items:center">
+          <!-- Standard Library Actions -->
+          <div id="library-standard-actions" style="display:flex;gap:12px">
+            <label class="btn btn-primary" style="cursor:pointer;margin:0">
+              <input type="file" id="library-add-file" accept="video/*" style="display:none">
+              <svg xmlns="http://www.w3.org/2000/svg" style="width:16px;height:16px" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" />
+              </svg>
+              ローカル動画を追加
+            </label>
+            <button id="btn-share-export-start" class="btn btn-secondary">
+              レビュー共有 / Export
+            </button>
+            <button id="btn-share-import-trigger" class="btn btn-secondary">
+              レビューをImport
+            </button>
+          </div>
+
+          <!-- Share Export Mode Actions -->
+          <div id="library-export-actions" class="hidden" style="display:flex;gap:12px;align-items:center">
+            <span style="font-size:0.875rem;font-weight:600">エクスポート対象を選択中: <span id="export-selected-count">0</span> 件</span>
+            <button id="btn-share-export-select-all" class="btn btn-secondary" style="padding: 6px 12px; font-size: 0.8125rem">全選択</button>
+            <button id="btn-share-export-deselect-all" class="btn btn-secondary" style="padding: 6px 12px; font-size: 0.8125rem">全解除</button>
+            <button id="btn-share-export-submit" class="btn btn-primary" style="padding: 6px 12px; font-size: 0.8125rem">Export実行</button>
+            <button id="btn-share-export-cancel" class="btn btn-secondary" style="padding: 6px 12px; font-size: 0.8125rem">キャンセル</button>
+          </div>
         </div>
       </div>
 
@@ -567,6 +585,52 @@
   </div>
 
 
+
+  <!-- Share Import Preview Modal -->
+  <div id="modal-share-import-preview" class="modal-overlay">
+    <div class="modal-container glass-panel" style="max-width: 800px; width: 90%; display: flex; flex-direction: column; max-height: 85vh;">
+      <div class="modal-header" style="padding: 16px; border-bottom: 1px solid var(--color-border); display: flex; justify-content: space-between; align-items: center;">
+        <h3 style="margin: 0;">共有レビューのインポート確認</h3>
+        <button id="share-import-preview-close-x" class="btn btn-icon" style="width:32px;height:32px">
+          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" /></svg>
+        </button>
+      </div>
+      <div class="modal-body" style="padding: 16px; overflow-y: auto; flex: 1;">
+        <div class="import-meta-info" style="margin-bottom: 16px; padding: 12px; background: rgba(255,255,255,0.05); border-radius: 6px;">
+          <div><strong>送信元レビュアー:</strong> <span id="import-exporter-name">-</span></div>
+          <div style="margin-top: 4px;"><strong>作成日時:</strong> <span id="import-exported-at">-</span></div>
+        </div>
+
+        <h4 style="margin: 0 0 8px;">インポート対象の選択</h4>
+        <div style="margin-bottom: 8px; display: flex; gap: 8px;">
+          <button id="btn-share-import-select-all" class="btn btn-secondary" style="padding: 4px 10px; font-size: 0.75rem;">全選択</button>
+          <button id="btn-share-import-deselect-all" class="btn btn-secondary" style="padding: 4px 10px; font-size: 0.75rem;">全解除</button>
+        </div>
+
+        <div style="border: 1px solid var(--color-border); border-radius: 6px; overflow: hidden;">
+          <table style="width: 100%; border-collapse: collapse; text-align: left; font-size: 0.875rem;">
+            <thead>
+              <tr style="background: rgba(255,255,255,0.05); border-bottom: 1px solid var(--color-border);">
+                <th style="padding: 10px; width: 40px; text-align: center;">選択</th>
+                <th style="padding: 10px;">動画タイトル / ハッシュ</th>
+                <th style="padding: 10px; width: 120px;">状態</th>
+                <th style="padding: 10px; width: 80px; text-align: center;">総合評価</th>
+                <th style="padding: 10px; width: 60px; text-align: center;">タグ</th>
+                <th style="padding: 10px; width: 60px; text-align: center;">メモ</th>
+              </tr>
+            </thead>
+            <tbody id="share-import-preview-list">
+              <!-- Dynamically populated rows -->
+            </tbody>
+          </table>
+        </div>
+      </div>
+      <div class="modal-footer" style="padding: 16px; border-top: 1px solid var(--color-border); display: flex; justify-content: flex-end; gap: 12px;">
+        <button id="btn-share-import-preview-cancel" class="btn btn-secondary" style="padding: 8px 16px;">キャンセル</button>
+        <button id="btn-share-import-preview-submit" class="btn btn-primary" style="padding: 8px 24px;">インポート実行 (<span id="import-preview-selected-count">0</span>件)</button>
+      </div>
+    </div>
+  </div>
 
   <!-- Toast Notification Container -->
   <div id="toast-container" class="toast-container"></div>
