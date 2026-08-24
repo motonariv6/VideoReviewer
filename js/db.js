@@ -5,6 +5,7 @@
 
 import { base64ToBlob, normalizePath } from './video-helper.js';
 import { normalizeTag } from './review-sharing/review-share-model.js';
+import { resolvePendingSharedReviewsForVideo } from './review-sharing/pending-shared-review-resolver.js';
 
 // Helper to generate unique IDs
 function generateUUID() {
@@ -1437,6 +1438,7 @@ export class AppDatabase {
         const mergeResult = await this.mergeMediaAssets(existingAsset.id, video.id);
         loc.verificationStatus = 'verified';
         this._saveTable('file_locations', this.fileLocations);
+        resolvePendingSharedReviewsForVideo({ db: this, mediaAssetId: existingAsset.id, contentHash: scannedHash });
         return { status: 'success', merged: true, targetAssetId: existingAsset.id };
       } else {
         // No verified asset has this hash. Make this asset the canonical one!
@@ -1448,6 +1450,7 @@ export class AppDatabase {
 
         loc.verificationStatus = 'verified';
         this._saveTable('file_locations', this.fileLocations);
+        resolvePendingSharedReviewsForVideo({ db: this, mediaAssetId: video.id, contentHash: scannedHash });
         return { status: 'success', merged: false, assetId: video.id };
       }
     } else {
@@ -1456,6 +1459,7 @@ export class AppDatabase {
         // The provisional match was correct!
         loc.verificationStatus = 'verified';
         this._saveTable('file_locations', this.fileLocations);
+        resolvePendingSharedReviewsForVideo({ db: this, mediaAssetId: video.id, contentHash: scannedHash });
         return { status: 'success', merged: false, assetId: video.id };
       } else {
         // The provisional match was incorrect! (Full hash mismatch)
@@ -1498,6 +1502,7 @@ export class AppDatabase {
           this._saveTable('media_assets', this.mediaAssets);
         }
 
+        resolvePendingSharedReviewsForVideo({ db: this, mediaAssetId: targetAsset.id, contentHash: scannedHash });
         return { status: 'separated', newAssetId: targetAsset.id };
       }
     }
@@ -1590,6 +1595,7 @@ export class AppDatabase {
           this._saveTable('file_locations', this.fileLocations);
         }
       }
+      resolvePendingSharedReviewsForVideo({ db: this, mediaAssetId: matchedAsset.id, contentHash: scannedHash });
       return { status: 'merged', assetId: matchedAsset.id };
     } else {
       // Create new mediaAsset with completed hash
@@ -1655,6 +1661,7 @@ export class AppDatabase {
           existingLoc.updatedAt = new Date().toISOString();
           this._saveTable('file_locations', this.fileLocations);
         }
+        resolvePendingSharedReviewsForVideo({ db: this, mediaAssetId: existingAsset.id, contentHash: existingAsset.contentHash });
         return this._buildVirtualVideo(existingAsset);
       }
     }
@@ -1683,6 +1690,7 @@ export class AppDatabase {
         this.fileLocations.push(newLoc);
         this._saveTable('file_locations', this.fileLocations);
       }
+      resolvePendingSharedReviewsForVideo({ db: this, mediaAssetId: existingAsset.id, contentHash: existingAsset.contentHash });
       return this._buildVirtualVideo(existingAsset);
     }
 
@@ -1738,6 +1746,10 @@ export class AppDatabase {
 
     this._saveTable('media_assets', this.mediaAssets);
     this._saveTable('file_locations', this.fileLocations);
+
+    if (asset.hashStatus === 'completed') {
+      resolvePendingSharedReviewsForVideo({ db: this, mediaAssetId: asset.id, contentHash: asset.contentHash });
+    }
 
     return this._buildVirtualVideo(asset);
   }
@@ -2631,6 +2643,16 @@ export class AppDatabase {
 
     this.pendingSharedReviews.push(pendingRecord);
     this._saveTable('pending_shared_reviews', this.pendingSharedReviews);
+  }
+
+  removePendingSharedReview(id) {
+    const initialLength = this.pendingSharedReviews.length;
+    this.pendingSharedReviews = this.pendingSharedReviews.filter(p => p.id !== id);
+    if (this.pendingSharedReviews.length !== initialLength) {
+      this._saveTable('pending_shared_reviews', this.pendingSharedReviews);
+      return true;
+    }
+    return false;
   }
 
   findVideoByContentHash(contentHash) {

@@ -607,6 +607,9 @@ function closeModal(modal) {
 
 // Display Toast Notifications (XSS Clean via textContent)
 function showToast(message, type = 'success') {
+  if (typeof window !== 'undefined') {
+    window.showToast = showToast;
+  }
   const toast = document.createElement('div');
   toast.className = `toast toast-${type}`;
 
@@ -710,7 +713,12 @@ export async function processBackgroundHashingQueue() {
     computeHashFn: computeFileSHA256,
     logMetricFn: logMetric,
     onProgressChange: (force) => updateBackgroundHashingProgress(force),
-    onLibraryRender: () => renderLibrary(),
+    onLibraryRender: () => {
+      renderLibrary();
+      if (state.currentView === 'editor' && state.currentVideoId) {
+        reviewEditorController.renderSharedReviews();
+      }
+    },
     onNewBatch: () => clearCloseTimeout()
   });
 }
