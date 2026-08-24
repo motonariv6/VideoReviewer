@@ -11,6 +11,7 @@ import { runReviewEditorTests } from './tests/review-editor.tests.js';
 import { runMultiReviewSchemaTests } from './tests/multi-review-schema.tests.js';
 import { runReviewShareSchemaTests } from './tests/review-share-schema.tests.js';
 import { runReviewShareImportExportTests } from './tests/review-share-import-export.tests.js';
+import { runReviewShareAggregateUITests } from './tests/review-share-aggregate-ui.tests.js';
 
 export const VALID_HASH_A = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
 export const VALID_HASH_B = 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
@@ -2268,6 +2269,12 @@ export async function runTests(groupFilter = null) {
   if (runAll || groupFilter === 'review-share-import-export') {
     const shareImportExportResults = await runReviewShareImportExportTests();
     results.push(...shareImportExportResults);
+  }
+
+  // --- GROUP 20: SHARED REVIEW AGGREGATION & VIEW MODEL UI TESTS ---
+  if (runAll || groupFilter === 'review-share-aggregate-ui') {
+    const aggregateUIResults = await runReviewShareAggregateUITests();
+    results.push(...aggregateUIResults);
   }
 
   if (runAll) {

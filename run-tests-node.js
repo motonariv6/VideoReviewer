@@ -176,7 +176,7 @@ async function run() {
     }
   }
 
-  const validGroups = ['hash', 'folder', 'archive', 'review', 'schema', 'review-share-schema', 'review-share-import-export', 'all'];
+  const validGroups = ['hash', 'folder', 'archive', 'review', 'schema', 'review-share-schema', 'review-share-import-export', 'review-share-aggregate-ui', 'all'];
   if (hasInvalidArg || (testGroup !== null && !validGroups.includes(testGroup))) {
     console.error(`
 利用方法 (Usage):
@@ -190,6 +190,7 @@ async function run() {
   - schema                     : Schema v4・複数レビュアー関連テストのみ実行
   - review-share-schema        : 共有レビュー Schema・集約純粋関数・バリデータテストのみ実行
   - review-share-import-export : 選択式レビュー共有のExport/Import関連テストのみ実行
+  - review-share-aggregate-ui  : 複数レビュアーのレビュー集約表示UI関連テストのみ実行
   - all                        : すべてのテストを実行
 
 例 (Examples):
@@ -200,6 +201,7 @@ async function run() {
   node run-tests-node.js --group schema
   node run-tests-node.js --group review-share-schema
   node run-tests-node.js --group review-share-import-export
+  node run-tests-node.js --group review-share-aggregate-ui
   node run-tests-node.js --all
     `);
     process.exitCode = 1;
@@ -432,7 +434,7 @@ Candidates searched:
       process.exitCode = 1;
     } finally {
       await cleanup(process.exitCode === 0 ? 'Success' : 'Failure');
-      
+
       // Diagnostic check for hanging handles
       const activeHandles = process._getActiveHandles ? process._getActiveHandles() : [];
       const activeRequests = process._getActiveRequests ? process._getActiveRequests() : [];

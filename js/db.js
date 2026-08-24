@@ -291,7 +291,7 @@ export class AppDatabase {
     this.reviews = this._loadTable('video_reviews', []);
     this.criterionRatings = this._loadTable('criterion_ratings', []);
     this.tags = this._loadTable('tags', []);
-    
+
     const versionKey = `${this.prefix}schema_version`;
     const currentVersion = this.storage ? this.storage.getItem(versionKey) : null;
     if (!currentVersion || currentVersion !== '4') {
@@ -2311,6 +2311,10 @@ export class AppDatabase {
     return this.reviewers;
   }
 
+  getReviewerById(reviewerId) {
+    return this.reviewers.find(r => r.id === reviewerId) || null;
+  }
+
   getReviewsForVideo(mediaAssetId) {
     return this.reviews.filter(r => r.mediaAssetId === mediaAssetId);
   }
@@ -2319,6 +2323,12 @@ export class AppDatabase {
     const localRev = this.getLocalReviewer();
     if (!localRev) return null;
     return this.reviews.find(r => r.mediaAssetId === mediaAssetId && r.reviewerId === localRev.id) || null;
+  }
+
+  getTimelineNotesForReview(videoReviewId) {
+    return this.timelineNotes
+      .filter(n => n.videoReviewId === videoReviewId)
+      .sort((a, b) => a.timestampSeconds - b.timestampSeconds);
   }
 
   getTagsForReview(videoReviewId) {

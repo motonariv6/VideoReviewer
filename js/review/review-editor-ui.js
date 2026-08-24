@@ -1,4 +1,5 @@
 // review-editor-ui.js - View and rendering logic for Video Review Editor workspace
+import { renderSharedReviewsUI } from '../review-sharing/review-share-aggregate-ui.js';
 
 export class ReviewEditorUI {
   /**
@@ -491,5 +492,28 @@ export class ReviewEditorUI {
     this.els.commentEditor.addEventListener('blur', () => {
       onCommentBlur();
     });
+  }
+
+  setSharedReviewsSectionVisible(visible) {
+    if (visible) {
+      this.els.sharedReviewsSection.classList.remove('hidden');
+    } else {
+      this.els.sharedReviewsSection.classList.add('hidden');
+    }
+  }
+
+  renderSharedReviews(viewModel, onTimeSeekClick) {
+    renderSharedReviewsUI(
+      {
+        sharedAverageRating: this.els.sharedAverageRating,
+        sharedReviewersCount: this.els.sharedReviewersCount,
+        sharedRatedCount: this.els.sharedRatedCount,
+        sharedReviewersList: this.els.sharedReviewersList,
+        sharedTagsList: this.els.sharedTagsList,
+        sharedTimelineList: this.els.sharedTimelineList
+      },
+      viewModel,
+      onTimeSeekClick
+    );
   }
 }
