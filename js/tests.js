@@ -12,6 +12,7 @@ import { runMultiReviewSchemaTests } from './tests/multi-review-schema.tests.js'
 import { runReviewShareSchemaTests } from './tests/review-share-schema.tests.js';
 import { runReviewShareImportExportTests } from './tests/review-share-import-export.tests.js';
 import { runReviewShareAggregateUITests } from './tests/review-share-aggregate-ui.tests.js';
+import { runPendingSharedReviewLinkingTests } from './tests/pending-shared-review-linking.tests.js';
 
 export const VALID_HASH_A = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
 export const VALID_HASH_B = 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
@@ -2275,6 +2276,12 @@ export async function runTests(groupFilter = null) {
   if (runAll || groupFilter === 'review-share-aggregate-ui') {
     const aggregateUIResults = await runReviewShareAggregateUITests();
     results.push(...aggregateUIResults);
+  }
+
+  // --- GROUP 21: PENDING SHARED REVIEW AUTOMATIC LINKING TESTS ---
+  if (runAll || groupFilter === 'pending-shared-review-linking') {
+    const pendingLinkingResults = await runPendingSharedReviewLinkingTests();
+    results.push(...pendingLinkingResults);
   }
 
   if (runAll) {

@@ -5,6 +5,7 @@
 
 import { base64ToBlob, normalizePath } from './video-helper.js';
 import { normalizeTag } from './review-sharing/review-share-model.js';
+import { resolvePendingSharedReviewsForVideo } from './review-sharing/pending-shared-review-resolver.js';
 
 // Helper to generate unique IDs
 function generateUUID() {
@@ -1329,6 +1330,12 @@ export class AppDatabase {
     return this._buildVirtualVideo(asset);
   }
 
+  getMediaAssetById(id) {
+    const asset = this.mediaAssets.find(a => a.id === id);
+    if (!asset) return null;
+    return { ...asset };
+  }
+
   async resolveAndRegisterNewScannedFileProvisional({
     directoryId,
     sf
@@ -1437,7 +1444,8 @@ export class AppDatabase {
         const mergeResult = await this.mergeMediaAssets(existingAsset.id, video.id);
         loc.verificationStatus = 'verified';
         this._saveTable('file_locations', this.fileLocations);
-        return { status: 'success', merged: true, targetAssetId: existingAsset.id };
+        const summary = resolvePendingSharedReviewsForVideo({ db: this, mediaAssetId: existingAsset.id, contentHash: scannedHash });
+        return { status: 'success', merged: true, targetAssetId: existingAsset.id, resolvedPendingSummary: summary };
       } else {
         // No verified asset has this hash. Make this asset the canonical one!
         video.contentHash = scannedHash;
@@ -1448,7 +1456,8 @@ export class AppDatabase {
 
         loc.verificationStatus = 'verified';
         this._saveTable('file_locations', this.fileLocations);
-        return { status: 'success', merged: false, assetId: video.id };
+        const summary = resolvePendingSharedReviewsForVideo({ db: this, mediaAssetId: video.id, contentHash: scannedHash });
+        return { status: 'success', merged: false, assetId: video.id, resolvedPendingSummary: summary };
       }
     } else {
       // Case B: The asset was verified, but this location was provisionally matched to it
@@ -1456,7 +1465,8 @@ export class AppDatabase {
         // The provisional match was correct!
         loc.verificationStatus = 'verified';
         this._saveTable('file_locations', this.fileLocations);
-        return { status: 'success', merged: false, assetId: video.id };
+        const summary = resolvePendingSharedReviewsForVideo({ db: this, mediaAssetId: video.id, contentHash: scannedHash });
+        return { status: 'success', merged: false, assetId: video.id, resolvedPendingSummary: summary };
       } else {
         // The provisional match was incorrect! (Full hash mismatch)
         // We must undo the match and separate this location into a new asset!
@@ -1498,7 +1508,8 @@ export class AppDatabase {
           this._saveTable('media_assets', this.mediaAssets);
         }
 
-        return { status: 'separated', newAssetId: targetAsset.id };
+        const summary = resolvePendingSharedReviewsForVideo({ db: this, mediaAssetId: targetAsset.id, contentHash: scannedHash });
+        return { status: 'separated', newAssetId: targetAsset.id, resolvedPendingSummary: summary };
       }
     }
   }
@@ -1590,7 +1601,8 @@ export class AppDatabase {
           this._saveTable('file_locations', this.fileLocations);
         }
       }
-      return { status: 'merged', assetId: matchedAsset.id };
+      const summary = resolvePendingSharedReviewsForVideo({ db: this, mediaAssetId: matchedAsset.id, contentHash: scannedHash });
+      return { status: 'merged', assetId: matchedAsset.id, resolvedPendingSummary: summary };
     } else {
       // Create new mediaAsset with completed hash
       const newAsset = await this.addVideo({
@@ -1606,7 +1618,7 @@ export class AppDatabase {
         contentHash: scannedHash,
         hashStatus: 'completed'
       });
-      return { status: 'new', assetId: newAsset.id };
+      return { status: 'new', assetId: newAsset.id, resolvedPendingSummary: newAsset.resolvedPendingSummary };
     }
   }
 
@@ -1655,7 +1667,10 @@ export class AppDatabase {
           existingLoc.updatedAt = new Date().toISOString();
           this._saveTable('file_locations', this.fileLocations);
         }
-        return this._buildVirtualVideo(existingAsset);
+        const summary = resolvePendingSharedReviewsForVideo({ db: this, mediaAssetId: existingAsset.id, contentHash: existingAsset.contentHash });
+        const virtualVideo = this._buildVirtualVideo(existingAsset);
+        virtualVideo.resolvedPendingSummary = summary;
+        return virtualVideo;
       }
     }
 
@@ -1683,7 +1698,10 @@ export class AppDatabase {
         this.fileLocations.push(newLoc);
         this._saveTable('file_locations', this.fileLocations);
       }
-      return this._buildVirtualVideo(existingAsset);
+      const summary = resolvePendingSharedReviewsForVideo({ db: this, mediaAssetId: existingAsset.id, contentHash: existingAsset.contentHash });
+      const virtualVideo = this._buildVirtualVideo(existingAsset);
+      virtualVideo.resolvedPendingSummary = summary;
+      return virtualVideo;
     }
 
     // 4. Create new media asset and location
@@ -1739,7 +1757,14 @@ export class AppDatabase {
     this._saveTable('media_assets', this.mediaAssets);
     this._saveTable('file_locations', this.fileLocations);
 
-    return this._buildVirtualVideo(asset);
+    let summary = { resolved: 0, duplicate: 0, failed: 0 };
+    if (asset.hashStatus === 'completed') {
+      summary = resolvePendingSharedReviewsForVideo({ db: this, mediaAssetId: asset.id, contentHash: asset.contentHash });
+    }
+
+    const virtualVideo = this._buildVirtualVideo(asset);
+    virtualVideo.resolvedPendingSummary = summary;
+    return virtualVideo;
   }
 
   async addFileLocation(mediaAssetId, { directoryId, relativePath, fileName, fileSize, lastModified, availabilityStatus }) {
@@ -1936,7 +1961,8 @@ export class AppDatabase {
       if (existingAsset) {
         const mergeResult = await this.mergeMediaAssets(existingAsset.id, video.id);
         if (mergeResult.merged) {
-          return { merged: true, conflict: false, targetAssetId: mergeResult.targetAssetId, sourceAssetId: mergeResult.sourceAssetId };
+          const summary = resolvePendingSharedReviewsForVideo({ db: this, mediaAssetId: existingAsset.id, contentHash: contentHash });
+          return { merged: true, conflict: false, targetAssetId: mergeResult.targetAssetId, sourceAssetId: mergeResult.sourceAssetId, resolvedPendingSummary: summary };
         } else if (mergeResult.conflict) {
           const conflictGroupId = existingAsset.identityConflictGroupId || ('conflict-' + generateUUID());
 
@@ -1959,6 +1985,7 @@ export class AppDatabase {
       }
 
       const currentAsset = this.mediaAssets.find(a => a.id === video.id);
+      let summary = { resolved: 0, duplicate: 0, failed: 0 };
       if (currentAsset) {
         currentAsset.contentHash = contentHash;
         currentAsset.hashStatus = 'completed';
@@ -1966,8 +1993,9 @@ export class AppDatabase {
         currentAsset.identityConflictGroupId = null;
         currentAsset.updatedAt = new Date().toISOString();
         this._saveTable('media_assets', this.mediaAssets);
+        summary = resolvePendingSharedReviewsForVideo({ db: this, mediaAssetId: currentAsset.id, contentHash: currentAsset.contentHash });
       }
-      return { merged: false, conflict: false };
+      return { merged: false, conflict: false, resolvedPendingSummary: summary };
     } catch (err) {
       this.mediaAssets = snapAssets;
       if (this.storage) {
@@ -2631,6 +2659,16 @@ export class AppDatabase {
 
     this.pendingSharedReviews.push(pendingRecord);
     this._saveTable('pending_shared_reviews', this.pendingSharedReviews);
+  }
+
+  removePendingSharedReview(id) {
+    const initialLength = this.pendingSharedReviews.length;
+    this.pendingSharedReviews = this.pendingSharedReviews.filter(p => p.id !== id);
+    if (this.pendingSharedReviews.length !== initialLength) {
+      this._saveTable('pending_shared_reviews', this.pendingSharedReviews);
+      return true;
+    }
+    return false;
   }
 
   findVideoByContentHash(contentHash) {

@@ -710,7 +710,17 @@ export async function processBackgroundHashingQueue() {
     computeHashFn: computeFileSHA256,
     logMetricFn: logMetric,
     onProgressChange: (force) => updateBackgroundHashingProgress(force),
-    onLibraryRender: () => renderLibrary(),
+    onLibraryRender: () => {
+      renderLibrary();
+      if (state.currentView === 'editor' && state.currentVideoId) {
+        reviewEditorController.renderSharedReviews();
+      }
+    },
+    onPendingResolved: (summary, video) => {
+      if (summary && summary.resolved > 0 && video) {
+        showToast(`共有レビュー ${summary.resolved}件を動画「${video.displayTitle || video.title}」に紐付けました`);
+      }
+    },
     onNewBatch: () => clearCloseTimeout()
   });
 }
@@ -1568,6 +1578,9 @@ function handleAddLocalFile(e) {
         } else if (result.conflict) {
           console.log(`Conflict detected for local file contentHash ${hash}. Group ID: ${result.conflictGroupId}`);
         }
+        if (result.resolvedPendingSummary && result.resolvedPendingSummary.resolved > 0) {
+          showToast(`共有レビュー ${result.resolvedPendingSummary.resolved}件を動画「${added.title}」に紐付けました`);
+        }
         renderLibrary();
       }).catch(async err => {
         console.error('Local file hashing failed:', err);
@@ -1608,6 +1621,9 @@ function handleAddLocalFile(e) {
           switchScreenToEditor(result.targetAssetId);
         } else if (result.conflict) {
           console.log(`Conflict detected for local file contentHash ${hash}. Group ID: ${result.conflictGroupId}`);
+        }
+        if (result.resolvedPendingSummary && result.resolvedPendingSummary.resolved > 0) {
+          showToast(`共有レビュー ${result.resolvedPendingSummary.resolved}件を動画「${added.title}」に紐付けました`);
         }
         renderLibrary();
       }).catch(async err => {

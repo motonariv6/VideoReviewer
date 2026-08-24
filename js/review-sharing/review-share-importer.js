@@ -72,54 +72,12 @@ export function importPackage(db, pkg, selectedIndices) {
       const matchedVideo = db.findVideoByContentHash(videoHash);
 
       if (matchedVideo) {
-        // Matched! Register shared review
-        // Resolve/Register Remote Reviewer
-        let dbReviewer = db.findReviewerBySourceId(reviewerId);
-        if (!dbReviewer) {
-          dbReviewer = db.addImportedReviewer({
-            displayName: pkg.exporter.displayName || '共有レビュアー',
-            sourceReviewerId: reviewerId
-          });
-        }
-
-        // Add Video Review
-        const localReview = db.addImportedReview({
-          mediaAssetId: matchedVideo.id,
-          reviewerId: dbReviewer.id,
-          overallScore: review.overallRating,
-          comment: review.comment || '',
-          sourceReviewId: reviewId,
-          sourceReviewerId: reviewerId
+        importSharedReviewItem(db, {
+          videoHash,
+          review,
+          exporterDisplayName: pkg.exporter.displayName,
+          matchedVideo
         });
-        const localReviewId = localReview.id;
-
-        // Map and Associate Tags
-        if (review.tags && review.tags.length > 0) {
-          for (const tObj of review.tags) {
-            const dbTag = db.getOrCreateTag(tObj.tag);
-            if (dbTag) {
-              db.addImportedTagAssociation({
-                videoReviewId: localReviewId,
-                tagId: dbTag.id
-              });
-            }
-          }
-        }
-
-        // Map and Add Timeline Comments
-        if (review.timelineComments && review.timelineComments.length > 0) {
-          for (const tc of review.timelineComments) {
-            db.addImportedTimelineNote({
-              videoReviewId: localReviewId,
-              mediaAssetId: matchedVideo.id,
-              timestampSeconds: tc.time,
-              timestampLabel: formatTime(tc.time),
-              comment: tc.comment,
-              sourceCommentId: tc.id
-            });
-          }
-        }
-
         summary.imported++;
       } else {
         // Unmatched! Add to pending shared reviews
@@ -129,7 +87,10 @@ export function importPackage(db, pkg, selectedIndices) {
           videoHash: videoHash.toLowerCase(),
           hashAlgorithm: 'sha256',
           reviewerId: reviewerId,
-          payload: review,
+          payload: {
+            ...review,
+            exporterDisplayName: pkg.exporter.displayName
+          },
           status: 'pending',
           importedAt: new Date().toISOString(),
           createdAt: new Date().toISOString(),
@@ -146,4 +107,67 @@ export function importPackage(db, pkg, selectedIndices) {
   }
 
   return summary;
+}
+
+/**
+ * Imports a single review item and its associations into the database.
+ * @param {AppDatabase} db
+ * @param {object} params
+ * @param {string} params.videoHash
+ * @param {object} params.review
+ * @param {string} params.exporterDisplayName
+ * @param {object} params.matchedVideo
+ * @returns {object} The local video review record created
+ */
+export function importSharedReviewItem(db, { videoHash, review, exporterDisplayName, matchedVideo }) {
+  const { reviewId, reviewerId } = review;
+
+  // Resolve/Register Remote Reviewer
+  let dbReviewer = db.findReviewerBySourceId(reviewerId);
+  if (!dbReviewer) {
+    dbReviewer = db.addImportedReviewer({
+      displayName: exporterDisplayName || '共有レビュアー',
+      sourceReviewerId: reviewerId
+    });
+  }
+
+  // Add Video Review
+  const localReview = db.addImportedReview({
+    mediaAssetId: matchedVideo.id,
+    reviewerId: dbReviewer.id,
+    overallScore: review.overallRating,
+    comment: review.comment || '',
+    sourceReviewId: reviewId,
+    sourceReviewerId: reviewerId
+  });
+  const localReviewId = localReview.id;
+
+  // Map and Associate Tags
+  if (review.tags && review.tags.length > 0) {
+    for (const tObj of review.tags) {
+      const dbTag = db.getOrCreateTag(tObj.tag);
+      if (dbTag) {
+        db.addImportedTagAssociation({
+          videoReviewId: localReviewId,
+          tagId: dbTag.id
+        });
+      }
+    }
+  }
+
+  // Map and Add Timeline Comments
+  if (review.timelineComments && review.timelineComments.length > 0) {
+    for (const tc of review.timelineComments) {
+      db.addImportedTimelineNote({
+        videoReviewId: localReviewId,
+        mediaAssetId: matchedVideo.id,
+        timestampSeconds: tc.time,
+        timestampLabel: formatTime(tc.time),
+        comment: tc.comment,
+        sourceCommentId: tc.id
+      });
+    }
+  }
+
+  return localReview;
 }

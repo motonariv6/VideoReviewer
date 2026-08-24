@@ -176,22 +176,23 @@ async function run() {
     }
   }
 
-  const validGroups = ['hash', 'folder', 'archive', 'review', 'schema', 'review-share-schema', 'review-share-import-export', 'review-share-aggregate-ui', 'all'];
+  const validGroups = ['hash', 'folder', 'archive', 'review', 'schema', 'review-share-schema', 'review-share-import-export', 'review-share-aggregate-ui', 'pending-shared-review-linking', 'all'];
   if (hasInvalidArg || (testGroup !== null && !validGroups.includes(testGroup))) {
     console.error(`
 利用方法 (Usage):
   node run-tests-node.js [--group <group_name>] [--all]
 
 有効なグループ名 (Valid group names):
-  - hash                       : ハッシュ検証関連テストのみ実行
-  - folder                     : フォルダ管理・スキャン関連テストのみ実行
-  - archive                    : アーカイブ・完全削除関連テストのみ実行
-  - review                     : レビュー編集（Review Editor）関連テストのみ実行
-  - schema                     : Schema v4・複数レビュアー関連テストのみ実行
-  - review-share-schema        : 共有レビュー Schema・集約純粋関数・バリデータテストのみ実行
-  - review-share-import-export : 選択式レビュー共有のExport/Import関連テストのみ実行
-  - review-share-aggregate-ui  : 複数レビュアーのレビュー集約表示UI関連テストのみ実行
-  - all                        : すべてのテストを実行
+  - hash                          : ハッシュ検証関連テストのみ実行
+  - folder                        : フォルダ管理・スキャン関連テストのみ実行
+  - archive                       : アーカイブ・完全削除関連テストのみ実行
+  - review                        : レビュー編集（Review Editor）関連テストのみ実行
+  - schema                        : Schema v4・複数レビュアー関連テストのみ実行
+  - review-share-schema           : 共有レビュー Schema・集約純粋関数・バリデータテストのみ実行
+  - review-share-import-export    : 選択式レビュー共有のExport/Import関連テストのみ実行
+  - review-share-aggregate-ui     : 複数レビュアーのレビュー集約表示UI関連テストのみ実行
+  - pending-shared-review-linking : 保留レビューの自動再紐付け関連テストのみ実行
+  - all                           : すべてのテストを実行
 
 例 (Examples):
   node run-tests-node.js --group folder
@@ -202,6 +203,7 @@ async function run() {
   node run-tests-node.js --group review-share-schema
   node run-tests-node.js --group review-share-import-export
   node run-tests-node.js --group review-share-aggregate-ui
+  node run-tests-node.js --group pending-shared-review-linking
   node run-tests-node.js --all
     `);
     process.exitCode = 1;
