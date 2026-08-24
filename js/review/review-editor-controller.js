@@ -1,4 +1,5 @@
 // review-editor-controller.js - Business logic and use case controller for Video Review Editor workspace
+import { buildSharedReviewViewModel } from '../review-sharing/review-share-view-model.js';
 
 export class ReviewEditorController {
   constructor({
@@ -107,6 +108,9 @@ export class ReviewEditorController {
     // Load media source in player
     this.loadVideoMediaSource(video);
 
+    // Render shared reviews if applicable
+    this.renderSharedReviews();
+
     this.clearDirty();
   }
 
@@ -194,6 +198,7 @@ export class ReviewEditorController {
     try {
       await this.db.removeTagFromVideo(this.state.currentVideoId, tagId);
       this.renderVideoTagsList();
+      this.renderSharedReviews();
     } catch (err) {
       this.showToast(`タグの削除に失敗しました: ${err.message}`, 'error');
     }
@@ -226,6 +231,7 @@ export class ReviewEditorController {
         this.ui.clearTagInput();
         this.ui.hideTagAutocomplete();
         this.renderVideoTagsList();
+        this.renderSharedReviews();
       } catch (err) {
         this.showToast(err.message, 'error');
       }
@@ -256,6 +262,7 @@ export class ReviewEditorController {
           this.ui.clearTagInput();
           this.ui.hideTagAutocomplete();
           this.renderVideoTagsList();
+          this.renderSharedReviews();
         } catch (err) {
           this.showToast(err.message, 'error');
         }
@@ -286,6 +293,7 @@ export class ReviewEditorController {
       try {
         await this.db.deleteTimelineNote(noteId);
         this.renderTimelineNotesList();
+        this.renderSharedReviews();
         this.showToast('メモを削除しました');
       } catch (err) {
         this.showToast(`削除に失敗しました: ${err.message}`, 'error');
@@ -330,6 +338,7 @@ export class ReviewEditorController {
       this.state.capturedNoteTime = 0;
 
       this.renderTimelineNotesList();
+      this.renderSharedReviews();
       this.showToast('タイムラインメモを追加しました');
     } catch (err) {
       this.showToast(`保存できませんでした: ${err.message}`, 'error');
@@ -363,6 +372,7 @@ export class ReviewEditorController {
         ratings: this.state.currentRatings
       });
 
+      this.renderSharedReviews();
       this.clearDirty();
 
       if (!isAutosave) {
@@ -456,5 +466,23 @@ export class ReviewEditorController {
     this.updateRadar();
     this.markDirty();
     this.showToast('動画のジャンルを切り替えました。');
+  }
+
+  /**
+   * Render aggregated shared reviews UI panel if there is at least one imported review
+   */
+  renderSharedReviews() {
+    if (!this.state.currentVideoId) return;
+    const allReviews = this.db.getReviewsForVideo(this.state.currentVideoId) || [];
+    const hasImportedReviews = allReviews.some(r => r.origin === 'imported');
+    this.ui.setSharedReviewsSectionVisible(hasImportedReviews);
+    if (hasImportedReviews) {
+      const viewModel = buildSharedReviewViewModel({
+        reviews: allReviews,
+        reviewers: this.db.getReviewers() || [],
+        db: this.db
+      });
+      this.ui.renderSharedReviews(viewModel, (time) => this.seekTo(time));
+    }
   }
 }

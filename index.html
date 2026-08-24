@@ -420,6 +420,59 @@
             </div>
           </div>
 
+          <!-- 6. Shared Reviews (Multiple Reviewers) -->
+          <div id="shared-reviews-section" class="editor-section hidden">
+            <label class="editor-section-title">6. 共有レビュー</label>
+            <div class="shared-reviews-container glass-panel" style="padding:12px;margin-top:8px;display:flex;flex-direction:column;gap:12px">
+              
+              <!-- Overall Rating Summary -->
+              <div style="display:flex;justify-content:space-between;align-items:center">
+                <div>
+                  <span style="font-size:0.75rem;color:var(--color-text-dim)">平均評価</span>
+                  <div style="display:flex;align-items:baseline;gap:6px">
+                    <span id="shared-average-rating" style="font-size:1.5rem;font-weight:700;color:var(--color-primary)">-</span>
+                    <span style="font-size:0.875rem;color:var(--color-text-muted)">/ 5</span>
+                  </div>
+                </div>
+                <div style="text-align:right">
+                  <span id="shared-reviewers-count" style="font-size:0.875rem;font-weight:600;color:var(--color-text)">0 reviewers</span>
+                  <div style="font-size:0.75rem;color:var(--color-text-dim)" id="shared-rated-count">0 rated</div>
+                </div>
+              </div>
+
+              <hr style="border:0;border-top:1px solid var(--color-border);margin:0">
+
+              <!-- Reviewers List -->
+              <div>
+                <label class="input-label" style="margin-bottom:6px">レビュアー別評価</label>
+                <div id="shared-reviewers-list" style="display:flex;flex-direction:column;gap:6px">
+                  <!-- Injected dynamically -->
+                </div>
+              </div>
+
+              <hr style="border:0;border-top:1px solid var(--color-border);margin:0">
+
+              <!-- Merged Tags -->
+              <div>
+                <label class="input-label" style="margin-bottom:6px">統合タグ</label>
+                <div id="shared-tags-list" class="tags-chips-list">
+                  <!-- Injected dynamically -->
+                </div>
+              </div>
+
+              <hr style="border:0;border-top:1px solid var(--color-border);margin:0">
+
+              <!-- Merged Timeline Comments -->
+              <div>
+                <label class="input-label" style="margin-bottom:6px">共有タイムライン</label>
+                <div id="shared-timeline-list" class="timeline-notes-list" style="margin-top:6px;max-height:300px;overflow-y:auto">
+                  <!-- Injected dynamically -->
+                </div>
+              </div>
+
+            </div>
+          </div>
+
         </div>
 
         <!-- Sticky Save Review Action Bar -->

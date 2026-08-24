@@ -162,6 +162,15 @@ const els = {
   btnTimelineAddNote: document.getElementById('btn-timeline-add-note'),
   timelineNotesList: document.getElementById('timeline-notes-list'),
 
+  // Shared Reviews elements
+  sharedReviewsSection: document.getElementById('shared-reviews-section'),
+  sharedAverageRating: document.getElementById('shared-average-rating'),
+  sharedReviewersCount: document.getElementById('shared-reviewers-count'),
+  sharedRatedCount: document.getElementById('shared-rated-count'),
+  sharedReviewersList: document.getElementById('shared-reviewers-list'),
+  sharedTagsList: document.getElementById('shared-tags-list'),
+  sharedTimelineList: document.getElementById('shared-timeline-list'),
+
   // Save Review Bar
   btnSaveReview: document.getElementById('editor-btn-save'),
   autosaveIndicator: document.getElementById('autosave-indicator'),
