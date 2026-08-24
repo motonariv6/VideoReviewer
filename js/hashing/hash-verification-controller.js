@@ -48,6 +48,7 @@ export async function processBackgroundHashingQueue({
   logMetricFn = logMetric,
   onProgressChange = () => {},
   onLibraryRender = () => {},
+  onPendingResolved = () => {},
   onNewBatch = () => {}
 }) {
   const provisionalLocs = dbInstance.fileLocations.filter(loc => loc.verificationStatus === 'provisional');
@@ -172,7 +173,7 @@ export async function processBackgroundHashingQueue({
           onProgressChange(true);
         }
 
-        await processSingleLocationVerification(
+        const verifyRes = await processSingleLocationVerification(
           dbInstance,
           loc.id,
           sources,
@@ -200,6 +201,12 @@ export async function processBackgroundHashingQueue({
           // Double check targetKeys before marking completed
           if (bgHashState.targetKeys.has(loc.id)) {
             bgHashState.completedKeys.add(loc.id);
+          }
+          if (verifyRes && verifyRes.resolvedPendingSummary && verifyRes.resolvedPendingSummary.resolved > 0) {
+            const video = dbInstance.getVideo(verifyRes.targetAssetId || verifyRes.assetId || verifyRes.newAssetId);
+            if (video) {
+              onPendingResolved(verifyRes.resolvedPendingSummary, video);
+            }
           }
         }
       } catch (err) {

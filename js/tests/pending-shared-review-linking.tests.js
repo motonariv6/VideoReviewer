@@ -275,6 +275,94 @@ export async function runPendingSharedReviewLinkingTests() {
     assert(db.pendingSharedReviews.length === 1);
   });
 
+  await runTest('5-2. uppercase SHA-256 → resolve不可、pending維持', async () => {
+    const UPPERCASE_HASH = HASH_A.toUpperCase();
+    const db = createTestDb({
+      pending_shared_reviews: [
+        {
+          id: 'pending-review-1',
+          packageId: 'package-abc',
+          videoHash: HASH_A,
+          hashAlgorithm: 'sha256',
+          reviewerId: 'reviewer-remote-1',
+          payload: {
+            reviewId: 'rev-remote-1',
+            reviewerId: 'reviewer-remote-1',
+            overallRating: 4
+          },
+          status: 'pending',
+          importedAt: new Date().toISOString(),
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString()
+        }
+      ]
+    });
+    await db.initAsync();
+
+    const res = resolvePendingSharedReviewsForVideo({
+      db,
+      mediaAssetId: 'vid-11111111',
+      contentHash: UPPERCASE_HASH
+    });
+
+    assert(res.resolved === 0, 'Uppercase hash must fail validation and not resolve');
+    assert(db.pendingSharedReviews.length === 1, 'Pending review must be maintained');
+  });
+
+  await runTest('5-3. Resolverがdb.mediaAssetsへ直接依存しない', async () => {
+    const fnStr = resolvePendingSharedReviewsForVideo.toString();
+    const allFnStr = resolveAllPendingSharedReviews.toString();
+
+    assert(!fnStr.includes('db.mediaAssets'), 'Resolver code must not directly reference db.mediaAssets');
+    assert(!fnStr.includes('.mediaAssets'), 'Resolver code must not directly reference .mediaAssets');
+    assert(!allFnStr.includes('db.mediaAssets'), 'Resolver code must not directly reference db.mediaAssets');
+  });
+
+  await runTest('5-4. Resolverがwindow / showToastなしでも動作する', async () => {
+    const db = createTestDb({
+      pending_shared_reviews: [
+        {
+          id: 'pending-review-1',
+          packageId: 'package-abc',
+          videoHash: HASH_A,
+          hashAlgorithm: 'sha256',
+          reviewerId: 'reviewer-remote-99',
+          payload: {
+            reviewId: 'rev-remote-99',
+            reviewerId: 'reviewer-remote-99',
+            overallRating: 5
+          },
+          status: 'pending'
+        }
+      ]
+    });
+    await db.initAsync();
+
+    // Temporarily hide window if in browser
+    let originalWindow;
+    if (typeof window !== 'undefined') {
+      originalWindow = window;
+    }
+
+    try {
+      if (typeof window !== 'undefined') {
+        delete window.showToast;
+      }
+
+      const res = resolvePendingSharedReviewsForVideo({
+        db,
+        mediaAssetId: 'vid-11111111',
+        contentHash: HASH_A
+      });
+
+      assert(res.resolved === 1);
+    } finally {
+      if (originalWindow) {
+        window.showToast = originalWindow.showToast;
+      }
+    }
+  });
+
   // ==========================================
   // TRIGGER TESTS (6-9)
   // ==========================================

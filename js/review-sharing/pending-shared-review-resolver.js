@@ -17,10 +17,9 @@ export function resolvePendingSharedReviewsForVideo({ db, mediaAssetId, contentH
   };
 
   if (!contentHash) return summary;
-  const targetHash = contentHash.toLowerCase();
 
-  // Validate format is strict 64-character lowercase hex SHA-256
-  if (!/^[0-9a-f]{64}$/.test(targetHash)) {
+  // Validate format is strictly 64-character lowercase hex SHA-256 (no automatic conversion to lowercase)
+  if (!/^[0-9a-f]{64}$/.test(contentHash)) {
     return summary;
   }
 
@@ -30,15 +29,15 @@ export function resolvePendingSharedReviewsForVideo({ db, mediaAssetId, contentH
     return summary;
   }
 
-  // Exclude conflict assets or wait until canonical asset is determined
-  const rawAsset = db.mediaAssets.find(a => a.id === mediaAssetId);
+  // Exclude conflict assets or wait until canonical asset is determined using readonly public API
+  const rawAsset = db.getMediaAssetById(mediaAssetId);
   if (!rawAsset || rawAsset.identityStatus === 'conflict' || rawAsset.identityStatus === 'provisional') {
     return summary;
   }
 
   // Get all pending reviews
   const allPending = db.getPendingSharedReviews();
-  const matchingPending = allPending.filter(p => p.videoHash.toLowerCase() === targetHash && p.status === 'pending');
+  const matchingPending = allPending.filter(p => p.videoHash === contentHash && p.status === 'pending');
 
   if (matchingPending.length === 0) {
     return summary;
@@ -60,7 +59,7 @@ export function resolvePendingSharedReviewsForVideo({ db, mediaAssetId, contentH
     const snapshot = db.createTransactionSnapshot();
     try {
       importSharedReviewItem(db, {
-        videoHash: targetHash,
+        videoHash: contentHash,
         review: reviewPayload,
         exporterDisplayName: reviewPayload.exporterDisplayName,
         matchedVideo: rawAsset
@@ -74,11 +73,6 @@ export function resolvePendingSharedReviewsForVideo({ db, mediaAssetId, contentH
       console.error(`Failed to resolve pending review ${pending.id}:`, err);
       summary.failed++;
     }
-  }
-
-  // Trigger Toast Notification (batch summary style)
-  if (summary.resolved > 0 && typeof window !== 'undefined' && typeof window.showToast === 'function') {
-    window.showToast(`共有レビュー ${summary.resolved}件を動画「${matchedVideo.displayTitle || matchedVideo.title}」に紐付けました`);
   }
 
   return summary;
@@ -97,7 +91,7 @@ export function resolveAllPendingSharedReviews(db) {
   };
 
   const allPending = db.getPendingSharedReviews();
-  const activePendingHashes = [...new Set(allPending.filter(p => p.status === 'pending').map(p => p.videoHash.toLowerCase()))];
+  const activePendingHashes = [...new Set(allPending.filter(p => p.status === 'pending').map(p => p.videoHash))];
 
   for (const hash of activePendingHashes) {
     const matchedVideo = db.findVideoByContentHash(hash);
