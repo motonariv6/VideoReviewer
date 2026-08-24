@@ -1079,6 +1079,163 @@ export async function runReviewShareImportExportTests() {
     }
   });
 
+  await runTest('58. Backup round-trip regression test for imported source identity fields', async () => {
+    const db = createTestDb({
+      media_assets: [
+        {
+          id: 'vid-11111111',
+          title: 'video1.mp4',
+          fileName: 'video1.mp4',
+          contentHash: 'aaaa111111111111111111111111111111111111111111111111111111111111',
+          hashAlgorithm: 'SHA-256',
+          quickHash: 'q_100_dummy',
+          hashStatus: 'completed',
+          fileSize: 1000,
+          duration: 12.5,
+          displayTitle: '動画1',
+          genreId: 'genre-default',
+          identityStatus: 'normal',
+          identityConflictGroupId: null,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString()
+        }
+      ],
+      video_reviews: [
+        {
+          id: 'rev-owner11111111',
+          mediaAssetId: 'vid-11111111',
+          reviewerId: 'reviewer-owner1234',
+          origin: 'local',
+          overallScore: 4,
+          comment: 'ローカルオーナーコメント',
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString()
+        }
+      ],
+      tags: [],
+      review_tags: [],
+      timeline_notes: [],
+      criterion_ratings: []
+    });
+    await db.initAsync();
+
+    // 1. Pre-assert: Check local owner review in the database
+    const initialOwnerReview = db.getOwnerReviewForVideo('vid-11111111');
+    assert(initialOwnerReview !== null, 'Initial owner review must exist');
+    assert(initialOwnerReview.origin === 'local');
+    assert(initialOwnerReview.overallScore === 4);
+
+    // 2. Import package containing remote review
+    const pkg = createValidImportPackage('reviewer-remote12', 'rev-remote98765432');
+    importPackage(db, pkg, [0]);
+
+    // Verify imported values in memory database
+    const importedReviewer = db.reviewers.find(r => r.sourceReviewerId === 'reviewer-remote12');
+    assert(importedReviewer !== undefined);
+    assert(importedReviewer.isLocal === false);
+    assert(importedReviewer.id.startsWith('reviewer-'));
+
+    const importedReview = db.reviews.find(r => r.sourceReviewId === 'rev-remote98765432');
+    assert(importedReview !== undefined);
+    assert(importedReview.sourceReviewerId === 'reviewer-remote12');
+    assert(importedReview.origin === 'imported');
+    assert(importedReview.reviewerId === importedReviewer.id);
+
+    const importedNote = db.timelineNotes.find(n => n.sourceCommentId === 'note-remote87654321');
+    assert(importedNote !== undefined);
+    assert(importedNote.videoReviewId === importedReview.id);
+
+    // 3. Emulate export/backup format
+    const exportedDb = {
+      schemaVersion: 4,
+      reviewers: db.reviewers,
+      media_assets: db.mediaAssets,
+      file_locations: db.fileLocations,
+      rating_criteria: db.criteria,
+      video_reviews: db.reviews,
+      criterion_ratings: db.criterionRatings,
+      tags: db.tags,
+      review_tags: db.reviewTags,
+      timeline_notes: db.timelineNotes,
+      directory_sources: db.directorySources,
+      genres: db.genres,
+      evaluation_templates: db.templates,
+      pending_shared_reviews: db.pendingSharedReviews
+    };
+
+    const manifest = {
+      application: "VideoReviewer",
+      schemaVersion: 4,
+      createdAt: new Date().toISOString(),
+      appVersion: "1.0.0",
+      counts: {
+        media_assets: db.mediaAssets.length,
+        file_locations: db.fileLocations.length,
+        reviews: db.reviews.length,
+        images: 0,
+        reviewers: db.reviewers.length,
+        review_tags: db.reviewTags.length,
+        pending_shared_reviews: db.pendingSharedReviews.length
+      }
+    };
+
+    // 4. Validate backup data against BACKUP_SCHEMA_V4
+    const validation = db.validateBackupData(exportedDb, manifest, []);
+    assert(validation.isValid === true, 'V4 backup with imported items validation must pass. Errors: ' + validation.fatalErrors?.join(', '));
+
+    // 5. Emulate restore
+    const restoreDb = createTestDb({
+      media_assets: [
+        {
+          id: 'vid-11111111',
+          title: 'video1.mp4',
+          fileName: 'video1.mp4',
+          contentHash: 'aaaa111111111111111111111111111111111111111111111111111111111111',
+          hashAlgorithm: 'SHA-256',
+          quickHash: 'q_100_dummy',
+          hashStatus: 'completed',
+          fileSize: 1000,
+          duration: 12.5,
+          displayTitle: '動画1',
+          genreId: 'genre-default',
+          identityStatus: 'normal',
+          identityConflictGroupId: null,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString()
+        }
+      ],
+      video_reviews: [],
+      tags: [],
+      review_tags: [],
+      timeline_notes: [],
+      criterion_ratings: []
+    });
+    await restoreDb.restoreWithRollback(exportedDb, []);
+
+    // 6. Assert restored data contains all source identities unchanged
+    const restoredReviewer = restoreDb.reviewers.find(r => r.sourceReviewerId === 'reviewer-remote12');
+    assert(restoredReviewer !== undefined, 'Restored reviewer must exist');
+    assert(restoredReviewer.isLocal === false, 'Restored reviewer must be remote');
+    assert(restoredReviewer.displayName === '他ユーザーレビュアー');
+
+    const restoredReview = restoreDb.reviews.find(r => r.sourceReviewId === 'rev-remote98765432');
+    assert(restoredReview !== undefined, 'Restored review must exist');
+    assert(restoredReview.sourceReviewerId === 'reviewer-remote12', 'Restored review source reviewer ID must match');
+    assert(restoredReview.origin === 'imported', 'Restored review origin must be imported');
+    assert(restoredReview.reviewerId === restoredReviewer.id, 'Restored review reviewerId reference must match');
+
+    const restoredNote = restoreDb.timelineNotes.find(n => n.sourceCommentId === 'note-remote87654321');
+    assert(restoredNote !== undefined, 'Restored timeline note must exist');
+    assert(restoredNote.videoReviewId === restoredReview.id, 'Restored note videoReviewId reference must match');
+
+    // 7. Assert local owner review remains intact and unmodified
+    const postOwnerReview = restoreDb.getOwnerReviewForVideo('vid-11111111');
+    assert(postOwnerReview !== null);
+    assert(postOwnerReview.origin === 'local');
+    assert(postOwnerReview.overallScore === 4);
+    assert(postOwnerReview.comment === 'ローカルオーナーコメント');
+  });
+
   console.groupEnd(); // Group 19
   return results;
 }

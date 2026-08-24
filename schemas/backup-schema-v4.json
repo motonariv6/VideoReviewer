@@ -38,6 +38,7 @@
           "id": { "type": "string", "pattern": "^reviewer-[a-zA-Z0-9-]{8,64}$" },
           "displayName": { "type": "string", "minLength": 1 },
           "isLocal": { "type": "boolean" },
+          "sourceReviewerId": { "type": "string" },
           "createdAt": { "type": "string" },
           "updatedAt": { "type": "string" }
         }
@@ -147,6 +148,8 @@
           "origin": { "type": "string", "enum": ["local", "imported"] },
           "overallScore": { "type": ["integer", "null"], "minimum": 1, "maximum": 5 },
           "comment": { "type": ["string", "null"] },
+          "sourceReviewId": { "type": "string" },
+          "sourceReviewerId": { "type": "string" },
           "createdAt": { "type": "string" },
           "updatedAt": { "type": "string" }
         }
@@ -210,6 +213,7 @@
           "timestampLabel": { "type": "string" },
           "comment": { "type": "string" },
           "thumbnailId": { "type": "string" },
+          "sourceCommentId": { "type": "string" },
           "createdAt": { "type": "string" }
         }
       }

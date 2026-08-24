@@ -4,6 +4,7 @@ reviewers,displayName,string,true,,Display name of reviewer,,自分,4
 reviewers,isLocal,boolean,true,,Flag indicating if the reviewer is local owner,,true,4
 reviewers,createdAt,string,true,,Timestamp of reviewer creation,,2026-08-23T11:00:00.000Z,4
 reviewers,updatedAt,string,true,,Timestamp of reviewer last update,,2026-08-23T11:00:00.000Z,4
+reviewers,sourceReviewerId,string,false,,Import元Shared Review Packageにおけるreviewer identity (local reviewer primary keyとは別物),,reviewer-remote123,4
 media_assets,id,string,true,,Unique identifier of logical video asset,,vid-f64e28ab-b295-46cb-8d1b-123456789abc,3
 media_assets,contentHash,string,true,,SHA-256 hash of entire file contents,,e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855,3
 media_assets,hashAlgorithm,string,true,SHA-256,Hash algorithm name,,SHA-256,3
@@ -38,6 +39,8 @@ video_reviews,overallScore,number,false,,Overall score (1 to 5),,5,4
 video_reviews,comment,string,false,,Overall comment (string or null). Maps to sharing JSON free_comment.,,Excellent video.,4
 video_reviews,createdAt,string,true,,Timestamp of review creation,,2026-08-16T12:00:00.000Z,1
 video_reviews,updatedAt,string,true,,Timestamp of review update,,2026-08-16T12:00:00.000Z,1
+video_reviews,sourceReviewId,string,false,,Import元のstable review identity,,rev-remote123,4
+video_reviews,sourceReviewerId,string,false,,Import元reviewer identity (sourceReviewId + sourceReviewerId をshared review duplicate identityとして使用),,reviewer-remote123,4
 criterion_ratings,id,string,true,,Unique rating identifier,,rate-1a2b3c4d,1
 criterion_ratings,videoReviewId,string,true,,Foreign key to the review,video_reviews.id,rev-a91d9a9c-84c5-4f59-9b4e-be51a1a13ec7,1
 criterion_ratings,criterionId,string,true,,Foreign key to rating criterion,rating_criteria.id,crit-lighting,1
@@ -59,6 +62,7 @@ timeline_notes,timestampLabel,string,true,,Format representation of timestamp,,0
 timeline_notes,comment,string,true,,Content of note,,Noticeable camera shake.,1
 timeline_notes,thumbnailId,string,false,,ID reference to image store in IndexedDB,,img-note-abc,2
 timeline_notes,createdAt,string,true,,Timestamp of note creation,,2026-08-16T12:00:00.000Z,1
+timeline_notes,sourceCommentId,string,false,,Import元timeline commentのstable identity,,comment-remote123,4
 directory_sources,id,string,true,,Unique identifier of directory source,,dir-e9c8b7a6,1
 directory_sources,name,string,true,,Directory folder name,,My local videos,1
 directory_sources,includeSubdirectories,boolean,true,true,Flag to search in subdirectories,,true,1
