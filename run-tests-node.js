@@ -176,7 +176,7 @@ async function run() {
     }
   }
 
-  const validGroups = ['hash', 'folder', 'archive', 'review', 'schema', 'review-share-schema', 'review-share-import-export', 'review-share-aggregate-ui', 'pending-shared-review-linking', 'tag-management', 'all'];
+  const validGroups = ['hash', 'folder', 'archive', 'review', 'schema', 'review-share-schema', 'review-share-import-export', 'review-share-aggregate-ui', 'pending-shared-review-linking', 'tag-management', 'schema-canonicalization', 'all'];
   if (hasInvalidArg || (testGroup !== null && !validGroups.includes(testGroup))) {
     console.error(`
 利用方法 (Usage):
@@ -193,6 +193,7 @@ async function run() {
   - review-share-aggregate-ui     : 複数レビュアーのレビュー集約表示UI関連テストのみ実行
   - pending-shared-review-linking : 保留レビューの自動再紐付け関連テストのみ実行
   - tag-management                : タグマスタ管理・削除・整合性テストのみ実行
+  - schema-canonicalization       : レガシーデータ互換・正規化テストのみ実行
   - all                           : すべてのテストを実行
 
 例 (Examples):
@@ -206,6 +207,7 @@ async function run() {
   node run-tests-node.js --group review-share-aggregate-ui
   node run-tests-node.js --group pending-shared-review-linking
   node run-tests-node.js --group tag-management
+  node run-tests-node.js --group schema-canonicalization
   node run-tests-node.js --all
     `);
     process.exitCode = 1;

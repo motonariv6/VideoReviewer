@@ -14,6 +14,7 @@ import { runReviewShareImportExportTests } from './tests/review-share-import-exp
 import { runReviewShareAggregateUITests } from './tests/review-share-aggregate-ui.tests.js';
 import { runPendingSharedReviewLinkingTests } from './tests/pending-shared-review-linking.tests.js';
 import { runTagManagementTests } from './tests/tag-management.tests.js';
+import { runSchemaCanonicalizationTests } from './tests/schema-canonicalization.tests.js';
 
 export const VALID_HASH_A = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
 export const VALID_HASH_B = 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
@@ -2619,6 +2620,12 @@ export async function runTests(groupFilter = null) {
 
   console.groupEnd(); // Group 15
   } // ends if (runAll) for Group 12-13
+
+  // --- RUN GROUP 23: SCHEMA CANONICALIZATION TESTS ---
+  if (!groupFilter || groupFilter === 'all' || groupFilter === 'schema-canonicalization') {
+    const canonicalizationRes = await runSchemaCanonicalizationTests();
+    results.push(...canonicalizationRes);
+  }
 
   console.groupEnd(); // main suite
   return results;
