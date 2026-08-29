@@ -2541,8 +2541,13 @@ export class AppDatabase {
 
   getTagsWithUsageCount() {
     const counts = {};
+    const seen = new Set();
     this.reviewTags.forEach(rt => {
-      counts[rt.tagId] = (counts[rt.tagId] || 0) + 1;
+      const key = `${rt.tagId}::${rt.videoReviewId}`;
+      if (!seen.has(key)) {
+        seen.add(key);
+        counts[rt.tagId] = (counts[rt.tagId] || 0) + 1;
+      }
     });
     return this.tags.map(t => ({
       ...t,
@@ -2558,18 +2563,6 @@ export class AppDatabase {
         return false;
       }
 
-      // Find affected reviews
-      const affectedReviewIds = this.reviewTags
-        .filter(rt => rt.tagId === tagId)
-        .map(rt => rt.videoReviewId);
-
-      // Find unique mediaAssetIds
-      const affectedMediaAssetIds = [...new Set(
-        this.reviews
-          .filter(r => affectedReviewIds.includes(r.id))
-          .map(r => r.mediaAssetId)
-      )];
-
       // Remove the tag
       this.tags.splice(tagIndex, 1);
       this._saveTable('tags', this.tags);
@@ -2577,11 +2570,6 @@ export class AppDatabase {
       // Remove the review tag relations
       this.reviewTags = this.reviewTags.filter(rt => rt.tagId !== tagId);
       this._saveTable('review_tags', this.reviewTags);
-
-      // Update the affected videos (to refresh updatedAt)
-      for (const assetId of affectedMediaAssetIds) {
-        await this.updateVideo(assetId, {});
-      }
 
       return true;
     } catch (err) {

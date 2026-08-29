@@ -473,24 +473,27 @@ export async function runTagManagementTests() {
     const db = createTestDb();
     await db.initAsync();
 
-    // Mock updateVideo to throw an error mid-deletion
-    const originalUpdateVideo = db.updateVideo;
-    db.updateVideo = () => {
-      throw new Error('Disk full simulation');
+    // Mock _saveTable to throw an error when writing review_tags
+    const originalSaveTable = db._saveTable;
+    db._saveTable = (table, data) => {
+      if (table === 'review_tags') {
+        throw new Error('Database write error');
+      }
+      originalSaveTable.call(db, table, data);
     };
 
     try {
       await db.deleteTag('tag-used-local');
       assert(false, 'Should throw exception');
     } catch (err) {
-      assert(err.message === 'Disk full simulation');
+      assert(err.message === 'Database write error');
     }
 
     // Verify rollback
     assert(db.tags.some(t => t.id === 'tag-used-local'), 'Tag master must be restored');
     assert(db.reviewTags.some(rt => rt.tagId === 'tag-used-local'), 'Relations must be restored');
 
-    db.updateVideo = originalUpdateVideo;
+    db._saveTable = originalSaveTable;
   });
 
   await runTest('24. Backup round-trip', async () => {
@@ -531,6 +534,31 @@ export async function runTagManagementTests() {
     // Verify import validator works fine with existing tables schema
     const tags = db.getTags();
     assert(tags.length === 4);
+  });
+
+  await runTest('26. 重複relationがあってもusageCountはユニークreview数', async () => {
+    const db = createTestDb({
+      review_tags: [
+        {
+          id: 'rt-dup-1',
+          videoReviewId: 'rev-local-1',
+          tagId: 'tag-used-local',
+          createdAt: new Date().toISOString()
+        },
+        {
+          id: 'rt-dup-2',
+          videoReviewId: 'rev-local-1', // duplicate review ID for same tag
+          tagId: 'tag-used-local',
+          createdAt: new Date().toISOString()
+        }
+      ]
+    });
+    await db.initAsync();
+
+    const tags = db.getTagsWithUsageCount();
+    const tag = tags.find(t => t.id === 'tag-used-local');
+    assert(tag !== undefined);
+    assert(tag.usageCount === 1, 'Usage count must be 1 even with duplicate relations for the same review');
   });
 
   console.groupEnd(); // main group
