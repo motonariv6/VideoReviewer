@@ -2539,6 +2539,46 @@ export class AppDatabase {
     return false;
   }
 
+  getTagsWithUsageCount() {
+    const counts = {};
+    const seen = new Set();
+    this.reviewTags.forEach(rt => {
+      const key = `${rt.tagId}::${rt.videoReviewId}`;
+      if (!seen.has(key)) {
+        seen.add(key);
+        counts[rt.tagId] = (counts[rt.tagId] || 0) + 1;
+      }
+    });
+    return this.tags.map(t => ({
+      ...t,
+      usageCount: counts[t.id] || 0
+    }));
+  }
+
+  async deleteTag(tagId) {
+    const snapshot = this.createTransactionSnapshot();
+    try {
+      const tagIndex = this.tags.findIndex(t => t.id === tagId);
+      if (tagIndex === -1) {
+        return false;
+      }
+
+      // Remove the tag
+      this.tags.splice(tagIndex, 1);
+      this._saveTable('tags', this.tags);
+
+      // Remove the review tag relations
+      this.reviewTags = this.reviewTags.filter(rt => rt.tagId !== tagId);
+      this._saveTable('review_tags', this.reviewTags);
+
+      return true;
+    } catch (err) {
+      console.error('Error deleting tag, rolling back:', err);
+      this.rollbackTransactionSnapshot(snapshot);
+      throw err;
+    }
+  }
+
   // --- TIMELINE NOTES OPERATIONS ---
 
   getTimelineNotes(mediaAssetId) {

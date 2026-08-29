@@ -13,6 +13,7 @@ import { runReviewShareSchemaTests } from './tests/review-share-schema.tests.js'
 import { runReviewShareImportExportTests } from './tests/review-share-import-export.tests.js';
 import { runReviewShareAggregateUITests } from './tests/review-share-aggregate-ui.tests.js';
 import { runPendingSharedReviewLinkingTests } from './tests/pending-shared-review-linking.tests.js';
+import { runTagManagementTests } from './tests/tag-management.tests.js';
 
 export const VALID_HASH_A = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
 export const VALID_HASH_B = 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
@@ -2282,6 +2283,12 @@ export async function runTests(groupFilter = null) {
   if (runAll || groupFilter === 'pending-shared-review-linking') {
     const pendingLinkingResults = await runPendingSharedReviewLinkingTests();
     results.push(...pendingLinkingResults);
+  }
+
+  // --- GROUP 22: TAG MANAGEMENT TESTS ---
+  if (runAll || groupFilter === 'tag-management') {
+    const tagManagementResults = await runTagManagementTests();
+    results.push(...tagManagementResults);
   }
 
   if (runAll) {
