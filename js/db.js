@@ -2539,6 +2539,58 @@ export class AppDatabase {
     return false;
   }
 
+  getTagsWithUsageCount() {
+    const counts = {};
+    this.reviewTags.forEach(rt => {
+      counts[rt.tagId] = (counts[rt.tagId] || 0) + 1;
+    });
+    return this.tags.map(t => ({
+      ...t,
+      usageCount: counts[t.id] || 0
+    }));
+  }
+
+  async deleteTag(tagId) {
+    const snapshot = this.createTransactionSnapshot();
+    try {
+      const tagIndex = this.tags.findIndex(t => t.id === tagId);
+      if (tagIndex === -1) {
+        return false;
+      }
+
+      // Find affected reviews
+      const affectedReviewIds = this.reviewTags
+        .filter(rt => rt.tagId === tagId)
+        .map(rt => rt.videoReviewId);
+
+      // Find unique mediaAssetIds
+      const affectedMediaAssetIds = [...new Set(
+        this.reviews
+          .filter(r => affectedReviewIds.includes(r.id))
+          .map(r => r.mediaAssetId)
+      )];
+
+      // Remove the tag
+      this.tags.splice(tagIndex, 1);
+      this._saveTable('tags', this.tags);
+
+      // Remove the review tag relations
+      this.reviewTags = this.reviewTags.filter(rt => rt.tagId !== tagId);
+      this._saveTable('review_tags', this.reviewTags);
+
+      // Update the affected videos (to refresh updatedAt)
+      for (const assetId of affectedMediaAssetIds) {
+        await this.updateVideo(assetId, {});
+      }
+
+      return true;
+    } catch (err) {
+      console.error('Error deleting tag, rolling back:', err);
+      this.rollbackTransactionSnapshot(snapshot);
+      throw err;
+    }
+  }
+
   // --- TIMELINE NOTES OPERATIONS ---
 
   getTimelineNotes(mediaAssetId) {

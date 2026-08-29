@@ -183,6 +183,11 @@ const els = {
   settingsBtnAdd: document.getElementById('settings-btn-add'),
   settingsBtnSave: document.getElementById('settings-btn-save'),
 
+  // Settings Modal (Tags Management)
+  settingsTagSearchInput: document.getElementById('settings-tag-search-input'),
+  settingsTagSearchClear: document.getElementById('settings-tag-search-clear'),
+  settingsTagList: document.getElementById('settings-tag-list'),
+
   // Settings Modal (Video Folder additions)
   folderApiFallbackMsg: document.getElementById('folder-api-fallback-msg'),
   folderSettingsPanel: document.getElementById('folder-settings-panel'),
@@ -333,6 +338,21 @@ function initEventListeners() {
   els.settingsCloseX.addEventListener('click', closeSettingsModal);
   els.settingsBtnAdd.addEventListener('click', handleSettingsAddCriterion);
   els.settingsBtnSave.addEventListener('click', closeSettingsModal);
+
+  // Settings tag management event listeners
+  if (els.settingsTagSearchInput) {
+    els.settingsTagSearchInput.addEventListener('input', () => {
+      renderSettingsTagList(els.settingsTagSearchInput.value);
+    });
+  }
+  if (els.settingsTagSearchClear) {
+    els.settingsTagSearchClear.addEventListener('click', () => {
+      if (els.settingsTagSearchInput) {
+        els.settingsTagSearchInput.value = '';
+      }
+      renderSettingsTagList('');
+    });
+  }
 
   // Review Editor UI Event Listeners
   reviewEditorUI.setupEventListeners({
@@ -1805,6 +1825,12 @@ function openSettingsModal() {
   const lastBackup = localStorage.getItem('vreview_last_backup_time');
   els.backupLastTimeVal.textContent = lastBackup ? new Date(lastBackup).toLocaleString() : '未作成';
 
+  // Initialize and render tag management UI
+  if (els.settingsTagSearchInput) {
+    els.settingsTagSearchInput.value = '';
+  }
+  renderSettingsTagList();
+
   openModal(els.modalSettings);
 }
 
@@ -1815,6 +1841,87 @@ function closeSettingsModal() {
     renderStarCriteriaPanel();
     updateRadar();
   }
+}
+
+function renderSettingsTagList(filterText = '') {
+  if (!els.settingsTagList) return;
+
+  const tags = db.getTagsWithUsageCount();
+  const filtered = tags.filter(t => t.name.toLowerCase().includes(filterText.toLowerCase()));
+
+  els.settingsTagList.innerHTML = '';
+  if (filtered.length === 0) {
+    const emptyMsg = document.createElement('div');
+    emptyMsg.style.color = 'var(--color-text-muted)';
+    emptyMsg.style.fontSize = '0.8125rem';
+    emptyMsg.style.textAlign = 'center';
+    emptyMsg.style.padding = '12px';
+    emptyMsg.textContent = 'タグが見つかりません';
+    els.settingsTagList.appendChild(emptyMsg);
+    return;
+  }
+
+  filtered.forEach(tag => {
+    const item = document.createElement('div');
+    item.className = 'settings-tag-item';
+    item.style.display = 'flex';
+    item.style.justifyContent = 'space-between';
+    item.style.alignItems = 'center';
+    item.style.padding = '6px 10px';
+    item.style.background = 'rgba(255,255,255,0.02)';
+    item.style.borderRadius = 'var(--radius-sm)';
+    item.style.border = '1px solid var(--color-border)';
+
+    const labelBox = document.createElement('div');
+    labelBox.style.display = 'flex';
+    labelBox.style.gap = '8px';
+    labelBox.style.alignItems = 'baseline';
+
+    const nameSpan = document.createElement('span');
+    nameSpan.textContent = tag.name;
+    nameSpan.style.fontWeight = '600';
+    nameSpan.style.color = 'var(--color-text-main)';
+
+    const countSpan = document.createElement('span');
+    countSpan.textContent = `${tag.usageCount} reviews`;
+    countSpan.style.fontSize = '0.75rem';
+    countSpan.style.color = 'var(--color-text-muted)';
+
+    labelBox.appendChild(nameSpan);
+    labelBox.appendChild(countSpan);
+
+    const delBtn = document.createElement('button');
+    delBtn.textContent = '削除';
+    delBtn.className = 'btn btn-danger';
+    delBtn.style.padding = '4px 10px';
+    delBtn.style.fontSize = '0.75rem';
+    delBtn.style.height = 'auto';
+
+    delBtn.addEventListener('click', async () => {
+      if (tag.usageCount > 0) {
+        const confirmed = confirm(`このタグは ${tag.usageCount} 件のレビューで使用されています。\n削除すると、これらのレビューからもタグが削除されます。\n\n本当に削除しますか？`);
+        if (!confirmed) return;
+      }
+
+      try {
+        await db.deleteTag(tag.id);
+        showToast('タグを削除しました');
+        renderSettingsTagList(els.settingsTagSearchInput ? els.settingsTagSearchInput.value : '');
+
+        // Refresh Editor UI if editor is active and showing tags
+        if (state.currentVideoId && state.currentView === 'editor') {
+          reviewEditorController.renderVideoTagsList();
+          reviewEditorController.renderSharedReviews();
+        }
+      } catch (err) {
+        showToast(`タグの削除に失敗しました: ${err.message}`, 'error');
+      }
+    });
+
+    item.appendChild(labelBox);
+    item.appendChild(delBtn);
+    els.settingsTagList.appendChild(item);
+  });
 }
 
 // Render Folder Settings Panel inside the settings modal
