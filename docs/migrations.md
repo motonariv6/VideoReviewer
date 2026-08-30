@@ -2,7 +2,27 @@
 
 This document describes the changes across database schema versions.
 
-## Schema Version 3 (Current)
+## Schema Version 4 (Current)
+Introduced Multi-Reviewer support, Review-linked tags, pending reviews storage, and Custom Poster image references.
+
+### Overview of Changes
+1. **Added Tables**:
+   - `reviewers` (tracks multiple reviewer profiles, identifying exactly one profile as the local owner: `isLocal: true`).
+   - `review_tags` (associates tags to specific reviews rather than logical assets).
+   - `pending_shared_reviews` (stores shared review packages that lack a matching local video file).
+2. **Removed Table**: `video_tags` (replaced by `review_tags`).
+3. **Modified Tables / Fields**:
+   - `media_assets`: Added `customPosterId` pointing to user's custom poster image in IndexedDB.
+   - `video_reviews`: Added `reviewerId` and `origin` (`"local" | "imported"`).
+   - `criterion_ratings`: Linked to `videoReviewId` instead of logical asset ID.
+   - `timeline_notes`: Linked to `videoReviewId` in addition to `mediaAssetId`.
+4. **Migration Logic**:
+   - During upgrade, tags previously stored under `video_tags` are migrated to the local owner's review (`review_tags`).
+   - Incomplete data (e.g. legacy `template-*` evaluations) are canonicalized, merged, and cleaned up.
+
+---
+
+## Schema Version 3
 Introduced the concept of persistent logical media identity based on file content hashing.
 
 ### Overview of Changes
