@@ -74,6 +74,7 @@ The application uses a hybrid storage model:
 - **displayTitle**: Nullable user-set title (`string | null`).
 - **genreId**: Foreign key pointing to `genres.id`.
 - **thumbnailId**: Foreign key pointing to the `images` store in IndexedDB.
+- **customPosterId**: Nullable foreign key pointing to the user's custom poster image in the `images` store of IndexedDB (`string | null`).
 - **identityStatus**: `"normal" | "conflict"`. Used to declare if the asset is in a conflict state.
 - **identityConflictGroupId**: Nullable group ID (`string | null`).
 
