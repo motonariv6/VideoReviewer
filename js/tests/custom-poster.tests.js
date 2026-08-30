@@ -920,6 +920,309 @@ export async function runCustomPosterTests() {
     assert(restoredAsset.customPosterId === undefined, 'Legacy asset customPosterId should be undefined');
   });
 
+  // 17. customPosterId優先表示 (getPreferredVideoImageId helper検証)
+  await runTest('17. getPreferredVideoImageId が customPosterId を最優先で返すこと', async () => {
+    const m = await import('../app.js');
+    const asset1 = { customPosterId: 'img-poster-x', thumbnailId: 'img-vid-y' };
+    const asset2 = { thumbnailId: 'img-vid-y' };
+    const asset3 = {};
+
+    assert(m.getPreferredVideoImageId(asset1) === 'img-poster-x', 'Should return customPosterId');
+    assert(m.getPreferredVideoImageId(asset2) === 'img-vid-y', 'Should return thumbnailId');
+    assert(m.getPreferredVideoImageId(asset3) === null, 'Should return null');
+  });
+
+  // 18. 一覧カード内ポスターボタン存在 & click時バブリング防止検証 (renderLibrary production path)
+  await runTest('18. 一覧カード内にポスター画像設定ボタンが存在し、クリック時にバブリングしないこと', async () => {
+    const asset = {
+      id: 'vid-card-btn-test',
+      displayTitle: 'Card Button Test',
+      genreId: 'genre-default',
+      identityStatus: 'normal',
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    };
+    const testDb = createTestDb([asset]);
+    await testDb.initAsync();
+
+    const originalAppDb = await new Promise(resolve => {
+      import('../app.js').then(m => resolve(m.db));
+    });
+
+    setDbForTesting(testDb);
+
+    try {
+      const m = await import('../app.js');
+      m.renderLibrary();
+
+      const grid = document.getElementById('video-grid');
+      const card = grid.querySelector('.video-card');
+      assert(card !== null, 'Video card must be rendered in DOM');
+
+      const posterBtn = card.querySelector('.btn-poster-card');
+      assert(posterBtn !== null, 'Card must contain poster button');
+
+      let cardClicked = false;
+      card.addEventListener('click', () => {
+        cardClicked = true;
+      });
+
+      const clickEvent = new MouseEvent('click', { bubbles: true, cancelable: true });
+      posterBtn.dispatchEvent(clickEvent);
+
+      assert(cardClicked === false, 'Clicking posterBtn must not trigger card click event (bubbling prevented)');
+    } finally {
+      setDbForTesting(originalAppDb);
+    }
+  });
+
+  // 19. Review Editorからポスター設定/削除およびプレビューが可能なこと
+  await runTest('19. 詳細画面内にポスター設定・削除ボタンおよびプレビュー領域が存在すること', async () => {
+    assert(document.getElementById('btn-editor-upload-poster') !== null, 'Upload button must exist in DOM');
+    assert(document.getElementById('btn-editor-delete-poster') !== null, 'Delete button must exist in DOM');
+    assert(document.getElementById('editor-poster-preview-container') !== null, 'Preview container must exist in DOM');
+    assert(document.getElementById('editor-poster-preview-img') !== null, 'Preview image element must exist in DOM');
+  });
+
+  // 20. image以外のFile、空Blob、デコード失敗画像が正しくエラーになること
+  await runTest('20. 不正な画像ファイルがバリデーションで弾かれること', async () => {
+    const textFile = new Blob(['not-an-image'], { type: 'text/plain' });
+    let textErr = null;
+    try {
+      const m = await import('../app.js');
+      await m.validateImageFile(textFile);
+    } catch (err) {
+      textErr = err;
+    }
+    assert(textErr !== null, 'Text file must be rejected');
+    assert(textErr.message.includes('画像ではありません'), 'Error message must specify non-image');
+
+    const emptyBlob = new Blob([], { type: 'image/png' });
+    let emptyErr = null;
+    try {
+      const m = await import('../app.js');
+      await m.validateImageFile(emptyBlob);
+    } catch (err) {
+      emptyErr = err;
+    }
+    assert(emptyErr !== null, 'Empty Blob must be rejected');
+    assert(emptyErr.message.includes('空のファイル'), 'Error should specify empty file');
+
+    const malformedImg = new Blob(['invalid-png-header-data'], { type: 'image/png' });
+    let decodeErr = null;
+    try {
+      const m = await import('../app.js');
+      await m.validateImageFile(malformedImg);
+    } catch (err) {
+      decodeErr = err;
+    }
+    assert(decodeErr !== null, 'Malformed image must fail to decode');
+    assert(decodeErr.message.includes('デコードに失敗'), 'Error should specify decode failure');
+  });
+
+  // 21. 新規poster設定失敗時 rollback (customPosterIdは元状態、新Blobは削除)
+  await runTest('21. 新規ポスター設定失敗時のロールバック検証', async () => {
+    const asset = {
+      id: 'vid-new-poster-rollback',
+      displayTitle: 'New Poster Rollback',
+      genreId: 'genre-default',
+      identityStatus: 'normal',
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    };
+    const testDb = createTestDb([asset]);
+    await testDb.initAsync();
+
+    const originalAppDb = await new Promise(resolve => {
+      import('../app.js').then(m => resolve(m.db));
+    });
+    setDbForTesting(testDb);
+
+    try {
+      const m = await import('../app.js');
+      const originalUpdateVideo = testDb.updateVideo;
+      testDb.updateVideo = async () => {
+        throw new Error('故意のメタデータ更新エラー');
+      };
+
+      const dummyFile = new Blob(['new-poster-binary'], { type: 'image/png' });
+
+      let errorThrown = false;
+      try {
+        await m.setPosterImageAction('vid-new-poster-rollback', dummyFile);
+      } catch (err) {
+        errorThrown = true;
+      }
+      assert(errorThrown === true, 'setPosterImageAction should throw error');
+
+      testDb.updateVideo = originalUpdateVideo;
+
+      const checkAsset = testDb.getVideo('vid-new-poster-rollback');
+      assert(!checkAsset.customPosterId, 'customPosterId must remain unset');
+
+      const blobExists = await testDb.getImage('img-poster-vid-new-poster-rollback');
+      assert(blobExists === null, 'Newly written Blob must be deleted from IndexedDB');
+    } finally {
+      setDbForTesting(originalAppDb);
+    }
+  });
+
+  // 22. poster置換失敗時 rollback (customPosterId元状態、元Blob復帰)
+  await runTest('22. ポスター置換失敗時のロールバック検証', async () => {
+    const asset = {
+      id: 'vid-replace-rollback',
+      displayTitle: 'Replace Rollback',
+      customPosterId: 'img-poster-vid-replace-rollback',
+      genreId: 'genre-default',
+      identityStatus: 'normal',
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    };
+    const testDb = createTestDb([asset]);
+    await testDb.initAsync();
+
+    const originalAppDb = await new Promise(resolve => {
+      import('../app.js').then(m => resolve(m.db));
+    });
+    setDbForTesting(testDb);
+
+    try {
+      const m = await import('../app.js');
+      const oldBlob = new Blob(['old-binary'], { type: 'image/png' });
+      await testDb.putImage('img-poster-vid-replace-rollback', oldBlob);
+
+      const originalUpdateVideo = testDb.updateVideo;
+      testDb.updateVideo = async () => {
+        throw new Error('故意のメタデータ更新エラー');
+      };
+
+      const newBlob = new Blob(['new-binary'], { type: 'image/png' });
+
+      let errorThrown = false;
+      try {
+        await m.setPosterImageAction('vid-replace-rollback', newBlob);
+      } catch (err) {
+        errorThrown = true;
+      }
+      assert(errorThrown === true, 'setPosterImageAction should throw error');
+
+      testDb.updateVideo = originalUpdateVideo;
+
+      const checkAsset = testDb.getVideo('vid-replace-rollback');
+      assert(checkAsset.customPosterId === 'img-poster-vid-replace-rollback', 'customPosterId must remain unchanged');
+
+      const restoredBlob = await testDb.getImage('img-poster-vid-replace-rollback');
+      assert(restoredBlob !== null, 'Poster Blob must still exist');
+      const text = await restoredBlob.text();
+      assert(text === 'old-binary', 'Poster Blob content must be rolled back to the old content');
+    } finally {
+      setDbForTesting(originalAppDb);
+    }
+  });
+
+  // 23. poster削除失敗時 rollback (customPosterId / Blobとも復帰)
+  await runTest('23. ポスター削除中のIndexedDB削除失敗時のロールバック検証', async () => {
+    const asset = {
+      id: 'vid-del-rollback',
+      displayTitle: 'Delete Rollback',
+      customPosterId: 'img-poster-vid-del-rollback',
+      genreId: 'genre-default',
+      identityStatus: 'normal',
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    };
+    const testDb = createTestDb([asset]);
+    await testDb.initAsync();
+
+    const originalAppDb = await new Promise(resolve => {
+      import('../app.js').then(m => resolve(m.db));
+    });
+    setDbForTesting(testDb);
+
+    try {
+      const m = await import('../app.js');
+      const dummyBlob = new Blob(['delete-rollback-binary'], { type: 'image/png' });
+      await testDb.putImage('img-poster-vid-del-rollback', dummyBlob);
+
+      const originalDelete = testDb.idb.delete;
+      testDb.idb.delete = async () => {
+        throw new Error('故意のIndexedDB削除エラー');
+      };
+
+      try {
+        await m.deletePosterImageAction('vid-del-rollback');
+      } catch (err) {
+        // Expected to fail silently and trigger rollback
+      }
+
+      testDb.idb.delete = originalDelete;
+
+      const checkAsset = testDb.getVideo('vid-del-rollback');
+      assert(checkAsset.customPosterId === 'img-poster-vid-del-rollback', 'customPosterId must be restored to original ID');
+
+      const restoredBlob = await testDb.getImage('img-poster-vid-del-rollback');
+      assert(restoredBlob !== null, 'Poster Blob must be restored in IndexedDB');
+      const text = await restoredBlob.text();
+      assert(text === 'delete-rollback-binary', 'Poster Blob content must match the original content');
+    } finally {
+      setDbForTesting(originalAppDb);
+    }
+  });
+
+  // 24. 正常削除 (customPosterId null、generated thumbnail自動復帰)
+  await runTest('24. ポスターの正常削除および generated thumbnail への自動復帰検証', async () => {
+    const asset = {
+      id: 'vid-del-success',
+      displayTitle: 'Delete Success',
+      thumbnailId: 'img-vid-default-thumbnail',
+      customPosterId: 'img-poster-vid-del-success',
+      genreId: 'genre-default',
+      identityStatus: 'normal',
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    };
+    const testDb = createTestDb([asset]);
+    await testDb.initAsync();
+
+    const originalAppDb = await new Promise(resolve => {
+      import('../app.js').then(m => resolve(m.db));
+    });
+    setDbForTesting(testDb);
+
+    try {
+      const m = await import('../app.js');
+      const dummyBlob = new Blob(['binary-data'], { type: 'image/png' });
+      await testDb.putImage('img-poster-vid-del-success', dummyBlob);
+
+      await m.deletePosterImageAction('vid-del-success');
+
+      const checkAsset = testDb.getVideo('vid-del-success');
+      assert(checkAsset.customPosterId === null, 'customPosterId reference must be cleared');
+
+      const blobExists = await testDb.getImage('img-poster-vid-del-success');
+      assert(blobExists === null, 'Poster image must be deleted from IndexedDB');
+
+      const imageId = m.getPreferredVideoImageId(checkAsset);
+      assert(imageId === 'img-vid-default-thumbnail', 'Should fallback to generated thumbnailId after poster deletion');
+    } finally {
+      setDbForTesting(originalAppDb);
+    }
+  });
+
+  // 25. 10MB容量制限テスト
+  await runTest('25. 10MB超のポスター画像ファイルが10MB制限バリデーションにより却下されること', async () => {
+    const largeFile = new Blob([new Uint8Array(11 * 1024 * 1024)], { type: 'image/png' });
+    let error = null;
+    try {
+      const m = await import('../app.js');
+      await m.validateImageFile(largeFile);
+    } catch (err) {
+      error = err;
+    }
+    assert(error !== null, 'Large file (>10MB) must be rejected');
+    assert(error.message.includes('10MB以下の画像を選択'), 'Error message must mention the 10MB limit');
+  });
+
   console.groupEnd();
   return results;
 }
