@@ -74,6 +74,7 @@
           "displayTitle": { "type": ["string", "null"] },
           "genreId": { "type": "string", "pattern": "^genre-[a-zA-Z0-9-]{1,64}$" },
           "thumbnailId": { "type": "string" },
+          "customPosterId": { "type": ["string", "null"] },
           "identityStatus": { "type": "string", "enum": ["normal", "conflict", "provisional", "verified"] },
           "identityConflictGroupId": { "type": ["string", "null"] },
           "createdAt": { "type": "string" },

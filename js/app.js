@@ -2344,7 +2344,7 @@ function renderSettingsGenreControls() {
 }
 
 // Helper to generate a ZIP Blob of the current database state
-async function generateLocalBackupZipBlob() {
+export async function generateLocalBackupZipBlob() {
   const images = await db.getAllImages();
   const dbData = {
     schemaVersion: 4,
@@ -2392,12 +2392,15 @@ async function generateLocalBackupZipBlob() {
   const imgFolder = zip.folder('images');
   const thumbFolder = imgFolder.folder('thumbnails');
   const noteFolder = imgFolder.folder('timeline-notes');
+  const posterFolder = imgFolder.folder('posters');
 
   images.forEach(image => {
     if (image.id.startsWith('img-vid-')) {
       thumbFolder.file(image.id, image.data);
     } else if (image.id.startsWith('img-note-')) {
       noteFolder.file(image.id, image.data);
+    } else if (image.id.startsWith('img-poster-')) {
+      posterFolder.file(image.id, image.data);
     } else {
       thumbFolder.file(image.id, image.data);
     }
@@ -2462,6 +2465,7 @@ async function handleBackupRestore(e) {
     const imageIds = [];
     const thumbnailsFolder = zip.folder('images/thumbnails');
     const notesFolder = zip.folder('images/timeline-notes');
+    const postersFolder = zip.folder('images/posters');
     if (thumbnailsFolder) {
       thumbnailsFolder.forEach((relativePath, zipEntry) => {
         if (!zipEntry.dir) imageIds.push(relativePath);
@@ -2469,6 +2473,11 @@ async function handleBackupRestore(e) {
     }
     if (notesFolder) {
       notesFolder.forEach((relativePath, zipEntry) => {
+        if (!zipEntry.dir) imageIds.push(relativePath);
+      });
+    }
+    if (postersFolder) {
+      postersFolder.forEach((relativePath, zipEntry) => {
         if (!zipEntry.dir) imageIds.push(relativePath);
       });
     }
@@ -2540,6 +2549,18 @@ async function handleBackupRestore(e) {
 
       if (notesFolder) {
         notesFolder.forEach((relativePath, zipEntry) => {
+          if (!zipEntry.dir) {
+            imagePromises.push(
+              zipEntry.async('blob').then(blob => {
+                imageEntries.push({ id: relativePath, data: blob });
+              })
+            );
+          }
+        });
+      }
+
+      if (postersFolder) {
+        postersFolder.forEach((relativePath, zipEntry) => {
           if (!zipEntry.dir) {
             imagePromises.push(
               zipEntry.async('blob').then(blob => {
