@@ -26,6 +26,238 @@ function generateUUIDv4() {
   });
 }
 
+function areTemplatesEqual(t1, t2, criteria) {
+  if (!t1 || !t2 || typeof t1 !== 'object' || typeof t2 !== 'object') return false;
+  if (t1.genreId !== t2.genreId) return false;
+
+  // template nameの衝突防止
+  const name1 = typeof t1.name === 'string' ? t1.name.trim() : '';
+  const name2 = typeof t2.name === 'string' ? t2.name.trim() : '';
+  if (name1 !== '' && name2 !== '' && name1 !== name2) {
+    return false; // 両方に異なる非空の名前が存在する場合は merge 不可
+  }
+
+  const getCriteriaIds = (tId, templateCriteriaIds) => {
+    const relatedIds = (criteria || [])
+      .filter(c => c && typeof c === 'object' && c.templateId === tId)
+      .sort((a, b) => {
+        if (a.displayOrder !== b.displayOrder) {
+          return a.displayOrder - b.displayOrder;
+        }
+        return String(a.id).localeCompare(String(b.id));
+      })
+      .map(c => c.id);
+
+    if (typeof templateCriteriaIds === 'string' && templateCriteriaIds !== '') {
+      const splitIds = templateCriteriaIds.split(',').map(id => id.trim()).filter(id => id !== '');
+      if (splitIds.length !== relatedIds.length) {
+        return null; // 矛盾
+      }
+      for (let i = 0; i < splitIds.length; i++) {
+        if (splitIds[i] !== relatedIds[i]) {
+          return null; // 矛盾
+        }
+      }
+    }
+    return relatedIds;
+  };
+
+  const ids1 = getCriteriaIds(t1.id, t1.criteriaIds);
+  const ids2 = getCriteriaIds(t2.id, t2.criteriaIds);
+
+  if (ids1 === null || ids2 === null) return false;
+
+  if (ids1.length !== ids2.length) return false;
+  for (let i = 0; i < ids1.length; i++) {
+    if (ids1[i] !== ids2[i]) return false;
+  }
+  return true;
+}
+
+export function canonicalizeDatabaseData({ genres, evaluation_templates, rating_criteria } = {}) {
+  let modified = false;
+
+  // 1. genres の補完 (defensive check)
+  let normalizedGenres = genres;
+  if (Array.isArray(genres)) {
+    normalizedGenres = JSON.parse(JSON.stringify(genres));
+    normalizedGenres.forEach(g => {
+      if (!g || typeof g !== 'object') return;
+      const nameStr = typeof g.name === 'string' ? g.name : '';
+      if (g.displayTitle === undefined || g.displayTitle === null || g.displayTitle === '') {
+        g.displayTitle = nameStr || '名称未設定';
+        modified = true;
+      }
+      if (g.description === undefined || g.description === null || g.description === '') {
+        g.description = (nameStr || '一般') + 'のジャンル区分';
+        modified = true;
+      }
+      if (g.createdAt === undefined || g.createdAt === null || g.createdAt === '') {
+        g.createdAt = '1970-01-01T00:00:00.000Z';
+        modified = true;
+      }
+      if (g.updatedAt === undefined || g.updatedAt === null || g.updatedAt === '') {
+        g.updatedAt = '1970-01-01T00:00:00.000Z';
+        modified = true;
+      }
+    });
+  }
+
+  // 2. evaluation_templates の ID 変換 (defensive check)
+  let finalTemplates = evaluation_templates;
+  let normalizedCriteria = rating_criteria;
+  if (Array.isArray(rating_criteria)) {
+    normalizedCriteria = JSON.parse(JSON.stringify(rating_criteria));
+  }
+
+  if (Array.isArray(evaluation_templates)) {
+    finalTemplates = [];
+    const canonicalIds = new Set();
+    const syncCriteriaIdsTemplates = new Set();
+    const idMap = new Map();
+
+    // 先に legacy でないもの（canonical ID のもの、および malformed レコード）を finalTemplates に push
+    evaluation_templates.forEach(t => {
+      if (t && typeof t === 'object' && typeof t.id === 'string' && t.id.startsWith('template-')) {
+        return;
+      }
+      const tCopy = t && typeof t === 'object' ? JSON.parse(JSON.stringify(t)) : t;
+      finalTemplates.push(tCopy);
+      if (t && typeof t === 'object' && typeof t.id === 'string') {
+        canonicalIds.add(t.id);
+      }
+    });
+
+    const legacyTemplates = evaluation_templates.filter(t => t && typeof t === 'object' && typeof t.id === 'string' && t.id.startsWith('template-'));
+
+    for (const t of legacyTemplates) {
+      const tCopy = JSON.parse(JSON.stringify(t));
+      const suffix = tCopy.id.slice('template-'.length);
+      const primaryCanonicalId = 'temp-' + suffix;
+      const oldId = tCopy.id;
+
+      if (canonicalIds.has(primaryCanonicalId)) {
+        const existingIdx = finalTemplates.findIndex(et => et && et.id === primaryCanonicalId);
+        const existing = existingIdx !== -1 ? finalTemplates[existingIdx] : null;
+
+        if (existing && areTemplatesEqual(tCopy, existing, normalizedCriteria)) {
+          // マージ実施。name のマージルール
+          const name1 = typeof existing.name === 'string' ? existing.name.trim() : '';
+          const name2 = typeof tCopy.name === 'string' ? tCopy.name.trim() : '';
+
+          if (name1 === '' && name2 !== '') {
+            existing.name = tCopy.name;
+          }
+
+          idMap.set(oldId, primaryCanonicalId);
+          syncCriteriaIdsTemplates.add(primaryCanonicalId); // マージ先なので同期対象
+          modified = true;
+        } else {
+          const fallbackCanonicalId = 'temp-legacy-' + suffix;
+          if (!/^temp-[a-zA-Z0-9-]{1,64}$/.test(fallbackCanonicalId)) {
+            throw new Error(`Generated canonical ID "${fallbackCanonicalId}" violates Schema constraints.`);
+          }
+          if (canonicalIds.has(fallbackCanonicalId)) {
+            const existingFallbackIdx = finalTemplates.findIndex(et => et && et.id === fallbackCanonicalId);
+            const existingFallback = existingFallbackIdx !== -1 ? finalTemplates[existingFallbackIdx] : null;
+
+            if (existingFallback && areTemplatesEqual(tCopy, existingFallback, normalizedCriteria)) {
+              // マージ実施
+              const nameFallback = typeof existingFallback.name === 'string' ? existingFallback.name.trim() : '';
+              const name2 = typeof tCopy.name === 'string' ? tCopy.name.trim() : '';
+              if (nameFallback === '' && name2 !== '') {
+                existingFallback.name = tCopy.name;
+              }
+
+              idMap.set(oldId, fallbackCanonicalId);
+              syncCriteriaIdsTemplates.add(fallbackCanonicalId); // マージ先なので同期対象
+              modified = true;
+            } else {
+              throw new Error(`Deterministic template ID collision cannot be resolved for "${oldId}" -> "${fallbackCanonicalId}".`);
+            }
+          } else {
+            tCopy.id = fallbackCanonicalId;
+            finalTemplates.push(tCopy);
+            canonicalIds.add(fallbackCanonicalId);
+            idMap.set(oldId, fallbackCanonicalId);
+            modified = true;
+          }
+        }
+      } else {
+        tCopy.id = primaryCanonicalId;
+        finalTemplates.push(tCopy);
+        canonicalIds.add(primaryCanonicalId);
+        idMap.set(oldId, primaryCanonicalId);
+        modified = true;
+      }
+    }
+
+    // 3. rating_criteria の templateId 書き換え
+    if (idMap.size > 0 && Array.isArray(normalizedCriteria)) {
+      normalizedCriteria.forEach(c => {
+        if (c && typeof c === 'object' && typeof c.templateId === 'string' && idMap.has(c.templateId)) {
+          c.templateId = idMap.get(c.templateId);
+          modified = true;
+        }
+      });
+    }
+
+    // 4. evaluation_templates の name / criteriaIds 補完・同期
+    finalTemplates.forEach(t => {
+      if (!t || typeof t !== 'object') return;
+
+      if (t.name === undefined || t.name === null || String(t.name).trim() === '') {
+        const genre = Array.isArray(normalizedGenres) ? normalizedGenres.find(g => g && g.id === t.genreId) : null;
+        if (genre && typeof genre.name === 'string' && genre.name) {
+          t.name = genre.name + 'のテンプレート';
+        } else {
+          t.name = '評価テンプレート';
+        }
+        modified = true;
+      }
+
+      // criteriaIds同期の条件判断
+      const isMissing = t.criteriaIds === undefined || t.criteriaIds === null || t.criteriaIds === '';
+      const needsSync = syncCriteriaIdsTemplates.has(t.id);
+
+      if (isMissing || needsSync) {
+        if (Array.isArray(normalizedCriteria)) {
+          const related = normalizedCriteria
+            .filter(c => c && typeof c === 'object' && c.templateId === t.id)
+            .sort((a, b) => {
+              if (a.displayOrder !== b.displayOrder) {
+                return a.displayOrder - b.displayOrder;
+              }
+              return String(a.id).localeCompare(String(b.id));
+            });
+          const currentCanonicalCriteriaIds = Array.from(new Set(related.map(c => c.id))).join(',');
+
+          if (t.criteriaIds !== currentCanonicalCriteriaIds) {
+            t.criteriaIds = currentCanonicalCriteriaIds;
+            modified = true;
+          }
+        }
+      }
+
+      if (t.createdAt === undefined || t.createdAt === null || t.createdAt === '') {
+        t.createdAt = '1970-01-01T00:00:00.000Z';
+        modified = true;
+      }
+      if (t.updatedAt === undefined || t.updatedAt === null || t.updatedAt === '') {
+        t.updatedAt = '1970-01-01T00:00:00.000Z';
+        modified = true;
+      }
+    });
+  }
+
+  return {
+    genres: normalizedGenres,
+    evaluation_templates: finalTemplates,
+    rating_criteria: normalizedCriteria,
+    modified
+  };
+}
+
 // Normalizes displayTitle: null/undefined/blank becomes null, non-empty string is trimmed.
 export function normalizeDisplayTitle(title) {
   if (title === null || title === undefined) return null;
@@ -341,6 +573,9 @@ export class AppDatabase {
 
     // Perform multi-reviewer and Schema v4 migration (v4)
     await this._migrateToV4MultiReview();
+
+    // Startup canonicalization for legacy genres/templates data
+    await this._canonicalizeLocalLegacyData();
 
 
 
@@ -795,6 +1030,77 @@ export class AppDatabase {
     }
   }
 
+  async _canonicalizeLocalLegacyData() {
+    const canonRes = canonicalizeDatabaseData({
+      genres: this.genres,
+      evaluation_templates: this.templates,
+      rating_criteria: this.criteria
+    });
+
+    if (!canonRes.modified) {
+      return;
+    }
+
+    console.log('Legacy genres/templates data modification detected. Applying startup canonicalization...');
+
+    // 1. Snapshot in-memory collections and localStorage for rollback
+    const inMemorySnapshot = {
+      genres: JSON.parse(JSON.stringify(this.genres || [])),
+      templates: JSON.parse(JSON.stringify(this.templates || [])),
+      criteria: JSON.parse(JSON.stringify(this.criteria || []))
+    };
+
+    const originalLocalData = {
+      genres: this.storage ? this.storage.getItem(`${this.prefix}genres`) : null,
+      evaluation_templates: this.storage ? this.storage.getItem(`${this.prefix}evaluation_templates`) : null,
+      rating_criteria: this.storage ? this.storage.getItem(`${this.prefix}rating_criteria`) : null
+    };
+
+    try {
+      // 2. Apply canonicalized data to in-memory collections
+      this.genres = canonRes.genres;
+      this.templates = canonRes.evaluation_templates;
+      this.criteria = canonRes.rating_criteria;
+
+      // 3. Strict integrity validation
+      const validationErrors = this.validateV4Structure({
+        genres: this.genres,
+        evaluation_templates: this.templates,
+        rating_criteria: this.criteria,
+        _partial: true
+      });
+
+      if (validationErrors.length > 0) {
+        throw new Error('V4 Schema Validation Failed during startup canonicalization: ' + validationErrors.join('; '));
+      }
+
+      // 4. Persistence
+      this._saveTable('genres', this.genres);
+      this._saveTable('evaluation_templates', this.templates);
+      this._saveTable('rating_criteria', this.criteria);
+
+      console.log('Startup canonicalization completed successfully.');
+    } catch (err) {
+      console.error('Startup canonicalization failed. Rolling back changes...', err);
+      // Rollback memory state
+      this.genres = inMemorySnapshot.genres;
+      this.templates = inMemorySnapshot.templates;
+      this.criteria = inMemorySnapshot.criteria;
+
+      // Rollback localStorage
+      const localKeys = ['genres', 'evaluation_templates', 'rating_criteria'];
+      localKeys.forEach(k => {
+        const val = originalLocalData[k];
+        if (val !== null && val !== undefined) {
+          this.storage.setItem(`${this.prefix}${k}`, val);
+        } else {
+          this.storage.removeItem(`${this.prefix}${k}`);
+        }
+      });
+      throw err;
+    }
+  }
+
   async _migrateInMemoryToV4() {
     const localReviewer = this._ensureLocalReviewerDuringInitialization();
 
@@ -904,132 +1210,240 @@ export class AppDatabase {
 
   validateV4Structure(data) {
     const errors = [];
+    const isPartial = data && data._partial === true;
 
     // 1. Reviewer validation
-    const reviewers = data.reviewers || [];
     const reviewerIds = new Set();
-    let localReviewerCount = 0;
-    reviewers.forEach((r, idx) => {
-      if (!r.id) errors.push(`reviewer[${idx}] id is missing`);
-      if (reviewerIds.has(r.id)) errors.push(`Duplicate reviewer ID: ${r.id}`);
-      reviewerIds.add(r.id);
-      if (!r.displayName || String(r.displayName).trim() === '') {
-        errors.push(`reviewer ${r.id || idx} displayName is empty`);
+    if (!isPartial || data.reviewers !== undefined) {
+      const reviewers = data.reviewers || [];
+      let localReviewerCount = 0;
+      reviewers.forEach((r, idx) => {
+        if (!r || typeof r !== 'object') {
+          errors.push(`reviewer[${idx}] is not an object`);
+          return;
+        }
+        if (!r.id) errors.push(`reviewer[${idx}] id is missing`);
+        if (reviewerIds.has(r.id)) errors.push(`Duplicate reviewer ID: ${r.id}`);
+        reviewerIds.add(r.id);
+        if (!r.displayName || String(r.displayName).trim() === '') {
+          errors.push(`reviewer ${r.id || idx} displayName is empty`);
+        }
+        if (r.isLocal === true) {
+          localReviewerCount++;
+        }
+      });
+      if (localReviewerCount !== 1) {
+        errors.push(`local reviewer count must be exactly 1, found ${localReviewerCount}`);
       }
-      if (r.isLocal === true) {
-        localReviewerCount++;
-      }
-    });
-    if (localReviewerCount !== 1) {
-      errors.push(`local reviewer count must be exactly 1, found ${localReviewerCount}`);
     }
 
     // 2. Media asset checks
-    const mediaAssets = data.media_assets || [];
-    mediaAssets.forEach(v => {
-      if (v.sourceType === 'url' || (v.videoUrl !== undefined && v.videoUrl !== null && v.videoUrl !== '')) {
-        errors.push(`URL video source found in media asset ${v.id}. This is deprecated.`);
-      }
-    });
+    if (!isPartial || data.media_assets !== undefined) {
+      const mediaAssets = data.media_assets || [];
+      mediaAssets.forEach((v, idx) => {
+        if (!v || typeof v !== 'object') {
+          errors.push(`media_asset[${idx}] is not an object`);
+          return;
+        }
+        if (v.sourceType === 'url' || (v.videoUrl !== undefined && v.videoUrl !== null && v.videoUrl !== '')) {
+          errors.push(`URL video source found in media asset ${v.id}. This is deprecated.`);
+        }
+      });
+    }
 
     // 3. Review validation
-    const reviews = data.video_reviews || [];
     const reviewIds = new Set();
-    const uniqueReviews = new Set();
-    reviews.forEach((r, idx) => {
-      if (!r.id) errors.push(`video_review[${idx}] id is missing`);
-      if (reviewIds.has(r.id)) errors.push(`Duplicate review ID: ${r.id}`);
-      reviewIds.add(r.id);
-
-      const uniqueKey = `${r.mediaAssetId}::${r.reviewerId}`;
-      if (uniqueReviews.has(uniqueKey)) {
-        errors.push(`Duplicate review for mediaAssetId + reviewerId: ${uniqueKey}`);
-      }
-      uniqueReviews.add(uniqueKey);
-
-      // Check reviewer exists
-      if (!reviewerIds.has(r.reviewerId)) {
-        errors.push(`Review ${r.id} references non-existent reviewer: ${r.reviewerId}`);
-      }
-      // Check media asset exists
-      if (!mediaAssets.some(v => v.id === r.mediaAssetId)) {
-        errors.push(`Review ${r.id} references non-existent media asset: ${r.mediaAssetId}`);
-      }
-      // Check overallScore
-      if (r.overallScore !== null && r.overallScore !== undefined) {
-        const score = parseInt(r.overallScore, 10);
-        if (isNaN(score) || score < 1 || score > 5) {
-          errors.push(`Review ${r.id} has invalid overallScore: ${r.overallScore}`);
+    if (!isPartial || data.video_reviews !== undefined) {
+      const reviews = data.video_reviews || [];
+      const uniqueReviews = new Set();
+      reviews.forEach((r, idx) => {
+        if (!r || typeof r !== 'object') {
+          errors.push(`video_review[${idx}] is not an object`);
+          return;
         }
-      }
-      // Check origin
-      if (r.origin !== 'local' && r.origin !== 'imported') {
-        errors.push(`Review ${r.id} has invalid origin: ${r.origin}`);
-      }
-      // Check comment type
-      if (r.comment !== null && r.comment !== undefined && typeof r.comment !== 'string') {
-        errors.push(`Review ${r.id} has invalid comment type: ${typeof r.comment}`);
-      }
-    });
+        if (!r.id) errors.push(`video_review[${idx}] id is missing`);
+        if (reviewIds.has(r.id)) errors.push(`Duplicate review ID: ${r.id}`);
+        reviewIds.add(r.id);
+
+        const uniqueKey = `${r.mediaAssetId}::${r.reviewerId}`;
+        if (uniqueReviews.has(uniqueKey)) {
+          errors.push(`Duplicate review for mediaAssetId + reviewerId: ${uniqueKey}`);
+        }
+        uniqueReviews.add(uniqueKey);
+
+        if ((!isPartial || data.reviewers !== undefined) && !reviewerIds.has(r.reviewerId)) {
+          errors.push(`Review ${r.id} references non-existent reviewer: ${r.reviewerId}`);
+        }
+        if ((!isPartial || data.media_assets !== undefined) && data.media_assets && !data.media_assets.some(v => v && v.id === r.mediaAssetId)) {
+          errors.push(`Review ${r.id} references non-existent media asset: ${r.mediaAssetId}`);
+        }
+        if (r.overallScore !== null && r.overallScore !== undefined) {
+          const score = parseInt(r.overallScore, 10);
+          if (isNaN(score) || score < 1 || score > 5) {
+            errors.push(`Review ${r.id} has invalid overallScore: ${r.overallScore}`);
+          }
+        }
+        if (r.origin !== 'local' && r.origin !== 'imported') {
+          errors.push(`Review ${r.id} has invalid origin: ${r.origin}`);
+        }
+        if (r.comment !== null && r.comment !== undefined && typeof r.comment !== 'string') {
+          errors.push(`Review ${r.id} has invalid comment type: ${typeof r.comment}`);
+        }
+      });
+    }
 
     // 4. Criterion rating validation
-    const ratings = data.criterion_ratings || [];
-    ratings.forEach(cr => {
-      if (!reviewIds.has(cr.videoReviewId)) {
-        errors.push(`Criterion rating ${cr.id} references non-existent review: ${cr.videoReviewId}`);
-      }
-    });
+    if (!isPartial || data.criterion_ratings !== undefined) {
+      const ratings = data.criterion_ratings || [];
+      ratings.forEach((cr, idx) => {
+        if (!cr || typeof cr !== 'object') {
+          errors.push(`criterion_rating[${idx}] is not an object`);
+          return;
+        }
+        if ((!isPartial || data.video_reviews !== undefined) && !reviewIds.has(cr.videoReviewId)) {
+          errors.push(`Criterion rating ${cr.id} references non-existent review: ${cr.videoReviewId}`);
+        }
+      });
+    }
 
     // 5. Review tags validation
-    const reviewTags = data.review_tags || [];
-    const tagIds = new Set((data.tags || []).map(t => t.id));
-    const reviewTagIds = new Set();
-    const seenReviewTags = new Set();
-    reviewTags.forEach(rt => {
-      if (!rt.id) errors.push(`review_tag id is missing`);
-      if (reviewTagIds.has(rt.id)) errors.push(`Duplicate review tag ID: ${rt.id}`);
-      reviewTagIds.add(rt.id);
+    if (!isPartial || data.review_tags !== undefined) {
+      const reviewTags = data.review_tags || [];
+      const tagIds = new Set((data.tags || []).filter(t => t && typeof t === 'object').map(t => t.id));
+      const reviewTagIds = new Set();
+      const seenReviewTags = new Set();
+      reviewTags.forEach((rt, idx) => {
+        if (!rt || typeof rt !== 'object') {
+          errors.push(`review_tag[${idx}] is not an object`);
+          return;
+        }
+        if (!rt.id) errors.push(`review_tag id is missing`);
+        if (reviewTagIds.has(rt.id)) errors.push(`Duplicate review tag ID: ${rt.id}`);
+        reviewTagIds.add(rt.id);
 
-      const rtagKey = `${rt.videoReviewId}::${rt.tagId}`;
-      if (seenReviewTags.has(rtagKey)) {
-        errors.push(`Duplicate review tag association for videoReviewId + tagId: ${rtagKey}`);
-      }
-      seenReviewTags.add(rtagKey);
+        const rtagKey = `${rt.videoReviewId}::${rt.tagId}`;
+        if (seenReviewTags.has(rtagKey)) {
+          errors.push(`Duplicate review tag association for videoReviewId + tagId: ${rtagKey}`);
+        }
+        seenReviewTags.add(rtagKey);
 
-      if (!reviewIds.has(rt.videoReviewId)) {
-        errors.push(`Review tag ${rt.id} references non-existent review: ${rt.videoReviewId}`);
-      }
-      if (!tagIds.has(rt.tagId)) {
-        errors.push(`Review tag ${rt.id} references non-existent tag: ${rt.tagId}`);
-      }
-    });
+        if ((!isPartial || data.video_reviews !== undefined) && !reviewIds.has(rt.videoReviewId)) {
+          errors.push(`Review tag ${rt.id} references non-existent review: ${rt.videoReviewId}`);
+        }
+        if ((!isPartial || data.tags !== undefined) && !tagIds.has(rt.tagId)) {
+          errors.push(`Review tag ${rt.id} references non-existent tag: ${rt.tagId}`);
+        }
+      });
+    }
 
     // 6. Timeline notes validation
-    const notes = data.timeline_notes || [];
-    notes.forEach(n => {
-      if (!reviewIds.has(n.videoReviewId)) {
-        errors.push(`Timeline note ${n.id} references non-existent review: ${n.videoReviewId}`);
-      }
-    });
+    if (!isPartial || data.timeline_notes !== undefined) {
+      const notes = data.timeline_notes || [];
+      notes.forEach((n, idx) => {
+        if (!n || typeof n !== 'object') {
+          errors.push(`timeline_note[${idx}] is not an object`);
+          return;
+        }
+        if ((!isPartial || data.video_reviews !== undefined) && !reviewIds.has(n.videoReviewId)) {
+          errors.push(`Timeline note ${n.id} references non-existent review: ${n.videoReviewId}`);
+        }
+      });
+    }
 
     // 7. Pending shared reviews validation
-    const pending = data.pending_shared_reviews || [];
-    const pendingIds = new Set();
-    pending.forEach(p => {
-      if (!p.id) errors.push(`pending_shared_review id is missing`);
-      if (pendingIds.has(p.id)) errors.push(`Duplicate pending ID: ${p.id}`);
-      pendingIds.add(p.id);
+    if (!isPartial || data.pending_shared_reviews !== undefined) {
+      const pending = data.pending_shared_reviews || [];
+      const pendingIds = new Set();
+      pending.forEach((p, idx) => {
+        if (!p || typeof p !== 'object') {
+          errors.push(`pending_shared_review[${idx}] is not an object`);
+          return;
+        }
+        if (!p.id) errors.push(`pending_shared_review id is missing`);
+        if (pendingIds.has(p.id)) errors.push(`Duplicate pending ID: ${p.id}`);
+        pendingIds.add(p.id);
 
-      if (!/^[0-9a-f]{64}$/.test(p.videoHash)) {
-        errors.push(`Pending review ${p.id} has invalid videoHash: ${p.videoHash}`);
-      }
-      if (p.hashAlgorithm !== 'sha256') {
-        errors.push(`Pending review ${p.id} has invalid hashAlgorithm: ${p.hashAlgorithm}`);
-      }
-      if (p.status !== 'pending') {
-        errors.push(`Pending review ${p.id} has invalid status: ${p.status}`);
-      }
-    });
+        if (!/^[0-9a-f]{64}$/.test(p.videoHash)) {
+          errors.push(`Pending review ${p.id} has invalid videoHash: ${p.videoHash}`);
+        }
+        if (p.hashAlgorithm !== 'sha256') {
+          errors.push(`Pending review ${p.id} has invalid hashAlgorithm: ${p.hashAlgorithm}`);
+        }
+        if (p.status !== 'pending') {
+          errors.push(`Pending review ${p.id} has invalid status: ${p.status}`);
+        }
+      });
+    }
+
+    // 8. Genres validation
+    const genreIds = new Set();
+    if (!isPartial || data.genres !== undefined) {
+      const genres = data.genres || [];
+      genres.forEach((g, idx) => {
+        if (!g || typeof g !== 'object') {
+          errors.push(`genres[${idx}] is not an object`);
+          return;
+        }
+        if (!g.id) errors.push(`genres[${idx}] id is missing`);
+        if (genreIds.has(g.id)) errors.push(`Duplicate genre ID: ${g.id}`);
+        genreIds.add(g.id);
+
+        if (!/^genre-[a-zA-Z0-9-]{1,64}$/.test(g.id)) {
+          errors.push(`Genre ${g.id || idx} id pattern is invalid`);
+        }
+        if (!g.name || String(g.name).trim() === '') {
+          errors.push(`Genre ${g.id || idx} name is empty`);
+        }
+        if (!g.displayTitle || String(g.displayTitle).trim() === '') {
+          errors.push(`Genre ${g.id || idx} displayTitle is empty`);
+        }
+        if (g.description === undefined || g.description === null) {
+          errors.push(`Genre ${g.id || idx} description is missing`);
+        }
+      });
+    }
+
+    // 9. Evaluation templates validation
+    const templateIds = new Set();
+    if (!isPartial || data.evaluation_templates !== undefined) {
+      const templates = data.evaluation_templates || [];
+      templates.forEach((t, idx) => {
+        if (!t || typeof t !== 'object') {
+          errors.push(`evaluation_templates[${idx}] is not an object`);
+          return;
+        }
+        if (!t.id) errors.push(`evaluation_templates[${idx}] id is missing`);
+        if (templateIds.has(t.id)) errors.push(`Duplicate template ID: ${t.id}`);
+        templateIds.add(t.id);
+
+        if (!/^temp-[a-zA-Z0-9-]{1,64}$/.test(t.id)) {
+          errors.push(`Evaluation template ${t.id || idx} id pattern is invalid`);
+        }
+        if ((!isPartial || data.genres !== undefined) && !genreIds.has(t.genreId)) {
+          errors.push(`Evaluation template ${t.id || idx} references non-existent genre: ${t.genreId}`);
+        }
+        if (!t.name || String(t.name).trim() === '') {
+          errors.push(`Evaluation template ${t.id || idx} name is empty`);
+        }
+        if (t.criteriaIds === undefined || t.criteriaIds === null) {
+          errors.push(`Evaluation template ${t.id || idx} criteriaIds is missing`);
+        }
+      });
+    }
+
+    // 10. Criteria templateId referential integrity
+    if (!isPartial || data.rating_criteria !== undefined) {
+      const criteria = data.rating_criteria || [];
+      criteria.forEach((c, idx) => {
+        if (!c || typeof c !== 'object') {
+          errors.push(`rating_criteria[${idx}] is not an object`);
+          return;
+        }
+        if (c.templateId && (!isPartial || data.evaluation_templates !== undefined) && !templateIds.has(c.templateId)) {
+          errors.push(`Criterion ${c.id || idx} references non-existent template: ${c.templateId}`);
+        }
+      });
+    }
 
     return errors;
   }
@@ -2913,6 +3327,16 @@ export class AppDatabase {
       });
     }
 
+    const canonRes = canonicalizeDatabaseData({
+      genres: rawDb.genres,
+      evaluation_templates: rawDb.evaluation_templates,
+      rating_criteria: rawDb.rating_criteria
+    });
+
+    rawDb.genres = canonRes.genres;
+    rawDb.evaluation_templates = canonRes.evaluation_templates;
+    rawDb.rating_criteria = canonRes.rating_criteria;
+
     return rawDb;
   }
 
@@ -3042,6 +3466,7 @@ export class AppDatabase {
       if (Array.isArray(rawDb.media_assets)) {
         const hashGroups = new Map();
         rawDb.media_assets.forEach(v => {
+          if (!v || typeof v !== 'object') return;
           if (v.hashStatus === 'completed') {
             if (!v.contentHash || !/^[0-9a-f]{64}$/.test(v.contentHash)) {
               fatalErrors.push(`動画アセット ${v.id} の contentHash が不正です (completed 状態では 64 文字の小文字 16 進数が必要です)。`);
@@ -3061,10 +3486,11 @@ export class AppDatabase {
 
         // Check duplicate hash groups
         for (const [hash, assets] of hashGroups.entries()) {
-          if (assets.length > 1) {
-            const allConflict = assets.every(v => v.identityStatus === 'conflict');
-            const firstGroupId = assets[0].identityConflictGroupId;
-            const allSameGroupId = firstGroupId && assets.every(v => v.identityConflictGroupId === firstGroupId);
+          const validAssets = (assets || []).filter(a => a && typeof a === 'object');
+          if (validAssets.length > 1) {
+            const allConflict = validAssets.every(v => v.identityStatus === 'conflict');
+            const firstGroupId = validAssets[0].identityConflictGroupId;
+            const allSameGroupId = firstGroupId && validAssets.every(v => v.identityConflictGroupId === firstGroupId);
             if (!allConflict || !allSameGroupId) {
               fatalErrors.push(`動画アセット間に重複する contentHash (${hash}) が検出されました。正しい競合状態 (identityStatus === 'conflict' かつ同一の identityConflictGroupId) ではありません。`);
             }
@@ -3076,8 +3502,9 @@ export class AppDatabase {
       if (Array.isArray(rawDb.file_locations)) {
         const seenLocations = new Set();
         rawDb.file_locations.forEach(loc => {
+          if (!loc || typeof loc !== 'object') return;
           loc.relativePath = normalizePath(loc.relativePath);
-          if (!rawDb.media_assets.some(v => v.id === loc.mediaAssetId)) {
+          if (rawDb.media_assets && !rawDb.media_assets.some(v => v && v.id === loc.mediaAssetId)) {
             fatalErrors.push(`ファイル所在地 ${loc.id} が参照する動画アセット ${loc.mediaAssetId} が存在しません。`);
           }
           if (loc.directoryId || loc.relativePath) {
@@ -3093,7 +3520,7 @@ export class AppDatabase {
       // 12. Backfill missing rating criteria descriptions
       if (Array.isArray(rawDb.rating_criteria)) {
         rawDb.rating_criteria.forEach(c => {
-          if (c.description === undefined) {
+          if (c && typeof c === 'object' && c.description === undefined) {
             c.description = '';
           }
         });
