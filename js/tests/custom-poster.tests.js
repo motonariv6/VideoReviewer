@@ -1223,6 +1223,46 @@ export async function runCustomPosterTests() {
     assert(error.message.includes('10MB以下の画像を選択'), 'Error message must mention the 10MB limit');
   });
 
+  // 26. Editor表示中のポスター更新で他画像のObject URLを不要にrevokeしない検証
+  await runTest('26. Editor表示中のポスター更新時に既存の別画像のObject URLが不要に消去されないこと', async () => {
+    const asset = {
+      id: 'vid-url-cleanup-test',
+      displayTitle: 'URL Cleanup Video',
+      genreId: 'genre-default',
+      identityStatus: 'normal',
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    };
+    const testDb = createTestDb([asset]);
+    await testDb.initAsync();
+
+    const originalAppDb = await new Promise(resolve => {
+      import('../app.js').then(m => resolve(m.db));
+    });
+    setDbForTesting(testDb);
+
+    try {
+      const m = await import('../app.js');
+      
+      m.state.currentView = 'editor';
+      m.state.currentVideoId = 'vid-url-cleanup-test';
+      
+      m.state.imageBlobUrls.push('blob:http://localhost/dummy-other-image-blob-url');
+
+      const dummyFile = new Blob(['dummy-binary'], { type: 'image/png' });
+      await m.setPosterImageAction('vid-url-cleanup-test', dummyFile);
+
+      assert(m.state.imageBlobUrls.includes('blob:http://localhost/dummy-other-image-blob-url'), 'Unrelated image blob URL must not be revoked when in editor view');
+
+      m.state.currentView = 'library';
+      await m.setPosterImageAction('vid-url-cleanup-test', dummyFile);
+      
+      assert(!m.state.imageBlobUrls.includes('blob:http://localhost/dummy-other-image-blob-url'), 'Blob URLs should be cleared when executing library redraw in library view');
+    } finally {
+      setDbForTesting(originalAppDb);
+    }
+  });
+
   console.groupEnd();
   return results;
 }

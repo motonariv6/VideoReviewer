@@ -1171,7 +1171,7 @@ export function renderLibrary() {
 
       const posterBtn = document.createElement('button');
       posterBtn.className = 'btn btn-icon btn-poster-card';
-      posterBtn.title = v.customPosterId ? 'カスタムポスターを変更 / 削除' : 'カスタムポスター画像を設定';
+      posterBtn.title = v.customPosterId ? 'カスタムポスター画像を変更' : 'カスタムポスター画像を設定';
       posterBtn.style.padding = '2px';
       posterBtn.style.color = v.customPosterId ? 'var(--color-primary, #3b82f6)' : 'var(--color-text-muted)';
       posterBtn.style.cursor = 'pointer';
@@ -2840,8 +2840,9 @@ async function updateEditorPosterUI(videoId) {
 }
 
 async function updateUIPostPosters() {
-  renderLibrary();
-  if (state.currentVideoId) {
+  if (state.currentView === 'library') {
+    renderLibrary();
+  } else if (state.currentView === 'editor' && state.currentVideoId) {
     await updateEditorPosterUI(state.currentVideoId);
   }
 }
