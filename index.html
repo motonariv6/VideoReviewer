@@ -283,6 +283,18 @@
             <div style="font-weight: 600; margin-bottom: 4px;">保存ロケーション一覧:</div>
             <div id="info-locations-list" style="display: flex; flex-direction: column; gap: 4px;"></div>
           </div>
+          <div id="info-poster-container" style="margin-top: 12px; border-top: 1px solid var(--color-border); padding-top: 8px;">
+            <div style="display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 6px;">
+              <div style="font-weight: 600;">カスタムポスター:</div>
+              <div style="display: flex; gap: 8px;">
+                <button id="btn-editor-upload-poster" class="btn btn-secondary" style="padding: 4px 8px; font-size: 0.75rem;">ポスター画像を設定</button>
+                <button id="btn-editor-delete-poster" class="btn btn-error hidden" style="padding: 4px 8px; font-size: 0.75rem;">削除</button>
+              </div>
+            </div>
+            <div id="editor-poster-preview-container" class="hidden" style="position: relative; border-radius: 4px; overflow: hidden; max-height: 120px; background-color: var(--color-bg-dim); border: 1px solid var(--color-border);">
+              <img id="editor-poster-preview-img" style="width: 100%; height: auto; display: block; object-fit: contain; max-height: 120px;" alt="カスタムポスタープレビュー">
+            </div>
+          </div>
         </div>
 
         <!-- Shortcuts Help Info Card -->

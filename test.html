@@ -258,5 +258,23 @@
     // Initial run
     document.addEventListener('DOMContentLoaded', executeTestSuite);
   </script>
+  <!-- Test Mock DOM for Custom Poster -->
+  <div style="display:none">
+    <button id="btn-editor-upload-poster"></button>
+    <button id="btn-editor-delete-poster" class="hidden"></button>
+    <div id="editor-poster-preview-container" class="hidden">
+      <img id="editor-poster-preview-img">
+    </div>
+    <select id="filter-tag"></select>
+    <input id="filter-search">
+    <select id="filter-grade"></select>
+    <select id="filter-review-status"></select>
+    <select id="filter-source-type"></select>
+    <select id="filter-availability"></select>
+    <select id="filter-sort"></select>
+    <div id="video-grid"></div>
+    <div id="library-empty"></div>
+    <button id="btn-bulk-delete"></button>
+  </div>
 </body>
 </html>

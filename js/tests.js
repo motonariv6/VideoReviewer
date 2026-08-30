@@ -15,6 +15,7 @@ import { runReviewShareAggregateUITests } from './tests/review-share-aggregate-u
 import { runPendingSharedReviewLinkingTests } from './tests/pending-shared-review-linking.tests.js';
 import { runTagManagementTests } from './tests/tag-management.tests.js';
 import { runSchemaCanonicalizationTests } from './tests/schema-canonicalization.tests.js';
+import { runCustomPosterTests } from './tests/custom-poster.tests.js';
 
 export const VALID_HASH_A = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
 export const VALID_HASH_B = 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
@@ -2625,6 +2626,12 @@ export async function runTests(groupFilter = null) {
   if (!groupFilter || groupFilter === 'all' || groupFilter === 'schema-canonicalization') {
     const canonicalizationRes = await runSchemaCanonicalizationTests();
     results.push(...canonicalizationRes);
+  }
+
+  // --- RUN GROUP 24: CUSTOM POSTER TESTS ---
+  if (!groupFilter || groupFilter === 'all' || groupFilter === 'custom-poster') {
+    const customPosterRes = await runCustomPosterTests();
+    results.push(...customPosterRes);
   }
 
   console.groupEnd(); // main suite

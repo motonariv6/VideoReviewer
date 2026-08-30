@@ -2267,9 +2267,26 @@ export class AppDatabase {
       });
     }
 
+    let originalTargetPosterBlob = null;
+    let originalSourcePosterBlob = null;
+    let originalTargetPosterId = null;
+    let originalSourcePosterId = null;
+
     try {
       const target = this.mediaAssets.find(a => a.id === canonicalTargetId);
       const source = this.mediaAssets.find(a => a.id === canonicalSourceId);
+
+      if (target) originalTargetPosterId = target.customPosterId;
+      if (source) originalSourcePosterId = source.customPosterId;
+
+      if (this.idbAvailable) {
+        if (originalTargetPosterId) {
+          originalTargetPosterBlob = await this.getImage(originalTargetPosterId);
+        }
+        if (originalSourcePosterId) {
+          originalSourcePosterBlob = await this.getImage(originalSourcePosterId);
+        }
+      }
 
       this.fileLocations.forEach(loc => {
         if (loc.mediaAssetId === canonicalSourceId) {
@@ -2326,6 +2343,34 @@ export class AppDatabase {
         target.thumbnailId = source.thumbnailId;
       }
 
+      // Custom Poster Merge Policy
+      if (target.customPosterId && source.customPosterId) {
+        // Policy 1: target customPosterあり, source customPosterあり -> target優先, source削除
+        const sourcePosterId = source.customPosterId;
+        if (this.idbAvailable) {
+          await this.idb.delete(sourcePosterId, 'images');
+        }
+      } else if (target.customPosterId && !source.customPosterId) {
+        // Policy 2: target customPosterあり, source customPosterなし -> target維持 (no-op)
+      } else if (!target.customPosterId && source.customPosterId) {
+        // Policy 3: target customPosterなし, source customPosterあり -> sourceをtargetへ移管
+        const sourcePosterId = source.customPosterId;
+        const targetPosterId = `img-poster-${canonicalTargetId}`;
+        if (this.idbAvailable) {
+          const posterBlob = await this.getImage(sourcePosterId);
+          if (posterBlob) {
+            // 保存
+            await this.putImage(targetPosterId, posterBlob);
+            target.customPosterId = targetPosterId;
+            // 成功後に削除
+            await this.idb.delete(sourcePosterId, 'images');
+          }
+        } else {
+          target.customPosterId = targetPosterId;
+        }
+      }
+      // Policy 4: 両方posterなし -> no-op
+
       this.mediaAssets = this.mediaAssets.filter(a => a.id !== canonicalSourceId);
 
       this._saveTable('media_assets', this.mediaAssets);
@@ -2353,6 +2398,28 @@ export class AppDatabase {
             this.storage.setItem(`${this.prefix}${k}`, val);
           }
         });
+      }
+
+      // Rollback IndexedDB custom poster changes
+      if (this.idbAvailable) {
+        try {
+          const potentialNewTargetPosterId = `img-poster-${canonicalTargetId}`;
+          if (!originalTargetPosterId) {
+            // target にもともとポスターがなければ、マージ中に作成されたポスター画像を消去
+            await this.idb.delete(potentialNewTargetPosterId, 'images');
+          } else {
+            // target にもともとポスターがあれば、バックアップから上書き・復元
+            if (originalTargetPosterBlob) {
+              await this.putImage(originalTargetPosterId, originalTargetPosterBlob);
+            }
+          }
+          if (originalSourcePosterId && originalSourcePosterBlob) {
+            // source 側にポスターがあった場合、バックアップから再putして復元
+            await this.putImage(originalSourcePosterId, originalSourcePosterBlob);
+          }
+        } catch (idbRollbackErr) {
+          console.error('Failed to rollback IndexedDB poster images during merge failure:', idbRollbackErr);
+        }
       }
       throw err;
     }
@@ -2515,7 +2582,7 @@ export class AppDatabase {
   async updateVideo(id, updates) {
     const asset = this.mediaAssets.find(a => a.id === id);
     if (asset) {
-      const assetKeys = ['contentHash', 'hashAlgorithm', 'quickHash', 'hashStatus', 'fileSize', 'duration', 'displayTitle', 'genreId', 'thumbnailId'];
+      const assetKeys = ['contentHash', 'hashAlgorithm', 'quickHash', 'hashStatus', 'fileSize', 'duration', 'displayTitle', 'genreId', 'thumbnailId', 'customPosterId', 'isArchived', 'archivedAt'];
       const locKeys = ['directoryId', 'relativePath', 'fileName', 'fileSize', 'lastModified', 'availabilityStatus'];
 
       const assetUpdates = {};
@@ -2595,6 +2662,13 @@ export class AppDatabase {
           await this.idb.delete(asset.thumbnailId, 'images');
         } catch (err) {
           console.warn('Failed to delete video thumbnail image:', err);
+        }
+      }
+      if (asset.customPosterId) {
+        try {
+          await this.idb.delete(asset.customPosterId, 'images');
+        } catch (err) {
+          console.warn('Failed to delete video custom poster image:', err);
         }
       }
 
@@ -3582,6 +3656,7 @@ export class AppDatabase {
     if (rawDb && Array.isArray(rawDb.media_assets)) {
       rawDb.media_assets.forEach(v => {
         if (v.thumbnailId) requiredImageIdsSet.add(v.thumbnailId);
+        if (v.customPosterId) requiredImageIdsSet.add(v.customPosterId);
       });
     }
     keptTimelineNotes.forEach(n => {
@@ -4537,6 +4612,7 @@ export const BACKUP_SCHEMA_V4 = {
           "displayTitle": { "type": ["string", "null"] },
           "genreId": { "type": "string", "pattern": "^genre-[a-zA-Z0-9-]{1,64}$" },
           "thumbnailId": { "type": "string" },
+          "customPosterId": { "type": ["string", "null"] },
           "identityStatus": { "type": "string", "enum": ["normal", "conflict", "provisional", "verified"] },
           "identityConflictGroupId": { "type": ["string", "null"] },
           "createdAt": { "type": "string" },

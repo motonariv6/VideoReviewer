@@ -176,7 +176,7 @@ async function run() {
     }
   }
 
-  const validGroups = ['hash', 'folder', 'archive', 'review', 'schema', 'review-share-schema', 'review-share-import-export', 'review-share-aggregate-ui', 'pending-shared-review-linking', 'tag-management', 'schema-canonicalization', 'all'];
+  const validGroups = ['hash', 'folder', 'archive', 'review', 'schema', 'review-share-schema', 'review-share-import-export', 'review-share-aggregate-ui', 'pending-shared-review-linking', 'tag-management', 'schema-canonicalization', 'custom-poster', 'all'];
   if (hasInvalidArg || (testGroup !== null && !validGroups.includes(testGroup))) {
     console.error(`
 利用方法 (Usage):

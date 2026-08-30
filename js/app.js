@@ -59,7 +59,7 @@ let isSettingsNewNameComposing = false;
 let isFilterSearchComposing = false;
 
 // Application State
-const state = {
+export const state = {
   currentView: 'library', // 'library' | 'editor'
   currentVideoId: null,
   activeVideoFile: null,      // For currently playing local file or directory file
@@ -241,7 +241,11 @@ const els = {
   modalBackupProgress: document.getElementById('modal-backup-progress'),
   backupProgressTitle: document.getElementById('backup-progress-title'),
   backupProgressMsg: document.getElementById('backup-progress-msg'),
-  btnCleanOrphanData: document.getElementById('btn-clean-orphan-data')
+  btnCleanOrphanData: document.getElementById('btn-clean-orphan-data'),
+  btnEditorUploadPoster: document.getElementById('btn-editor-upload-poster'),
+  btnEditorDeletePoster: document.getElementById('btn-editor-delete-poster'),
+  editorPosterPreviewContainer: document.getElementById('editor-poster-preview-container'),
+  editorPosterPreviewImg: document.getElementById('editor-poster-preview-img')
 };
 
 export let reviewEditorUI = new ReviewEditorUI({ els });
@@ -295,6 +299,20 @@ function initEventListeners() {
   // Navigation & Screen switching
   els.btnBack.addEventListener('click', () => handleBackToLibrary());
   els.editorBack.addEventListener('click', () => handleBackToLibrary());
+
+  // Custom Poster Management Listeners
+  els.btnEditorUploadPoster.addEventListener('click', () => {
+    if (state.currentVideoId) {
+      triggerPosterImageUpload(state.currentVideoId);
+    }
+  });
+  els.btnEditorDeletePoster.addEventListener('click', async () => {
+    if (state.currentVideoId) {
+      if (confirm('カスタムポスター画像を削除しますか？\n自動生成サムネイル表示に戻ります。')) {
+        await deletePosterImageAction(state.currentVideoId);
+      }
+    }
+  });
 
   // Add Media
   els.addLocalFileInput.addEventListener('change', handleAddLocalFile);
@@ -830,7 +848,7 @@ async function handleBulkDelete() {
 }
 
 // Navigate Screen: Library (XSS Safe DOM creation)
-function renderLibrary() {
+export function renderLibrary() {
   clearImageBlobUrls();
 
   // Populate Tags list in filter select (XSS Safe)
@@ -950,7 +968,8 @@ function renderLibrary() {
 
       const img = document.createElement('img');
       img.alt = v.title;
-      loadImageToElement(img, v.thumbnailId, v.thumbnailUrl);
+      const imageId = getPreferredVideoImageId(v);
+      loadImageToElement(img, imageId, v.thumbnailUrl);
       thumbDiv.appendChild(img);
 
       // Default placeholder icon if img src fails
@@ -1150,7 +1169,27 @@ function renderLibrary() {
         });
       });
 
+      const posterBtn = document.createElement('button');
+      posterBtn.className = 'btn btn-icon btn-poster-card';
+      posterBtn.title = v.customPosterId ? 'カスタムポスター画像を変更' : 'カスタムポスター画像を設定';
+      posterBtn.style.padding = '2px';
+      posterBtn.style.color = v.customPosterId ? 'var(--color-primary, #3b82f6)' : 'var(--color-text-muted)';
+      posterBtn.style.cursor = 'pointer';
+      posterBtn.style.flexShrink = '0';
+      posterBtn.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" style="width:16px;height:16px" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
+      </svg>`;
+
+      posterBtn.addEventListener('mouseenter', () => { posterBtn.style.color = 'var(--color-primary, #3b82f6)'; });
+      posterBtn.addEventListener('mouseleave', () => { posterBtn.style.color = v.customPosterId ? 'var(--color-primary, #3b82f6)' : 'var(--color-text-muted)'; });
+
+      posterBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        handlePosterImageAction(v.id);
+      });
+
       if (!state.shareExportMode) {
+        titleContainer.appendChild(posterBtn);
         titleContainer.appendChild(delBtn);
         titleContainer.appendChild(permDelBtn);
       }
@@ -1296,8 +1335,9 @@ function renderLocationsListInEditor(video) {
 }
 
 // Switch Screen: Editor Workspace
-function switchScreenToEditor(videoId) {
-  reviewEditorController.switchScreenToEditor(videoId);
+async function switchScreenToEditor(videoId) {
+  await reviewEditorController.switchScreenToEditor(videoId);
+  await updateEditorPosterUI(videoId);
 }
 
 // Show specific errors on the player warning card
@@ -2344,7 +2384,7 @@ function renderSettingsGenreControls() {
 }
 
 // Helper to generate a ZIP Blob of the current database state
-async function generateLocalBackupZipBlob() {
+export async function generateLocalBackupZipBlob() {
   const images = await db.getAllImages();
   const dbData = {
     schemaVersion: 4,
@@ -2392,12 +2432,15 @@ async function generateLocalBackupZipBlob() {
   const imgFolder = zip.folder('images');
   const thumbFolder = imgFolder.folder('thumbnails');
   const noteFolder = imgFolder.folder('timeline-notes');
+  const posterFolder = imgFolder.folder('posters');
 
   images.forEach(image => {
     if (image.id.startsWith('img-vid-')) {
       thumbFolder.file(image.id, image.data);
     } else if (image.id.startsWith('img-note-')) {
       noteFolder.file(image.id, image.data);
+    } else if (image.id.startsWith('img-poster-')) {
+      posterFolder.file(image.id, image.data);
     } else {
       thumbFolder.file(image.id, image.data);
     }
@@ -2462,6 +2505,7 @@ async function handleBackupRestore(e) {
     const imageIds = [];
     const thumbnailsFolder = zip.folder('images/thumbnails');
     const notesFolder = zip.folder('images/timeline-notes');
+    const postersFolder = zip.folder('images/posters');
     if (thumbnailsFolder) {
       thumbnailsFolder.forEach((relativePath, zipEntry) => {
         if (!zipEntry.dir) imageIds.push(relativePath);
@@ -2469,6 +2513,11 @@ async function handleBackupRestore(e) {
     }
     if (notesFolder) {
       notesFolder.forEach((relativePath, zipEntry) => {
+        if (!zipEntry.dir) imageIds.push(relativePath);
+      });
+    }
+    if (postersFolder) {
+      postersFolder.forEach((relativePath, zipEntry) => {
         if (!zipEntry.dir) imageIds.push(relativePath);
       });
     }
@@ -2550,6 +2599,18 @@ async function handleBackupRestore(e) {
         });
       }
 
+      if (postersFolder) {
+        postersFolder.forEach((relativePath, zipEntry) => {
+          if (!zipEntry.dir) {
+            imagePromises.push(
+              zipEntry.async('blob').then(blob => {
+                imageEntries.push({ id: relativePath, data: blob });
+              })
+            );
+          }
+        });
+      }
+
       await Promise.all(imagePromises);
 
       // Exclude orphaned images by filtering based on requiredImageIds from validationResult
@@ -2604,5 +2665,184 @@ async function handleCleanOrphanData() {
   } catch (err) {
     console.error(err);
     alert(`クリーンアップに失敗しました: ${err.message}`);
+  }
+}
+
+// === CUSTOM POSTER UI MANAGEMENT ===
+
+export async function validateImageFile(file) {
+  if (!file) throw new Error('ファイルが選択されていません。');
+  if (!file.type.startsWith('image/')) {
+    throw new Error('選択されたファイルは画像ではありません。');
+  }
+  if (file.size === 0) {
+    throw new Error('空のファイルは設定できません。');
+  }
+  const MAX_SIZE = 10 * 1024 * 1024; // 10MB
+  if (file.size > MAX_SIZE) {
+    throw new Error('ファイルサイズが大きすぎます。10MB以下の画像を選択してください。');
+  }
+
+  // Verify browser can decode image successfully (reject malformed images)
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const img = new Image();
+      img.onload = () => {
+        resolve(true);
+      };
+      img.onerror = () => {
+        reject(new Error('画像のデコードに失敗しました。ファイルが壊れているか、サポートされていない形式です。'));
+      };
+      img.src = e.target.result;
+    };
+    reader.onerror = () => {
+      reject(new Error('ファイルの読み込みに失敗しました。'));
+    };
+    reader.readAsDataURL(file);
+  });
+}
+
+export function getPreferredVideoImageId(video) {
+  if (!video) return null;
+  return video.customPosterId || video.thumbnailId || null;
+}
+
+async function handlePosterImageAction(videoId) {
+  const video = db.getVideo(videoId);
+  if (!video) return;
+  triggerPosterImageUpload(videoId);
+}
+
+function triggerPosterImageUpload(videoId) {
+  const input = document.createElement('input');
+  input.type = 'file';
+  input.accept = 'image/*';
+  input.onchange = async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+
+    try {
+      await validateImageFile(file);
+      await setPosterImageAction(videoId, file);
+      showToast('ポスター画像を設定しました。', 'success');
+    } catch (err) {
+      console.error(err);
+      showToast(err.message || 'ポスター画像の設定に失敗しました。', 'error');
+    }
+  };
+  input.click();
+}
+
+export async function setPosterImageAction(videoId, file) {
+  const video = db.getVideo(videoId);
+  if (!video) throw new Error('動画アセットが見つかりません。');
+
+  const posterId = `img-poster-${videoId}`;
+  const originalPosterId = video.customPosterId;
+  let originalPosterBlob = null;
+
+  if (db.idbAvailable && originalPosterId) {
+    originalPosterBlob = await db.getImage(originalPosterId);
+  }
+
+  // 1. Write new poster Blob to IndexedDB
+  try {
+    if (db.idbAvailable) {
+      await db.putImage(posterId, file);
+    }
+  } catch (err) {
+    throw new Error('IndexedDB への画像保存に失敗しました。');
+  }
+
+  // 2. Update media asset reference
+  try {
+    await db.updateVideo(videoId, { customPosterId: posterId });
+  } catch (err) {
+    // Rollback IndexedDB Blob state on metadata update failure
+    if (db.idbAvailable) {
+      try {
+        if (!originalPosterId) {
+          await db.idb.delete(posterId, 'images');
+        } else {
+          if (originalPosterBlob) {
+            await db.putImage(originalPosterId, originalPosterBlob);
+          }
+        }
+      } catch (idbErr) {
+        console.error('Failed to rollback poster Image during metadata write failure:', idbErr);
+      }
+    }
+    throw new Error('データベースの更新に失敗しました。');
+  }
+
+  // 3. Immediately update UI
+  await updateUIPostPosters();
+}
+
+export async function deletePosterImageAction(videoId) {
+  const video = db.getVideo(videoId);
+  if (!video) return;
+
+  const posterId = video.customPosterId;
+  if (!posterId) return;
+
+  let originalPosterBlob = null;
+  if (db.idbAvailable) {
+    originalPosterBlob = await db.getImage(posterId);
+  }
+
+  // 1. Update media asset customPosterId reference to null
+  try {
+    await db.updateVideo(videoId, { customPosterId: null });
+  } catch (err) {
+    showToast('データベースの更新に失敗しました。', 'error');
+    return;
+  }
+
+  // 2. Delete poster Blob from IndexedDB
+  try {
+    if (db.idbAvailable) {
+      await db.idb.delete(posterId, 'images');
+    }
+  } catch (err) {
+    // Rollback state on deletion failure
+    try {
+      await db.updateVideo(videoId, { customPosterId: posterId });
+      if (db.idbAvailable && originalPosterBlob) {
+        await db.putImage(posterId, originalPosterBlob);
+      }
+    } catch (rollbackErr) {
+      console.error('Failed to rollback deletion failure:', rollbackErr);
+    }
+    showToast('ポスター画像の消去に失敗しました。', 'error');
+    return;
+  }
+
+  // 3. Immediately update UI
+  await updateUIPostPosters();
+  showToast('ポスター画像を削除しました。', 'success');
+}
+
+async function updateEditorPosterUI(videoId) {
+  const video = db.getVideo(videoId);
+  if (!video) return;
+
+  if (video.customPosterId) {
+    els.btnEditorDeletePoster.classList.remove('hidden');
+    els.editorPosterPreviewContainer.classList.remove('hidden');
+    await loadImageToElement(els.editorPosterPreviewImg, video.customPosterId, null);
+  } else {
+    els.btnEditorDeletePoster.classList.add('hidden');
+    els.editorPosterPreviewContainer.classList.add('hidden');
+    els.editorPosterPreviewImg.removeAttribute('src');
+  }
+}
+
+async function updateUIPostPosters() {
+  if (state.currentView === 'library') {
+    renderLibrary();
+  } else if (state.currentView === 'editor' && state.currentVideoId) {
+    await updateEditorPosterUI(state.currentVideoId);
   }
 }
