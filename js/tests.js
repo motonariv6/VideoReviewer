@@ -16,6 +16,7 @@ import { runPendingSharedReviewLinkingTests } from './tests/pending-shared-revie
 import { runTagManagementTests } from './tests/tag-management.tests.js';
 import { runSchemaCanonicalizationTests } from './tests/schema-canonicalization.tests.js';
 import { runCustomPosterTests } from './tests/custom-poster.tests.js';
+import { runI18nTests } from './tests/i18n.tests.js';
 
 export const VALID_HASH_A = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
 export const VALID_HASH_B = 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
@@ -2641,6 +2642,12 @@ export async function runTests(groupFilter = null) {
   if (!groupFilter || groupFilter === 'all' || groupFilter === 'custom-poster') {
     const customPosterRes = await runCustomPosterTests();
     results.push(...customPosterRes);
+  }
+
+  // --- RUN GROUP 25: I18N FOUNDATION TESTS ---
+  if (!groupFilter || groupFilter === 'all' || groupFilter === 'i18n') {
+    const i18nRes = await runI18nTests();
+    results.push(...i18nRes);
   }
 
   console.groupEnd(); // main suite
