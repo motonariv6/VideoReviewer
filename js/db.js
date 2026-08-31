@@ -2036,6 +2036,92 @@ export class AppDatabase {
     }
   }
 
+  async registerAutoPosterImage(mediaAssetId, fileHandle) {
+    const asset = this.mediaAssets.find(a => a.id === mediaAssetId);
+    if (!asset) throw new Error('動画アセットが見つかりません。');
+
+    // 手動ポスター（または既存ポスター）がある場合は上書きしない
+    if (asset.customPosterId) {
+      return;
+    }
+
+    const file = await fileHandle.getFile();
+
+    // 1. MIMEタイプ検証
+    const allowedTypes = new Set(['image/jpeg', 'image/png', 'image/webp']);
+    if (!allowedTypes.has(file.type)) {
+      throw new Error('サポートされていない画像形式です。');
+    }
+
+    // 2. non-empty file 検証
+    if (file.size === 0) {
+      throw new Error('画像ファイルが空です。');
+    }
+
+    // 3. サイズ制限検証 (10MB)
+    const MAX_SIZE = 10 * 1024 * 1024; // 10MB
+    if (file.size > MAX_SIZE) {
+      throw new Error('ファイルサイズが大きすぎます。10MB以下の画像を選択してください。');
+    }
+
+    // 4. 画像デコード検証 (FileReader & Image)
+    await new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        const img = new Image();
+        img.onload = () => resolve(true);
+        img.onerror = () => reject(new Error('画像のデコードに失敗しました。'));
+        img.src = e.target.result;
+      };
+      reader.onerror = () => reject(new Error('ファイルの読み込みに失敗しました。'));
+      reader.readAsDataURL(file);
+    });
+
+    const posterId = `img-poster-${mediaAssetId}`;
+
+    // Snapshot current state for rollback
+    const originalCustomPosterId = asset.customPosterId;
+    const originalUpdatedAt = asset.updatedAt;
+    let originalPosterBlob = null;
+    if (this.idbAvailable) {
+      originalPosterBlob = await this.getImage(posterId);
+    }
+
+    // 5. 保存処理 (IndexedDB)
+    try {
+      if (this.idbAvailable) {
+        await this.putImage(posterId, file);
+      }
+    } catch (err) {
+      throw err;
+    }
+
+    // 6. DBの更新 (メモリ + _saveTable)
+    try {
+      asset.customPosterId = posterId;
+      asset.updatedAt = new Date().toISOString();
+      this._saveTable('media_assets', this.mediaAssets);
+    } catch (err) {
+      // Revert memory state
+      asset.customPosterId = originalCustomPosterId;
+      asset.updatedAt = originalUpdatedAt;
+
+      // Revert IndexedDB state
+      if (this.idbAvailable) {
+        try {
+          if (!originalPosterBlob) {
+            await this.idb.delete(posterId, 'images');
+          } else {
+            await this.putImage(posterId, originalPosterBlob);
+          }
+        } catch (idbRollbackErr) {
+          console.error('Failed to rollback IndexedDB poster image during registerAutoPosterImage failure:', idbRollbackErr);
+        }
+      }
+      throw err;
+    }
+  }
+
   async addVideo({ title, displayTitle, fileName, fileSize, duration, thumbnailBlob, sourceType, directoryId, relativePath, lastModified, contentHash, quickHash, hashStatus, identityStatus }) {
     if (sourceType === 'url') {
       throw new Error('URL動画はサポートされていません。');
@@ -2133,6 +2219,7 @@ export class AppDatabase {
       displayTitle: normalizedTitle,
       genreId: 'genre-default',
       thumbnailId: '',
+      customPosterId: null,
       identityStatus: identityStatus || 'normal',
       identityConflictGroupId: null,
       isArchived: false,
