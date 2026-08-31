@@ -51,6 +51,17 @@ export function isSupportedVideoFile(fileName) {
 }
 
 /**
+ * Checks if a filename matches supported image formats (case-insensitive)
+ * @param {string} fileName
+ * @returns {boolean}
+ */
+export function isSupportedImageFile(fileName) {
+  const ext = fileName.split('.').pop().toLowerCase();
+  const imageExtensions = new Set(['jpg', 'jpeg', 'png', 'webp']);
+  return imageExtensions.has(ext);
+}
+
+/**
  * Checks if a relative path starts with or is inside a failed directory path
  * @param {string} path 
  * @param {Array} failedDirectories 
@@ -98,6 +109,13 @@ export async function scanDirectory({ directoryHandle, recursive = true, signal 
 
   const queue = [{ dirHandle: directoryHandle, relPath: '' }];
 
+  const IMAGE_EXT_PRIORITY = {
+    'jpg': 1,
+    'jpeg': 2,
+    'png': 3,
+    'webp': 4
+  };
+
   try {
     while (queue.length > 0) {
       if (signal && signal.aborted) {
@@ -122,54 +140,14 @@ export async function scanDirectory({ directoryHandle, recursive = true, signal 
         continue;
       }
 
+      const entries = [];
       try {
         for await (const entry of iterator) {
           if (signal && signal.aborted) {
             aborted = true;
             break;
           }
-
-          checkedFilesCount++;
-
-          if (entry.kind === 'file') {
-            const fileRelPath = normalizePath(relPath ? `${relPath}/${entry.name}` : entry.name);
-            if (isIgnoredSystemEntry(entry.name, fileRelPath)) {
-              continue;
-            }
-            if (isSupportedVideoFile(entry.name)) {
-              try {
-                const file = await entry.getFile();
-                const qh = await computeQuickHash(file);
-                scannedFiles.push({
-                  fileName: entry.name,
-                  fileSize: file.size,
-                  lastModified: file.lastModified,
-                  relativePath: fileRelPath,
-                  quickHash: qh
-                });
-              } catch (err) {
-                failedFiles.push({
-                  relativePath: fileRelPath,
-                  errorName: err.name,
-                  errorMessage: err.message
-                });
-              }
-            }
-          } else if (entry.kind === 'directory' && recursive) {
-            const dirRelPath = normalizePath(relPath ? `${relPath}/${entry.name}` : entry.name);
-            if (isIgnoredSystemEntry(entry.name, dirRelPath)) {
-              continue;
-            }
-            queue.push({
-              dirHandle: entry,
-              relPath: dirRelPath
-            });
-          }
-
-          if (checkedFilesCount % 20 === 0 && onProgress) {
-            onProgress({ checkedFiles: checkedFilesCount, detectedVideos: scannedFiles.length });
-            await new Promise(resolve => setTimeout(resolve, 0));
-          }
+          entries.push(entry);
         }
       } catch (err) {
         failedDirectories.push({
@@ -179,6 +157,80 @@ export async function scanDirectory({ directoryHandle, recursive = true, signal 
         });
         if (relPath === '') {
           scanCompleted = false; // Root traversal failed
+        }
+        continue;
+      }
+
+      if (aborted) break;
+
+      // 1. Separate files and directories, build imageMap for this directory
+      const supportedVideos = [];
+      const imageMap = new Map();
+
+      for (const entry of entries) {
+        checkedFilesCount++;
+        const entryRelPath = normalizePath(relPath ? `${relPath}/${entry.name}` : entry.name);
+
+        if (isIgnoredSystemEntry(entry.name, entryRelPath)) {
+          continue;
+        }
+
+        if (entry.kind === 'file') {
+          if (isSupportedVideoFile(entry.name)) {
+            supportedVideos.push({ entry, relPath: entryRelPath });
+          } else {
+            const ext = entry.name.split('.').pop().toLowerCase();
+            if (IMAGE_EXT_PRIORITY[ext] !== undefined) {
+              const lastDotIdx = entry.name.lastIndexOf('.');
+              const base = (lastDotIdx === -1 ? entry.name : entry.name.substring(0, lastDotIdx)).toLowerCase();
+              const existing = imageMap.get(base);
+              if (!existing || IMAGE_EXT_PRIORITY[ext] < IMAGE_EXT_PRIORITY[existing.ext]) {
+                imageMap.set(base, { entry, ext });
+              }
+            }
+          }
+        } else if (entry.kind === 'directory' && recursive) {
+          queue.push({
+            dirHandle: entry,
+            relPath: entryRelPath
+          });
+        }
+      }
+
+      // 2. Process video files and match custom poster images O(n)
+      for (const { entry, relPath: fileRelPath } of supportedVideos) {
+        if (signal && signal.aborted) {
+          aborted = true;
+          break;
+        }
+
+        const lastDotIdx = entry.name.lastIndexOf('.');
+        const videoBase = (lastDotIdx === -1 ? entry.name : entry.name.substring(0, lastDotIdx)).toLowerCase();
+        const matched = imageMap.get(videoBase);
+        const autoPosterHandle = matched ? matched.entry : null;
+
+        try {
+          const file = await entry.getFile();
+          const qh = await computeQuickHash(file);
+          scannedFiles.push({
+            fileName: entry.name,
+            fileSize: file.size,
+            lastModified: file.lastModified,
+            relativePath: fileRelPath,
+            quickHash: qh,
+            autoPosterHandle // Pass the handle for auto poster setting!
+          });
+        } catch (err) {
+          failedFiles.push({
+            relativePath: fileRelPath,
+            errorName: err.name,
+            errorMessage: err.message
+          });
+        }
+
+        if (checkedFilesCount % 20 === 0 && onProgress) {
+          onProgress({ checkedFiles: checkedFilesCount, detectedVideos: scannedFiles.length });
+          await new Promise(resolve => setTimeout(resolve, 0));
         }
       }
     }
@@ -314,12 +366,14 @@ export async function applyScanDifferentials({
       onProgress(processedCount, scannedFiles.length);
     }
     const matchedLoc = db.fileLocations.find(loc => loc.directoryId === directoryId && normalizePath(loc.relativePath) === normalizePath(sf.relativePath));
+    let assetId = null;
     if (!matchedLoc) {
       try {
         const res = await db.resolveAndRegisterNewScannedFileProvisional({
           directoryId,
           sf
         });
+        assetId = res.assetId;
         if (res.status === 'new') {
           added++;
         } else if (res.status === 'merged') {
@@ -333,6 +387,7 @@ export async function applyScanDifferentials({
         errorCount++;
       }
     } else {
+      assetId = matchedLoc.mediaAssetId;
       const isModified = matchedLoc.fileSize !== sf.fileSize || matchedLoc.lastModified !== sf.lastModified;
       if (isModified) {
         try {
@@ -343,7 +398,6 @@ export async function applyScanDifferentials({
             verificationStatus: 'provisional'
           });
           
-
           updated++;
         } catch (err) {
           errorCount++;
@@ -351,6 +405,14 @@ export async function applyScanDifferentials({
       } else {
         await db.updateLocationInfo(matchedLoc.id, { availabilityStatus: 'available' });
         unchanged++;
+      }
+    }
+
+    if (assetId && sf.autoPosterHandle) {
+      try {
+        await db.registerAutoPosterImage(assetId, sf.autoPosterHandle);
+      } catch (err) {
+        console.warn(`Failed to set auto custom poster for video ${sf.fileName}:`, err.message);
       }
     }
   }

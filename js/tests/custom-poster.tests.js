@@ -1,8 +1,9 @@
 // custom-poster.tests.js - Automated tests for Custom Poster feature
 import { AppDatabase } from '../db.js';
-import { MemoryStorage } from '../tests.js';
+import { MemoryStorage, MockFileSystemFileHandle, MockFileSystemDirectoryHandle } from '../tests.js';
 import { exportReviews } from '../review-sharing/review-share-exporter.js';
 import { setDbForTesting, generateLocalBackupZipBlob } from '../app.js';
+import { scanDirectory, applyScanDifferentials } from '../directory-scanner.js';
 
 export async function runCustomPosterTests() {
   const results = [];
@@ -1261,6 +1262,782 @@ export async function runCustomPosterTests() {
     } finally {
       setDbForTesting(originalAppDb);
     }
+  });
+
+  // --- 自動カスタムポスター設定機能テスト (Test 27〜40) ---
+  const originalImage = window.Image;
+
+  const setupImageMock = () => {
+    window.Image = class {
+      set src(val) {
+        let isCorrupt = false;
+        if (val.includes('Y29ycnVwdGVk') || val.includes('aW52YWxpZ') || val.includes('bGFyZ2U')) {
+          isCorrupt = true;
+        }
+
+        if (isCorrupt) {
+          setTimeout(() => { if (this.onerror) this.onerror(); }, 0);
+        } else {
+          setTimeout(() => { if (this.onload) this.onload(); }, 0);
+        }
+      }
+    };
+  };
+
+  const restoreImageMock = () => {
+    window.Image = originalImage;
+  };
+
+  const { computeQuickHash } = await import('../hash-helper.js');
+  const dummyVideoFileForHash = new Blob([new Uint8Array(1000)]);
+  const realQhash = await computeQuickHash(dummyVideoFileForHash);
+
+  // 27. sample.mp4 + sample.jpg -> customPosterId 自動設定
+  await runTest('27. 自動カスタムポスター: sample.mp4 + sample.jpg で自動設定されること', async () => {
+    setupImageMock();
+    const testDb = createTestDb();
+    await testDb.initAsync();
+    const dirId = 'dir-auto-poster';
+
+    const rootDir = new MockFileSystemDirectoryHandle('root', {
+      'sample.mp4': new MockFileSystemFileHandle('sample.mp4', 1000, 100),
+      'sample.jpg': new MockFileSystemFileHandle('sample.jpg', 200, 200, 'valid-image-data')
+    });
+
+    const scanResult = await scanDirectory({ directoryHandle: rootDir, recursive: false });
+    assert(scanResult.scannedFiles[0].autoPosterHandle !== null, 'autoPosterHandle should be matched');
+
+    await applyScanDifferentials({
+      db: testDb,
+      directoryId: dirId,
+      scanResult,
+      recursive: false
+    });
+
+    const videos = testDb.getVideos();
+    assert(videos.length === 1, 'Video must be registered');
+    assert(videos[0].customPosterId === `img-poster-${videos[0].id}`, 'customPosterId must be auto-registered');
+
+    const blob = await testDb.getImage(videos[0].customPosterId);
+    assert(blob !== null, 'Poster image Blob must be saved in IndexedDB');
+    restoreImageMock();
+  });
+
+  // 28. sample.mp4 + sample.jpeg -> 自動設定
+  await runTest('28. 自動カスタムポスター: sample.mp4 + sample.jpeg で自動設定されること', async () => {
+    setupImageMock();
+    const testDb = createTestDb();
+    await testDb.initAsync();
+    const dirId = 'dir-auto-poster';
+
+    const rootDir = new MockFileSystemDirectoryHandle('root', {
+      'sample.mp4': new MockFileSystemFileHandle('sample.mp4', 1000, 100),
+      'sample.jpeg': new MockFileSystemFileHandle('sample.jpeg', 200, 200, 'valid-image-data')
+    });
+
+    const scanResult = await scanDirectory({ directoryHandle: rootDir, recursive: false });
+    assert(scanResult.scannedFiles[0].autoPosterHandle !== null, 'autoPosterHandle should be matched');
+
+    await applyScanDifferentials({
+      db: testDb,
+      directoryId: dirId,
+      scanResult,
+      recursive: false
+    });
+
+    const videos = testDb.getVideos();
+    assert(videos[0].customPosterId === `img-poster-${videos[0].id}`, 'customPosterId must be auto-registered');
+    restoreImageMock();
+  });
+
+  // 29. sample.mp4 + sample.png -> 自動設定
+  await runTest('29. 自動カスタムポスター: sample.mp4 + sample.png で自動設定されること', async () => {
+    setupImageMock();
+    const testDb = createTestDb();
+    await testDb.initAsync();
+    const dirId = 'dir-auto-poster';
+
+    const rootDir = new MockFileSystemDirectoryHandle('root', {
+      'sample.mp4': new MockFileSystemFileHandle('sample.mp4', 1000, 100),
+      'sample.png': new MockFileSystemFileHandle('sample.png', 200, 200, 'valid-image-data')
+    });
+
+    const scanResult = await scanDirectory({ directoryHandle: rootDir, recursive: false });
+    assert(scanResult.scannedFiles[0].autoPosterHandle !== null, 'autoPosterHandle should be matched');
+
+    await applyScanDifferentials({
+      db: testDb,
+      directoryId: dirId,
+      scanResult,
+      recursive: false
+    });
+
+    const videos = testDb.getVideos();
+    assert(videos[0].customPosterId === `img-poster-${videos[0].id}`, 'customPosterId must be auto-registered');
+    restoreImageMock();
+  });
+
+  // 30. sample.mp4 + sample.webp -> 自動設定
+  await runTest('30. 自動カスタムポスター: sample.mp4 + sample.webp で自動設定されること', async () => {
+    setupImageMock();
+    const testDb = createTestDb();
+    await testDb.initAsync();
+    const dirId = 'dir-auto-poster';
+
+    const rootDir = new MockFileSystemDirectoryHandle('root', {
+      'sample.mp4': new MockFileSystemFileHandle('sample.mp4', 1000, 100),
+      'sample.webp': new MockFileSystemFileHandle('sample.webp', 200, 200, 'valid-image-data')
+    });
+
+    const scanResult = await scanDirectory({ directoryHandle: rootDir, recursive: false });
+    assert(scanResult.scannedFiles[0].autoPosterHandle !== null, 'autoPosterHandle should be matched');
+
+    await applyScanDifferentials({
+      db: testDb,
+      directoryId: dirId,
+      scanResult,
+      recursive: false
+    });
+
+    const videos = testDb.getVideos();
+    assert(videos[0].customPosterId === `img-poster-${videos[0].id}`, 'customPosterId must be auto-registered');
+    restoreImageMock();
+  });
+
+  // 31. sample.mp4 + unrelated.jpg -> 設定されない
+  await runTest('31. 自動カスタムポスター: sample.mp4 + unrelated.jpg で設定されないこと', async () => {
+    const testDb = createTestDb();
+    await testDb.initAsync();
+    const dirId = 'dir-auto-poster';
+
+    const rootDir = new MockFileSystemDirectoryHandle('root', {
+      'sample.mp4': new MockFileSystemFileHandle('sample.mp4', 1000, 100),
+      'unrelated.jpg': new MockFileSystemFileHandle('unrelated.jpg', 200, 200, 'valid-image-data')
+    });
+
+    const scanResult = await scanDirectory({ directoryHandle: rootDir, recursive: false });
+    assert(scanResult.scannedFiles[0].autoPosterHandle === null, 'autoPosterHandle should be null');
+  });
+
+  // 32. sample.mp4 + sample-cover.jpg -> 設定されない
+  await runTest('32. 自動カスタムポスター: sample.mp4 + sample-cover.jpg で設定されないこと', async () => {
+    const testDb = createTestDb();
+    await testDb.initAsync();
+    const dirId = 'dir-auto-poster';
+
+    const rootDir = new MockFileSystemDirectoryHandle('root', {
+      'sample.mp4': new MockFileSystemFileHandle('sample.mp4', 1000, 100),
+      'sample-cover.jpg': new MockFileSystemFileHandle('sample-cover.jpg', 200, 200, 'valid-image-data')
+    });
+
+    const scanResult = await scanDirectory({ directoryHandle: rootDir, recursive: false });
+    assert(scanResult.scannedFiles[0].autoPosterHandle === null, 'autoPosterHandle should be null');
+  });
+
+  // 33. 既存 customPosterId あり -> 自動画像で上書きされない
+  await runTest('33. 自動カスタムポスター: 既存 customPosterId ありの場合は上書きされないこと', async () => {
+    setupImageMock();
+    const existingAsset = {
+      id: 'vid-existing-poster',
+      displayTitle: 'Existing Poster Video',
+      genreId: 'genre-default',
+      customPosterId: 'img-poster-vid-existing-poster',
+      identityStatus: 'normal',
+      fileSize: 1000,
+      quickHash: realQhash,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    };
+    const testDb = createTestDb([existingAsset]);
+    await testDb.initAsync();
+    await testDb.putImage('img-poster-vid-existing-poster', new Blob(['original-hand-poster'], { type: 'image/png' }));
+    const dirId = 'dir-auto-poster';
+
+    const rootDir = new MockFileSystemDirectoryHandle('root', {
+      'sample.mp4': new MockFileSystemFileHandle('sample.mp4', 1000, 100),
+      'sample.jpg': new MockFileSystemFileHandle('sample.jpg', 200, 200, 'new-auto-poster-data')
+    });
+
+    try {
+      const scanResult = await scanDirectory({ directoryHandle: rootDir, recursive: false });
+
+      await applyScanDifferentials({
+        db: testDb,
+        directoryId: dirId,
+        scanResult,
+        recursive: false
+      });
+
+      const video = testDb.getVideo('vid-existing-poster');
+      assert(video.customPosterId === 'img-poster-vid-existing-poster', 'customPosterId must remain original');
+      const blob = await testDb.getImage('img-poster-vid-existing-poster');
+      const text = await blob.text();
+      assert(text === 'original-hand-poster', 'Blob contents must not be overwritten');
+    } finally {
+      restoreImageMock();
+    }
+  });
+
+  // 34. 既存 thumbnailId あり / customPosterId なし -> poster自動設定
+  await runTest('34. 自動カスタムポスター: 既存 thumbnailId あり/customPosterIdなしの場合、自動設定されるがthumbnailIdは保持すること', async () => {
+    setupImageMock();
+    const existingAsset = {
+      id: 'vid-existing-thumb',
+      displayTitle: 'Existing Thumb Video',
+      genreId: 'genre-default',
+      thumbnailId: 'img-thumb-original',
+      customPosterId: null,
+      identityStatus: 'normal',
+      fileSize: 1000,
+      quickHash: realQhash,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    };
+    const testDb = createTestDb([existingAsset]);
+    await testDb.initAsync();
+    const dirId = 'dir-auto-poster';
+
+    const rootDir = new MockFileSystemDirectoryHandle('root', {
+      'sample.mp4': new MockFileSystemFileHandle('sample.mp4', 1000, 100),
+      'sample.jpg': new MockFileSystemFileHandle('sample.jpg', 200, 200, 'valid-image-data')
+    });
+
+    try {
+      const scanResult = await scanDirectory({ directoryHandle: rootDir, recursive: false });
+
+      await applyScanDifferentials({
+        db: testDb,
+        directoryId: dirId,
+        scanResult,
+        recursive: false
+      });
+
+      const video = testDb.getVideo('vid-existing-thumb');
+      assert(video.customPosterId === 'img-poster-vid-existing-thumb', 'customPosterId should be set');
+      assert(video.thumbnailId === 'img-thumb-original', 'thumbnailId must be preserved');
+    } finally {
+      restoreImageMock();
+    }
+  });
+
+  // 35. sample.jpg + sample.png -> .jpg が deterministic に選択される
+  await runTest('35. 自動カスタムポスター: 同一basenameで複数拡張子が存在する場合、JPGが優先されること', async () => {
+    const rootDir = new MockFileSystemDirectoryHandle('root', {
+      'sample.mp4': new MockFileSystemFileHandle('sample.mp4', 1000, 100),
+      'sample.png': new MockFileSystemFileHandle('sample.png', 200, 200, 'png-data'),
+      'sample.jpg': new MockFileSystemFileHandle('sample.jpg', 200, 200, 'jpg-data')
+    });
+
+    const scanResult = await scanDirectory({ directoryHandle: rootDir, recursive: false });
+    assert(scanResult.scannedFiles[0].autoPosterHandle.name === 'sample.jpg', 'JPG must be preferred over PNG');
+  });
+
+  // 36. 大文字拡張子 sample.JPG -> 対応
+  await runTest('36. 自動カスタムポスター: 大文字の画像拡張子(JPG)でも自動設定されること', async () => {
+    setupImageMock();
+    const testDb = createTestDb();
+    await testDb.initAsync();
+    const dirId = 'dir-auto-poster';
+
+    const rootDir = new MockFileSystemDirectoryHandle('root', {
+      'sample.mp4': new MockFileSystemFileHandle('sample.mp4', 1000, 100),
+      'sample.JPG': new MockFileSystemFileHandle('sample.JPG', 200, 200, 'valid-image-data')
+    });
+
+    const scanResult = await scanDirectory({ directoryHandle: rootDir, recursive: false });
+    assert(scanResult.scannedFiles[0].autoPosterHandle !== null, 'autoPosterHandle should be matched');
+
+    await applyScanDifferentials({
+      db: testDb,
+      directoryId: dirId,
+      scanResult,
+      recursive: false
+    });
+
+    const videos = testDb.getVideos();
+    assert(videos[0].customPosterId !== null, 'customPosterId should be registered');
+    restoreImageMock();
+  });
+
+  // 37. 壊れた画像
+  await runTest('37. 自動カスタムポスター: 壊れた画像の場合は設定がスキップされ動画のみスキャン成功すること', async () => {
+    setupImageMock();
+    const testDb = createTestDb();
+    await testDb.initAsync();
+    const dirId = 'dir-auto-poster';
+
+    const rootDir = new MockFileSystemDirectoryHandle('root', {
+      'sample.mp4': new MockFileSystemFileHandle('sample.mp4', 1000, 100),
+      'sample.jpg': new MockFileSystemFileHandle('sample.jpg', 200, 200, 'corrupted-image-data')
+    });
+
+    const scanResult = await scanDirectory({ directoryHandle: rootDir, recursive: false });
+
+    await applyScanDifferentials({
+      db: testDb,
+      directoryId: dirId,
+      scanResult,
+      recursive: false
+    });
+
+    const videos = testDb.getVideos();
+    assert(videos.length === 1, 'Video must be registered successfully');
+    assert(videos[0].customPosterId === null, 'customPosterId must be skipped due to corrupt validation');
+    restoreImageMock();
+  });
+
+  // 38. サイズ上限超過
+  await runTest('38. 自動カスタムポスター: 10MB超の画像の場合は設定がスキップされ動画のみスキャン成功すること', async () => {
+    setupImageMock();
+    const testDb = createTestDb();
+    await testDb.initAsync();
+    const dirId = 'dir-auto-poster';
+
+    const rootDir = new MockFileSystemDirectoryHandle('root', {
+      'sample.mp4': new MockFileSystemFileHandle('sample.mp4', 1000, 100),
+      'sample.jpg': new MockFileSystemFileHandle('sample.jpg', 11 * 1024 * 1024, 200)
+    });
+
+    const scanResult = await scanDirectory({ directoryHandle: rootDir, recursive: false });
+
+    await applyScanDifferentials({
+      db: testDb,
+      directoryId: dirId,
+      scanResult,
+      recursive: false
+    });
+
+    const videos = testDb.getVideos();
+    assert(videos.length === 1, 'Video must be registered');
+    assert(videos[0].customPosterId === null, 'customPosterId must be skipped due to size limit');
+    restoreImageMock();
+  });
+
+  // 39. 再スキャン customPosterIdなし
+  await runTest('39. 自動カスタムポスター: 再スキャン時にcustomPosterIdが空ならポスターが自動設定されること', async () => {
+    setupImageMock();
+    const existingAsset = {
+      id: 'vid-rescan-no-poster',
+      displayTitle: 'Rescan Video',
+      genreId: 'genre-default',
+      customPosterId: null,
+      identityStatus: 'normal',
+      fileSize: 1000,
+      quickHash: realQhash,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    };
+    const testDb = createTestDb([existingAsset]);
+    await testDb.initAsync();
+    const dirId = 'dir-auto-poster';
+
+    testDb.fileLocations.push({
+      id: 'loc-rescan',
+      mediaAssetId: 'vid-rescan-no-poster',
+      directoryId: dirId,
+      relativePath: 'sample.mp4',
+      fileName: 'sample.mp4',
+      fileSize: 1000,
+      lastModified: 100,
+      availabilityStatus: 'available',
+      verificationStatus: 'verified',
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    });
+    testDb._saveTable('file_locations', testDb.fileLocations);
+
+    const rootDir = new MockFileSystemDirectoryHandle('root', {
+      'sample.mp4': new MockFileSystemFileHandle('sample.mp4', 1000, 100),
+      'sample.jpg': new MockFileSystemFileHandle('sample.jpg', 200, 200, 'valid-image-data')
+    });
+
+    try {
+      const scanResult = await scanDirectory({ directoryHandle: rootDir, recursive: false });
+
+      await applyScanDifferentials({
+        db: testDb,
+        directoryId: dirId,
+        scanResult,
+        recursive: false
+      });
+
+      const video = testDb.getVideo('vid-rescan-no-poster');
+      assert(video.customPosterId === 'img-poster-vid-rescan-no-poster', 'customPosterId must be auto-registered for existing asset');
+    } finally {
+      restoreImageMock();
+    }
+  });
+
+  // 40. 再スキャン customPosterIdあり
+  await runTest('40. 自動カスタムポスター: 再スキャン時にすでにcustomPosterIdがあれば変更されないこと', async () => {
+    setupImageMock();
+    const existingAsset = {
+      id: 'vid-rescan-has-poster',
+      displayTitle: 'Rescan Video Poster',
+      genreId: 'genre-default',
+      customPosterId: 'img-poster-vid-rescan-has-poster',
+      identityStatus: 'normal',
+      fileSize: 1000,
+      quickHash: realQhash,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    };
+    const testDb = createTestDb([existingAsset]);
+    await testDb.initAsync();
+    await testDb.putImage('img-poster-vid-rescan-has-poster', new Blob(['original-poster'], { type: 'image/png' }));
+    const dirId = 'dir-auto-poster';
+
+    testDb.fileLocations.push({
+      id: 'loc-rescan2',
+      mediaAssetId: 'vid-rescan-has-poster',
+      directoryId: dirId,
+      relativePath: 'sample.mp4',
+      fileName: 'sample.mp4',
+      fileSize: 1000,
+      lastModified: 100,
+      availabilityStatus: 'available',
+      verificationStatus: 'verified',
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    });
+    testDb._saveTable('file_locations', testDb.fileLocations);
+
+    const rootDir = new MockFileSystemDirectoryHandle('root', {
+      'sample.mp4': new MockFileSystemFileHandle('sample.mp4', 1000, 100),
+      'sample.jpg': new MockFileSystemFileHandle('sample.jpg', 200, 200, 'valid-image-data-changed')
+    });
+
+    try {
+      const scanResult = await scanDirectory({ directoryHandle: rootDir, recursive: false });
+
+      await applyScanDifferentials({
+        db: testDb,
+        directoryId: dirId,
+        scanResult,
+        recursive: false
+      });
+
+      const video = testDb.getVideo('vid-rescan-has-poster');
+      assert(video.customPosterId === 'img-poster-vid-rescan-has-poster', 'customPosterId must remain unchanged');
+      const blob = await testDb.getImage('img-poster-vid-rescan-has-poster');
+      const text = await blob.text();
+      assert(text === 'original-poster', 'Blob must not be modified');
+    } finally {
+      restoreImageMock();
+    }
+  });
+
+  // 41. 自動poster設定後に元画像ファイルが消える
+  await runTest('41. 自動カスタムポスター: 設定後に元画像が削除されてもIndexedDB内データは維持されること', async () => {
+    setupImageMock();
+    const testDb = createTestDb();
+    await testDb.initAsync();
+    const dirId = 'dir-auto-poster';
+
+    const rootDir = new MockFileSystemDirectoryHandle('root', {
+      'sample.mp4': new MockFileSystemFileHandle('sample.mp4', 1000, 100),
+      'sample.jpg': new MockFileSystemFileHandle('sample.jpg', 200, 200, 'persisted-auto-poster-data')
+    });
+
+    const scanResult = await scanDirectory({ directoryHandle: rootDir, recursive: false });
+
+    await applyScanDifferentials({
+      db: testDb,
+      directoryId: dirId,
+      scanResult,
+      recursive: false
+    });
+
+    const videos = testDb.getVideos();
+    const posterId = videos[0].customPosterId;
+    assert(posterId !== null, 'Poster should be set');
+
+    const nextDir = new MockFileSystemDirectoryHandle('root', {
+      'sample.mp4': new MockFileSystemFileHandle('sample.mp4', 1000, 100)
+    });
+    const scanResult2 = await scanDirectory({ directoryHandle: nextDir, recursive: false });
+    await applyScanDifferentials({
+      db: testDb,
+      directoryId: dirId,
+      scanResult: scanResult2,
+      recursive: false
+    });
+
+    const videoAfter = testDb.getVideo(videos[0].id);
+    assert(videoAfter.customPosterId === posterId, 'customPosterId must be preserved even if image file is missing');
+    const blob = await testDb.getImage(posterId);
+    assert(blob !== null, 'Poster Blob must still exist in IndexedDB');
+    const text = await blob.text();
+    assert(text === 'persisted-auto-poster-data', 'Blob contents must match');
+    restoreImageMock();
+  });
+
+  // 42. Full Backup
+  await runTest('42. 自動カスタムポスター: バックアップZIPに自動ポスターデータが含まれること', async () => {
+    setupImageMock();
+    const testDb = createTestDb();
+    await testDb.initAsync();
+    const dirId = 'dir-auto-poster';
+
+    const rootDir = new MockFileSystemDirectoryHandle('root', {
+      'sample.mp4': new MockFileSystemFileHandle('sample.mp4', 1000, 100),
+      'sample.jpg': new MockFileSystemFileHandle('sample.jpg', 200, 200, 'backup-poster-data')
+    });
+
+    const scanResult = await scanDirectory({ directoryHandle: rootDir, recursive: false });
+
+    await applyScanDifferentials({
+      db: testDb,
+      directoryId: dirId,
+      scanResult,
+      recursive: false
+    });
+
+    const originalAppDb = await new Promise(resolve => {
+      import('../app.js').then(m => resolve(m.db));
+    });
+    setDbForTesting(testDb);
+
+    try {
+      const zipBlob = await generateLocalBackupZipBlob();
+      assert(zipBlob !== null, 'Backup ZIP should be generated successfully');
+
+      const zip = await JSZip.loadAsync(zipBlob);
+      const videos = testDb.getVideos();
+      const posterFileName = `images/posters/img-poster-${videos[0].id}`;
+      const posterFile = zip.file(posterFileName);
+      assert(posterFile !== null, 'Auto-registered custom poster file must exist inside the backup ZIP');
+      const text = await posterFile.async('text');
+      assert(text === 'backup-poster-data', 'Backup poster ZIP content must match the IndexedDB Blob content');
+    } finally {
+      setDbForTesting(originalAppDb);
+      restoreImageMock();
+    }
+  });
+
+  // 43. Shared Review export
+  await runTest('43. 自動カスタムポスター: 共有レビューエクスポートにカスタムポスター情報が含まれないこと', async () => {
+    setupImageMock();
+    const testDb = createTestDb();
+    await testDb.initAsync();
+    const dirId = 'dir-auto-poster';
+
+    const rootDir = new MockFileSystemDirectoryHandle('root', {
+      'sample.mp4': new MockFileSystemFileHandle('sample.mp4', 1000, 100),
+      'sample.jpg': new MockFileSystemFileHandle('sample.jpg', 200, 200, 'shared-review-secret-poster')
+    });
+
+    const scanResult = await scanDirectory({ directoryHandle: rootDir, recursive: false });
+
+    await applyScanDifferentials({
+      db: testDb,
+      directoryId: dirId,
+      scanResult,
+      recursive: false
+    });
+
+    const videos = testDb.getVideos();
+    const video = videos[0];
+
+    const asset = testDb.mediaAssets.find(a => a.id === video.id);
+    asset.contentHash = '1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef';
+    asset.hashStatus = 'completed';
+    testDb._saveTable('media_assets', testDb.mediaAssets);
+
+    await testDb.saveReview(video.id, {
+      overallGrade: 'A',
+      comment: 'great'
+    });
+
+    const originalAppDb = await new Promise(resolve => {
+      import('../app.js').then(m => resolve(m.db));
+    });
+    setDbForTesting(testDb);
+
+    try {
+      const pkg = exportReviews(testDb, [video.id]);
+
+      const item = pkg.items[0];
+      assert(item !== undefined, 'Exported item must exist');
+      assert(item.customPosterId === undefined, 'Shared Review Package must not contain customPosterId field');
+      assert(pkg.images === undefined || pkg.images[`img-poster-${video.id}`] === undefined, 'Shared Review Package must not contain custom poster image data');
+    } finally {
+      setDbForTesting(originalAppDb);
+      restoreImageMock();
+    }
+  });
+
+  // 44. 新規auto poster: putImage成功 → _saveTable(media_assets)失敗でのロールバック
+  await runTest('44. 自動カスタムポスター: putImage成功 → _saveTable(media_assets)失敗時に元のnullと画像削除が維持されること', async () => {
+    setupImageMock();
+    const testDb = createTestDb();
+    await testDb.initAsync();
+    const dirId = 'dir-auto-poster';
+
+    const rootDir = new MockFileSystemDirectoryHandle('root', {
+      'sample.mp4': new MockFileSystemFileHandle('sample.mp4', 1000, 100),
+      'sample.jpg': new MockFileSystemFileHandle('sample.jpg', 200, 200, 'valid-image-data')
+    });
+
+    const scanResult = await scanDirectory({ directoryHandle: rootDir, recursive: false });
+
+    // _saveTable を強制的に失敗させるモックを一時的にセット
+    const originalSaveTable = testDb._saveTable;
+    testDb._saveTable = function(tableName, data) {
+      if (tableName === 'media_assets') {
+        throw new Error('Forced DB Save failure');
+      }
+      return originalSaveTable.call(this, tableName, data);
+    };
+
+    try {
+      await applyScanDifferentials({
+        db: testDb,
+        directoryId: dirId,
+        scanResult,
+        recursive: false
+      });
+    } catch (e) {
+      // 期待通りの例外
+    } finally {
+      testDb._saveTable = originalSaveTable;
+    }
+
+    const videos = testDb.getVideos();
+    assert(videos.length === 1, 'Video must be registered');
+    assert(videos[0].customPosterId === null, 'customPosterId must be rolled back to null');
+
+    // 新規 poster Blob が IndexedDB に残っていないか検証
+    if (testDb.idbAvailable) {
+      const blob = await testDb.getImage(`img-poster-${videos[0].id}`);
+      assert(blob === null || blob === undefined, 'New poster Blob must be deleted from IndexedDB');
+    }
+
+    restoreImageMock();
+  });
+
+  // 45. registerAutoPosterImage処理中のputImage失敗
+  await runTest('45. 自動カスタムポスター: putImage失敗時にアセットメタデータは変更されず動画登録自体は維持されること', async () => {
+    setupImageMock();
+    const testDb = createTestDb();
+    await testDb.initAsync();
+    const dirId = 'dir-auto-poster';
+
+    const rootDir = new MockFileSystemDirectoryHandle('root', {
+      'sample.mp4': new MockFileSystemFileHandle('sample.mp4', 1000, 100),
+      'sample.jpg': new MockFileSystemFileHandle('sample.jpg', 200, 200, 'valid-image-data')
+    });
+
+    const scanResult = await scanDirectory({ directoryHandle: rootDir, recursive: false });
+
+    // putImage を強制的に失敗させるモックを一時的にセット
+    const originalPutImage = testDb.putImage;
+    testDb.putImage = async function() {
+      throw new Error('Forced IndexedDB Write failure');
+    };
+
+    try {
+      await applyScanDifferentials({
+        db: testDb,
+        directoryId: dirId,
+        scanResult,
+        recursive: false
+      });
+    } finally {
+      testDb.putImage = originalPutImage;
+    }
+
+    const videos = testDb.getVideos();
+    assert(videos.length === 1, 'Video must be registered');
+    assert(videos[0].customPosterId === null, 'customPosterId must be null');
+
+    restoreImageMock();
+  });
+
+  // 46. ロールバック時に既存posterId Blobが存在する特殊ケース
+  await runTest('46. 自動カスタムポスター: ロールバック時に置き換える予定だった既存ポスターBlobが復元・維持されること', async () => {
+    setupImageMock();
+
+    const existingAsset = {
+      id: 'vid-existing-poster-rollback',
+      displayTitle: 'Existing Poster Video',
+      genreId: 'genre-default',
+      customPosterId: 'img-poster-vid-existing-poster-rollback',
+      identityStatus: 'normal',
+      fileSize: 1000,
+      quickHash: realQhash,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    };
+
+    const testDb = createTestDb([existingAsset]);
+    await testDb.initAsync();
+
+    // 既存 Blob を IndexedDB に投入
+    const originalBlobData = 'original-existing-blob-content';
+    await testDb.putImage('img-poster-vid-existing-poster-rollback', new Blob([originalBlobData], { type: 'image/png' }));
+
+    const dirId = 'dir-auto-poster';
+
+    testDb.fileLocations.push({
+      id: 'loc-rescan-rollback',
+      mediaAssetId: 'vid-existing-poster-rollback',
+      directoryId: dirId,
+      relativePath: 'sample.mp4',
+      fileName: 'sample.mp4',
+      fileSize: 1000,
+      lastModified: 100,
+      availabilityStatus: 'available',
+      verificationStatus: 'verified',
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    });
+    testDb._saveTable('file_locations', testDb.fileLocations);
+
+    const rootDir = new MockFileSystemDirectoryHandle('root', {
+      'sample.mp4': new MockFileSystemFileHandle('sample.mp4', 1000, 100),
+      'sample.jpg': new MockFileSystemFileHandle('sample.jpg', 200, 200, 'new-auto-poster-data')
+    });
+
+    const scanResult = await scanDirectory({ directoryHandle: rootDir, recursive: false });
+
+    // _saveTable を強制的に失敗させるモックを一時的にセット
+    const originalSaveTable = testDb._saveTable;
+    testDb._saveTable = function(tableName, data) {
+      if (tableName === 'media_assets') {
+        throw new Error('Forced DB Save failure');
+      }
+      return originalSaveTable.call(this, tableName, data);
+    };
+
+    const asset = testDb.mediaAssets.find(a => a.id === 'vid-existing-poster-rollback');
+    asset.customPosterId = null; // メモリ上で null にして新規設定を走らせる
+
+    try {
+      await applyScanDifferentials({
+        db: testDb,
+        directoryId: dirId,
+        scanResult,
+        recursive: false
+      });
+    } catch (e) {
+      // 期待通りの例外
+    } finally {
+      testDb._saveTable = originalSaveTable;
+    }
+
+    // ロールバックによってメモリ上の customPosterId も null に戻っていること
+    assert(asset.customPosterId === null, 'customPosterId should be rolled back to null');
+
+    // 既存 Blob が IndexedDB に復元されていること
+    if (testDb.idbAvailable) {
+      const blob = await testDb.getImage('img-poster-vid-existing-poster-rollback');
+      assert(blob !== null && blob !== undefined, 'Pre-existing poster Blob must exist');
+      const text = await blob.text();
+      assert(text === originalBlobData, 'Pre-existing poster Blob data must be preserved and restored');
+    }
+
+    restoreImageMock();
   });
 
   console.groupEnd();

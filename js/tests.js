@@ -55,7 +55,16 @@ export class MockFileSystemFileHandle {
     if (this._shouldFail) {
       throw new Error('Mock read error');
     }
-    const blob = new Blob([this._content], { type: 'video/mp4' });
+    const ext = this.name.split('.').pop().toLowerCase();
+    let type = 'video/mp4';
+    if (ext === 'jpg' || ext === 'jpeg') {
+      type = 'image/jpeg';
+    } else if (ext === 'png') {
+      type = 'image/png';
+    } else if (ext === 'webp') {
+      type = 'image/webp';
+    }
+    const blob = new Blob([this._content], { type });
     blob.name = this.name;
     blob.lastModified = this._lastModified;
     return blob;
