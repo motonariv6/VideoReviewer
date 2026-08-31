@@ -71,7 +71,7 @@ export class ReviewEditorUI {
       p.style.color = 'var(--color-text-dim)';
       p.style.textAlign = 'center';
       p.style.padding = '12px';
-      p.textContent = '有効な評価項目が登録されていません。「評価項目設定」から項目を追加してください。';
+      p.textContent = '有効な評価項目が登録されていません。「設定」から項目を追加してください。';
       this.els.criteriaPanel.appendChild(p);
       return;
     }
