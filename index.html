@@ -210,7 +210,7 @@
               </svg>
             </button>
             <div id="title-display-container" style="display:flex;align-items:center;gap:8px;flex:1;min-width:0">
-              <h3 id="editor-video-title" class="video-title-heading" style="margin:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:350px">動画タイトル...</h3>
+              <h3 id="editor-video-title" class="video-title-heading" data-i18n="editor.placeholderVideoTitle" style="margin:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:350px">動画タイトル...</h3>
               <button id="btn-edit-display-title" class="btn btn-icon" data-i18n="editor.editDisplayTitle" data-i18n-attr="title,aria-label" title="表示タイトルを変更" style="padding:4px;width:24px;height:24px;color:var(--color-text-muted)">
                 <svg xmlns="http://www.w3.org/2000/svg" style="width:14px;height:14px" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
@@ -553,6 +553,26 @@
       </div>
       <div class="modal-body" style="max-height: 70vh; overflow-y: auto;">
 
+        <!-- Language Selection Section (Language Recovery UX) -->
+        <div class="editor-section" style="gap: 8px; margin-bottom: 20px;">
+          <div style="display:flex; align-items:center; gap:8px; margin-bottom: 4px;">
+            <svg id="settings-language-icon" xmlns="http://www.w3.org/2000/svg" style="width:18px;height:18px;flex-shrink:0;color:var(--color-primary, #6366f1)" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9a9 9 0 01-9-9m9 9c1.657 0 3-4.03 3-9s-1.343-9-3-9m0 18c-1.657 0-3-4.03-3-9s1.343-9 3-9m-9 9a9 9 0 019-9" />
+            </svg>
+            <h4 data-i18n="settings.languageLabel" style="font-size: 1rem; font-weight: 600; color: var(--color-text-main); margin: 0;">Language / 言語</h4>
+          </div>
+          <div>
+            <select id="settings-language-select" class="form-input" style="width:100%; height:38px;">
+              <option value="ja">日本語</option>
+              <option value="en">English</option>
+              <option value="zh-CN">简体中文</option>
+            </select>
+          </div>
+        </div>
+
+        <!-- Divider -->
+        <div style="border-top: 1px solid var(--color-border); margin: 16px 0;"></div>
+
         <!-- Genre Configuration Section -->
         <div class="editor-section" style="gap: 8px; margin-bottom: 20px;">
           <h4 data-i18n="settings.genreSectionTitle" style="font-size: 1rem; font-weight: 600; color: var(--color-text-main); margin-bottom: 4px;">動画ジャンル設定</h4>
@@ -624,7 +644,7 @@
             <div style="display: flex; justify-content: space-between;"><span data-i18n="folder.labelConnected" style="color: var(--color-text-muted);">接続先：</span><strong id="folder-name-val">-</strong></div>
             <div style="display: flex; justify-content: space-between;"><span data-i18n="folder.labelStatus" style="color: var(--color-text-muted);">状態：</span><span id="folder-status-val" data-i18n="folder.statusDisconnected">未接続</span></div>
             <div style="display: flex; justify-content: space-between;"><span data-i18n="folder.labelPermission" style="color: var(--color-text-muted);">権限：</span><span id="folder-permission-val">-</span></div>
-            <div style="display: flex; justify-content: space-between;"><span data-i18n="folder.labelRegisteredVideos" style="color: var(--color-text-muted);">登録動画：</span><span id="folder-video-count-val">0本</span></div>
+            <div style="display: flex; justify-content: space-between;"><span data-i18n="folder.labelRegisteredVideos" style="color: var(--color-text-muted);">登録動画：</span><span id="folder-video-count-val" data-i18n="folder.videoCountZero">0本</span></div>
             <div style="display: flex; justify-content: space-between;"><span data-i18n="folder.labelLastScan" style="color: var(--color-text-muted);">最終スキャン：</span><span id="folder-last-scan-val">-</span></div>
 
             <label style="display: flex; align-items: center; gap: 6px; margin-top: 6px; cursor: pointer;">

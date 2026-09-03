@@ -123,7 +123,8 @@ export const ja = {
     folderErrorFileNotFound: "ファイルが見つかりません: {path}",
     folderErrorDisconnected: "接続フォルダ設定が削除されています。",
     btnReconnectFolder: "フォルダを再接続する",
-    videoUnplayableFormat: "この動画形式またはコーデックをブラウザで再生できません。\nファイルは存在しており、評価データも保持されています。"
+    videoUnplayableFormat: "この動画形式またはコーデックをブラウザで再生できません。\nファイルは存在しており、評価データも保持されています。",
+    placeholderVideoTitle: "動画タイトル..."
   },
   poster: {
     labelCustomPoster: "カスタムポスター:",
@@ -202,6 +203,7 @@ export const ja = {
     tooltipRemoveTag: "タグを削除"
   },
   settings: {
+    languageLabel: "Language / 言語",
     modalTitle: "個別評価項目設定",
     genreSectionTitle: "動画ジャンル設定",
     newGenrePlaceholder: "新しいジャンル名を入力 (例: インタビュー)...",
@@ -291,6 +293,7 @@ export const ja = {
     btnReconnectFolder: "フォルダを再接続",
     btnGrantAccess: "アクセスを許可",
     videoCountFormat: "{count}本",
+    videoCountZero: "0本",
     neverScanned: "未スキャン",
     folderUnknown: "フォルダ不明"
   },

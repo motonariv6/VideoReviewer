@@ -123,7 +123,8 @@ export const zhCN = {
     folderErrorFileNotFound: "未找到文件: {path}",
     folderErrorDisconnected: "连接的文件夹设置已被删除。",
     btnReconnectFolder: "重新连接文件夹",
-    videoUnplayableFormat: "此视频格式或编码无法在浏览器中播放。\n文件依然存在，且评价数据已安全保存。"
+    videoUnplayableFormat: "此视频格式或编码无法在浏览器中播放。\n文件依然存在，且评价数据已安全保存。",
+    placeholderVideoTitle: "视频标题..."
   },
   poster: {
     labelCustomPoster: "自定义海报:",
@@ -156,7 +157,7 @@ export const zhCN = {
     saveReview: "保存评价"
   },
   review: {
-    sectionGenre: "0. 视频分类",
+    sectionGenre: "0. 视频类型",
     sectionOverall: "1. 综合评价",
     sectionCriteria: "2. 单项评价",
     sectionRadar: "3. 雷达图",
@@ -202,37 +203,38 @@ export const zhCN = {
     tooltipRemoveTag: "删除标签"
   },
   settings: {
+    languageLabel: "Language / 语言",
     modalTitle: "评价项目设置",
-    genreSectionTitle: "视频分类设置",
-    newGenrePlaceholder: "输入新分类名称 (例如: 采访)...",
-    genreReorderLabel: "分类排序：",
-    criteriaSectionTitle: "分类评价项设置",
-    criteriaSectionDesc: "每个分类最多可添加 6 个评价项目。支持重命名、重新排序或停用项目。",
-    copyCriteriaLabel: "从其他分类复制:",
+    genreSectionTitle: "视频类型设置",
+    newGenrePlaceholder: "输入新类型名称 (例如: 采访)...",
+    genreReorderLabel: "类型排序：",
+    criteriaSectionTitle: "按类型评价项设置",
+    criteriaSectionDesc: "每个类型最多可添加 6 个评价项目。支持重命名、重新排序或停用项目。",
+    copyCriteriaLabel: "从其他类型复制:",
     copyCriteriaButton: "执行复制",
     newCriteriaPlaceholder: "输入项目名称 (例如: 剧情)...",
     addCriteriaButton: "添加项目",
     saveAndClose: "保存设置并关闭",
-    toastInputGenreName: "请输入分类名称。",
-    toastGenreAdded: "已添加分类「{name}」。",
-    promptNewGenreName: "请输入新分类名称:",
-    toastInvalidGenreName: "请输入有效的分类名称。",
-    toastGenreRenamed: "已更改分类名称。",
-    toastDefaultGenreImmutable: "无法停用默认分类。",
-    confirmDisableGenre: "确定要停用分类「{name}」吗？\n已登记的视频和评价数据不会被删除。",
-    toastGenreDisabled: "已停用分类「{name}」。",
-    toastGenreEnabled: "已启用分类「{name}」。",
-    toastNoSourceGenre: "未选择复制源分类。",
-    toastSameGenre: "复制源与目标分类相同。",
-    confirmOverwriteCriteria: "是否用复制源的评价项覆盖当前分类的评价项？",
-    toastCriteriaCopied: "已从其他分类复制评价项目。",
+    toastInputGenreName: "请输入类型名称。",
+    toastGenreAdded: "已添加类型「{name}」。",
+    promptNewGenreName: "请输入新类型名称:",
+    toastInvalidGenreName: "请输入有效的类型名称。",
+    toastGenreRenamed: "已更改类型名称。",
+    toastDefaultGenreImmutable: "无法停用默认类型。",
+    confirmDisableGenre: "确定要停用类型「{name}」吗？\n已登记的视频和评价数据不会被删除。",
+    toastGenreDisabled: "已停用类型「{name}」。",
+    toastGenreEnabled: "已启用类型「{name}」。",
+    toastNoSourceGenre: "未选择复制源类型。",
+    toastSameGenre: "复制源与目标类型相同。",
+    confirmOverwriteCriteria: "是否用复制源的评价项覆盖当前类型的评价项？",
+    toastCriteriaCopied: "已从其他类型复制评价项目。",
     toastMaxCriteriaExceeded: "最多只能启用 6 个评价项目。",
     confirmDeleteCriteria: "确定要删除评价项目「{name}」吗？\n以往视频评价的数值数据将作为隐藏项安全保留。",
     toastCriteriaDeleted: "已删除（隐藏）项目。",
     toastCriteriaAdded: "已添加评价项目。",
     activeGenreLabel: "{name}",
     disabledGenreLabel: "{name} (已停用)",
-    copySourcePlaceholder: "-- 选择复制源分类 --",
+    copySourcePlaceholder: "-- 选择复制源类型 --",
     btnDisable: "停用",
     btnEnable: "启用",
     criteriaActiveBadge: "启用中",
@@ -291,6 +293,7 @@ export const zhCN = {
     btnReconnectFolder: "重新连接文件夹",
     btnGrantAccess: "授予权限",
     videoCountFormat: "{count} 个",
+    videoCountZero: "0 个",
     neverScanned: "未扫描",
     folderUnknown: "未知文件夹"
   },
@@ -310,13 +313,13 @@ export const zhCN = {
     toastBulkDeleteFailed: "删除 {count} 个视频失败。"
   },
   share: {
-    exportStart: "分享评价 / 导出",
+    exportStart: "共享评价 / 导出",
     importTrigger: "导入评价",
     exportSelectedPrefix: "已选择导出目标: ",
     exportSelectedSuffix: " 项",
     exportSubmit: "执行导出",
     averageRating: "平均评分",
-    reviewersBreakdown: "按评审人查看",
+    reviewersBreakdown: "按审阅者查看",
     mergedTags: "合并标签",
     sharedTimeline: "共享时间轴",
     importModalTitle: "确认导入共享评价",
@@ -351,8 +354,8 @@ export const zhCN = {
     tooltipAssignedBy: "添加人: {names}",
     noTimelineComments: "暂无时间轴评论",
     reviewerSelf: "我",
-    reviewerUnknown: "未知评审人",
-    sharedReviewerDefault: "共有审阅者"
+    reviewerUnknown: "未知审阅者",
+    sharedReviewerDefault: "共享审阅者"
   },
   backup: {
     sectionTitle: "数据管理",
@@ -405,7 +408,7 @@ export const zhCN = {
       'crit-replayability': { name: '重温价值', description: '多次观看的吸引力与再次观看的新发现' }
     },
     genres: {
-      'genre-default': { name: '常规', description: '默认分类' }
+      'genre-default': { name: '常规', description: '默认类型' }
     }
   }
 };

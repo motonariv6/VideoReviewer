@@ -171,6 +171,10 @@ async function run() {
       testGroup = args[i].split('=')[1] || null;
     } else if (args[i] === '--all') {
       testGroup = 'all';
+    } else if (args[i] === '--lang') {
+      i++;
+    } else if (args[i].startsWith('--lang=')) {
+      // Allowed browser language option
     } else {
       hasInvalidArg = true;
     }
@@ -384,6 +388,12 @@ Candidates searched:
       `--user-data-dir=${tempProfileDir}`,
       targetUrl
     ];
+
+    const langArg = process.argv.find(arg => arg.startsWith('--lang='));
+    const chromeLang = langArg ? langArg.split('=')[1] : (process.env.CHROME_LANG || null);
+    if (chromeLang) {
+      chromeArgs.unshift(`--lang=${chromeLang}`);
+    }
 
     try {
       // Launch Chrome in separate process group

@@ -1,6 +1,6 @@
 // review-editor-ui.js - View and rendering logic for Video Review Editor workspace
 import { renderSharedReviewsUI } from '../review-sharing/review-share-aggregate-ui.js';
-import { t } from '../i18n.js';
+import { t, translateBuiltInField } from '../i18n.js';
 
 export class ReviewEditorUI {
   /**
@@ -35,9 +35,10 @@ export class ReviewEditorUI {
   populateGenreSelect(allGenres, currentGenreId) {
     this.els.videoGenreSelect.innerHTML = '';
     allGenres.forEach(g => {
+      const displayName = translateBuiltInField('genres', g.id, 'name', g.name);
       const opt = document.createElement('option');
       opt.value = g.id;
-      opt.textContent = g.isActive ? g.name : t('settings.disabledGenreLabel', { name: g.name });
+      opt.textContent = g.isActive ? displayName : t('settings.disabledGenreLabel', { name: displayName });
       this.els.videoGenreSelect.appendChild(opt);
     });
     this.els.videoGenreSelect.value = currentGenreId || 'genre-default';
@@ -83,13 +84,14 @@ export class ReviewEditorUI {
       const row = document.createElement('div');
       row.className = 'star-rating-row';
 
+      const displayName = translateBuiltInField('criteria', crit.id, 'name', crit.name);
       const labelSpan = document.createElement('span');
       labelSpan.className = 'star-rating-label';
       if (crit.isActive === false) {
-        labelSpan.textContent = t('settings.hiddenCriteriaLabel', { name: crit.name });
+        labelSpan.textContent = t('settings.hiddenCriteriaLabel', { name: displayName });
         labelSpan.style.color = 'var(--color-text-muted)';
       } else {
-        labelSpan.textContent = crit.name;
+        labelSpan.textContent = displayName;
       }
       row.appendChild(labelSpan);
 
