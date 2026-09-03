@@ -291,6 +291,128 @@ export async function runI18nTests() {
     assert(customCrit === '独自基準', `Expected "独自基準", got "${customCrit}"`);
   });
 
+  // 14. Phase 2: index.html 上のすべての data-i18n キーが全言語リソースに定義されていること
+  await runTest('14. index.html に記述されたすべての data-i18n キーが ja, en, zh-CN に定義されていること', () => {
+    // Collect keys present in index.html (if in browser or if document has them)
+    if (typeof document !== 'undefined') {
+      const allElements = document.querySelectorAll('[data-i18n]');
+      const foundKeys = new Set();
+      allElements.forEach(el => {
+        const k = el.getAttribute('data-i18n');
+        if (k) foundKeys.add(k);
+      });
+
+      for (const k of foundKeys) {
+        setLocale('ja');
+        const jaVal = t(k);
+        assert(jaVal !== k, `Missing ja translation for key: ${k}`);
+
+        setLocale('en');
+        const enVal = t(k);
+        assert(enVal !== k, `Missing en translation for key: ${k}`);
+
+        setLocale('zh-CN');
+        const zhVal = t(k);
+        assert(zhVal !== k, `Missing zh-CN translation for key: ${k}`);
+      }
+    }
+  });
+
+  // 15. Phase 2: ブランド名称とtaglineの検証
+  await runTest('15. VRV: VideoReViewer ブランドおよび tagline が正しく定義・表示されること', () => {
+    setLocale('ja');
+    assert(t('brand.tagline') === 'Review what you view.', 'ja brand.tagline mismatch');
+    assert(t('brand.pageTitle').includes('VRV: VideoReViewer'), 'ja brand.pageTitle should contain "VRV: VideoReViewer"');
+
+    setLocale('en');
+    assert(t('brand.tagline') === 'Review what you view.', 'en brand.tagline mismatch');
+    assert(t('brand.pageTitle') === 'VRV: VideoReViewer - Review what you view.', 'en brand.pageTitle mismatch');
+
+    setLocale('zh-CN');
+    assert(t('brand.tagline') === 'Review what you view.', 'zh-CN brand.tagline mismatch');
+    assert(t('brand.pageTitle').includes('VRV: VideoReViewer'), 'zh-CN brand.pageTitle should contain "VRV: VideoReViewer"');
+  });
+
+  // 16. Phase 2: translateDOM によるカンマ区切り複数属性の更新
+  await runTest('16. translateDOM がカンマ区切り複数属性（title, aria-label）を同時に翻訳すること', () => {
+    setLocale('ja');
+    const btn = document.createElement('button');
+    btn.setAttribute('data-i18n', 'common.close');
+    btn.setAttribute('data-i18n-attr', 'title,aria-label');
+    document.body.appendChild(btn);
+
+    try {
+      translateDOM(btn.parentElement);
+      assert(btn.getAttribute('title') === '閉じる', 'title attribute translation failed');
+      assert(btn.getAttribute('aria-label') === '閉じる', 'aria-label attribute translation failed');
+
+      setLocale('en');
+      translateDOM(btn.parentElement);
+      assert(btn.getAttribute('title') === 'Close', 'en title attribute translation failed');
+      assert(btn.getAttribute('aria-label') === 'Close', 'en aria-label attribute translation failed');
+    } finally {
+      document.body.removeChild(btn);
+    }
+  });
+
+  // 17. Phase 2: translateDOM による <title> の更新
+  await runTest('17. translateDOM が <title> 要素および document.title を更新すること', () => {
+    setLocale('en');
+    const titleEl = document.createElement('title');
+    titleEl.setAttribute('data-i18n', 'brand.pageTitle');
+    document.head.appendChild(titleEl);
+
+    try {
+      translateDOM(document);
+      assert(titleEl.textContent === 'VRV: VideoReViewer - Review what you view.', 'title element text mismatch');
+      assert(document.title === 'VRV: VideoReViewer - Review what you view.', 'document.title mismatch');
+    } finally {
+      document.head.removeChild(titleEl);
+    }
+  });
+
+  // 18. Phase 2: initI18n および setLocale による document.documentElement.lang の同期
+  await runTest('18. initI18n および setLocale が document.documentElement.lang を各ロケールに正しく同期すること', () => {
+    const originalGetItem = localStorage.getItem;
+    localStorage.getItem = () => null; // ignore saved localStorage to test navigator/string input
+
+    try {
+      if (typeof document !== 'undefined' && document.documentElement) {
+        // Test A: initI18n with en-US
+        initI18n('en-US');
+        assert(currentLocale === 'en', `Expected currentLocale 'en', got '${currentLocale}'`);
+        assert(document.documentElement.lang === 'en', `Expected html lang 'en', got '${document.documentElement.lang}'`);
+
+        // Test B: initI18n with ja-JP
+        initI18n('ja-JP');
+        assert(currentLocale === 'ja', `Expected currentLocale 'ja', got '${currentLocale}'`);
+        assert(document.documentElement.lang === 'ja', `Expected html lang 'ja', got '${document.documentElement.lang}'`);
+
+        // Test C: initI18n with zh-Hans
+        initI18n('zh-Hans');
+        assert(currentLocale === 'zh-CN', `Expected currentLocale 'zh-CN', got '${currentLocale}'`);
+        assert(document.documentElement.lang === 'zh-CN', `Expected html lang 'zh-CN', got '${document.documentElement.lang}'`);
+
+        // Test D: initI18n with object { languages: ['en-US'] }
+        initI18n({ languages: ['en-US'] });
+        assert(currentLocale === 'en', `Expected currentLocale 'en', got '${currentLocale}'`);
+        assert(document.documentElement.lang === 'en', `Expected html lang 'en', got '${document.documentElement.lang}'`);
+
+        // Test E: setLocale synchronization
+        setLocale('ja');
+        assert(document.documentElement.lang === 'ja', `setLocale('ja') failed: got '${document.documentElement.lang}'`);
+
+        setLocale('en');
+        assert(document.documentElement.lang === 'en', `setLocale('en') failed: got '${document.documentElement.lang}'`);
+
+        setLocale('zh-CN');
+        assert(document.documentElement.lang === 'zh-CN', `setLocale('zh-CN') failed: got '${document.documentElement.lang}'`);
+      }
+    } finally {
+      localStorage.getItem = originalGetItem;
+    }
+  });
+
   console.groupEnd();
   return results;
 }

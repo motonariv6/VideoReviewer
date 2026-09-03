@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Video Review Studio - 動画評価＆タイムライン注釈ツール</title>
+  <title data-i18n="brand.pageTitle">VRV: VideoReViewer - 動画評価＆タイムライン注釈ツール</title>
   <link rel="stylesheet" href="css/styles.css">
 </head>
 <body>
@@ -11,25 +11,33 @@
   <!-- Header Section -->
   <header class="glass-panel">
     <div class="logo-container">
-      <!-- Film Roll SVG Logo -->
-      <svg class="logo-icon" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 4v16M17 4v16M3 8h4m10 0h4M3 12h18M3 16h4m10 0h4M4 20h16a1 1 0 001-1V5a1 1 0 00-1-1H4a1 1 0 00-1 1v14a1 1 0 001 1z" />
+      <!-- VRV Film/Play + Check SVG Logo -->
+      <svg class="logo-icon vrv-logo-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" fill="none">
+        <rect x="2" y="4" width="28" height="24" rx="6" fill="#1e1b4b" stroke="#6366f1" stroke-width="2"/>
+        <path d="M7 8h2v2H7zm0 6h2v2H7zm0 6h2v2H7zm16-12h2v2h-2zm0 6h2v2h-2zm0 6h2v2h-2z" fill="#818cf8"/>
+        <path d="M12 11l7 5-7 5V11z" fill="#38bdf8"/>
+        <path d="M16 19l3 3 6-6" stroke="#10b981" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
       </svg>
-      <span class="logo-text">Video Review Studio</span>
+      <div class="logo-text-group">
+        <div class="logo-title">
+          <span class="brand-vrv">VRV</span><span class="brand-sep">:</span> <span class="brand-name">Video<span class="brand-accent">Re</span>Viewer</span>
+        </div>
+        <div class="logo-tagline" data-i18n="brand.tagline">Review what you view.</div>
+      </div>
     </div>
     <div class="header-actions">
-      <button id="header-btn-library" class="btn btn-secondary hidden">
+      <button id="header-btn-library" class="btn btn-secondary hidden" data-i18n="common.backToLibrary" data-i18n-attr="title">
         <svg xmlns="http://www.w3.org/2000/svg" style="width:16px;height:16px" fill="none" viewBox="0 0 24 24" stroke="currentColor">
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16" />
         </svg>
-        動画一覧に戻る
+        <span data-i18n="common.backToLibrary">動画一覧に戻る</span>
       </button>
-      <button id="header-btn-settings" class="btn btn-secondary">
+      <button id="header-btn-settings" class="btn btn-secondary" data-i18n="common.settings" data-i18n-attr="title">
         <svg xmlns="http://www.w3.org/2000/svg" style="width:16px;height:16px" fill="none" viewBox="0 0 24 24" stroke="currentColor">
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
         </svg>
-        設定
+        <span data-i18n="common.settings">設定</span>
       </button>
     </div>
   </header>
@@ -42,8 +50,8 @@
     <main id="view-library" class="screen-library">
       <div class="library-header-bar">
         <div>
-          <h2>動画ライブラリ</h2>
-          <p style="color:var(--color-text-muted);font-size:0.875rem;margin-top:4px">登録済みの動画を一覧表示します。</p>
+          <h2 data-i18n="library.title">動画ライブラリ</h2>
+          <p data-i18n="library.description" style="color:var(--color-text-muted);font-size:0.875rem;margin-top:4px">登録済みの動画を一覧表示します。</p>
         </div>
         <div style="display:flex;gap:12px;align-items:center">
           <!-- Standard Library Actions -->
@@ -54,25 +62,25 @@
                 <svg xmlns="http://www.w3.org/2000/svg" style="width:16px;height:16px" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" />
                 </svg>
-                動画を追加
+                <span data-i18n="library.addVideo">動画を追加</span>
               </label>
-              <span style="font-size:0.725rem;color:var(--color-text-muted)">単独動画のハッシュ取得・レビュー作成・共有に使用します。</span>
+              <span data-i18n="library.addVideoHelp" style="font-size:0.725rem;color:var(--color-text-muted)">単独動画のハッシュ取得・レビュー作成・共有に使用します。</span>
             </div>
-            <button id="btn-share-export-start" class="btn btn-secondary">
+            <button id="btn-share-export-start" class="btn btn-secondary" data-i18n="share.exportStart">
               レビュー共有 / Export
             </button>
-            <button id="btn-share-import-trigger" class="btn btn-secondary">
+            <button id="btn-share-import-trigger" class="btn btn-secondary" data-i18n="share.importTrigger">
               レビューをImport
             </button>
           </div>
 
           <!-- Share Export Mode Actions -->
           <div id="library-export-actions" class="hidden" style="display:flex;gap:12px;align-items:center">
-            <span style="font-size:0.875rem;font-weight:600">エクスポート対象を選択中: <span id="export-selected-count">0</span> 件</span>
-            <button id="btn-share-export-select-all" class="btn btn-secondary" style="padding: 6px 12px; font-size: 0.8125rem">全選択</button>
-            <button id="btn-share-export-deselect-all" class="btn btn-secondary" style="padding: 6px 12px; font-size: 0.8125rem">全解除</button>
-            <button id="btn-share-export-submit" class="btn btn-primary" style="padding: 6px 12px; font-size: 0.8125rem">Export実行</button>
-            <button id="btn-share-export-cancel" class="btn btn-secondary" style="padding: 6px 12px; font-size: 0.8125rem">キャンセル</button>
+            <span style="font-size:0.875rem;font-weight:600"><span data-i18n="share.exportSelectedPrefix">エクスポート対象を選択中: </span><span id="export-selected-count">0</span><span data-i18n="share.exportSelectedSuffix"> 件</span></span>
+            <button id="btn-share-export-select-all" class="btn btn-secondary" data-i18n="common.selectAll" style="padding: 6px 12px; font-size: 0.8125rem">全選択</button>
+            <button id="btn-share-export-deselect-all" class="btn btn-secondary" data-i18n="common.deselectAll" style="padding: 6px 12px; font-size: 0.8125rem">全解除</button>
+            <button id="btn-share-export-submit" class="btn btn-primary" data-i18n="share.exportSubmit" style="padding: 6px 12px; font-size: 0.8125rem">Export実行</button>
+            <button id="btn-share-export-cancel" class="btn btn-secondary" data-i18n="common.cancel" style="padding: 6px 12px; font-size: 0.8125rem">キャンセル</button>
           </div>
         </div>
       </div>
@@ -80,68 +88,68 @@
       <!-- Search & Filters Container -->
       <section class="glass-panel filter-bar">
         <div class="input-group">
-          <label class="input-label" for="filter-search">タイトル検索</label>
-          <input type="text" id="filter-search" class="form-input" placeholder="動画タイトル...">
+          <label class="input-label" for="filter-search" data-i18n="filter.searchLabel">タイトル検索</label>
+          <input type="text" id="filter-search" class="form-input" data-i18n="filter.searchPlaceholder" data-i18n-attr="placeholder" placeholder="動画タイトル...">
         </div>
         <div class="input-group">
-          <label class="input-label" for="filter-tag">タグ絞り込み</label>
+          <label class="input-label" for="filter-tag" data-i18n="filter.tagLabel">タグ絞り込み</label>
           <select id="filter-tag" class="form-input">
-            <option value="">すべて</option>
+            <option value="" data-i18n="common.all">すべて</option>
           </select>
         </div>
         <div class="input-group">
-          <label class="input-label" for="filter-grade">総合評価</label>
+          <label class="input-label" for="filter-grade" data-i18n="filter.gradeLabel">総合評価</label>
           <select id="filter-grade" class="form-input">
-            <option value="">すべて</option>
-            <option value="A">A (最高)</option>
+            <option value="" data-i18n="common.all">すべて</option>
+            <option value="A" data-i18n="filter.gradeA">A (最高)</option>
             <option value="B">B</option>
             <option value="C">C</option>
             <option value="D">D</option>
-            <option value="E">E (最低)</option>
-            <option value="unrated">未評価</option>
+            <option value="E" data-i18n="filter.gradeE">E (最低)</option>
+            <option value="unrated" data-i18n="filter.unrated">未評価</option>
           </select>
         </div>
         <div class="input-group">
-          <label class="input-label" for="filter-review-status">評価ステータス</label>
+          <label class="input-label" for="filter-review-status" data-i18n="filter.reviewStatusLabel">評価ステータス</label>
           <select id="filter-review-status" class="form-input">
-            <option value="">すべて</option>
-            <option value="rated">評価済み</option>
-            <option value="unrated">未評価 (項目・総合とも無し)</option>
+            <option value="" data-i18n="common.all">すべて</option>
+            <option value="rated" data-i18n="filter.statusRated">評価済み</option>
+            <option value="unrated" data-i18n="filter.statusUnratedDetail">未評価 (項目・総合とも無し)</option>
           </select>
         </div>
         <div class="input-group">
-          <label class="input-label" for="filter-source-type">取得元</label>
+          <label class="input-label" for="filter-source-type" data-i18n="filter.sourceTypeLabel">取得元</label>
           <select id="filter-source-type" class="form-input">
-            <option value="">すべて</option>
-            <option value="directory">フォルダ</option>
-            <option value="local-file">個別ファイル</option>
+            <option value="" data-i18n="common.all">すべて</option>
+            <option value="directory" data-i18n="filter.sourceDirectory">フォルダ</option>
+            <option value="local-file" data-i18n="filter.sourceLocalFile">個別ファイル</option>
           </select>
         </div>
         <div class="input-group">
-          <label class="input-label" for="filter-availability">ファイル状態</label>
+          <label class="input-label" for="filter-availability" data-i18n="filter.availabilityLabel">ファイル状態</label>
           <select id="filter-availability" class="form-input">
-            <option value="">すべて</option>
-            <option value="available">利用可能</option>
-            <option value="missing">見つからない</option>
-            <option value="permission-required">権限が必要</option>
-            <option value="unsupported">再生非対応</option>
-            <option value="scan-error">スキャンエラー</option>
-            <option value="no-directory">参照フォルダなし</option>
-            <option value="isolated">リンク切れ・エラー・参照元なし</option>
+            <option value="" data-i18n="common.all">すべて</option>
+            <option value="available" data-i18n="filter.availAvailable">利用可能</option>
+            <option value="missing" data-i18n="filter.availMissing">見つからない</option>
+            <option value="permission-required" data-i18n="filter.availPermissionRequired">権限が必要</option>
+            <option value="unsupported" data-i18n="filter.availUnsupported">再生非対応</option>
+            <option value="scan-error" data-i18n="filter.availScanError">スキャンエラー</option>
+            <option value="no-directory" data-i18n="filter.availNoDirectory">参照フォルダなし</option>
+            <option value="isolated" data-i18n="filter.availIsolated">リンク切れ・エラー・参照元なし</option>
           </select>
         </div>
         <div class="input-group">
-          <label class="input-label" for="filter-sort">並べ替え</label>
+          <label class="input-label" for="filter-sort" data-i18n="filter.sortLabel">並べ替え</label>
           <select id="filter-sort" class="form-input">
-            <option value="updatedAt-desc">更新日時が新しい順</option>
-            <option value="updatedAt-asc">更新日時が古い順</option>
-            <option value="title-asc">タイトル (A-Z/五十音順)</option>
-            <option value="grade-desc">総合評価の高い順</option>
-            <option value="avgRating-desc">個別評価平均の高い順</option>
+            <option value="updatedAt-desc" data-i18n="filter.sortUpdatedAtDesc">更新日時が新しい順</option>
+            <option value="updatedAt-asc" data-i18n="filter.sortUpdatedAtAsc">更新日時が古い順</option>
+            <option value="title-asc" data-i18n="filter.sortTitleAsc">タイトル (A-Z/五十音順)</option>
+            <option value="grade-desc" data-i18n="filter.sortGradeDesc">総合評価の高い順</option>
+            <option value="avgRating-desc" data-i18n="filter.sortAvgRatingDesc">個別評価平均の高い順</option>
           </select>
         </div>
         <div class="input-group" id="bulk-delete-container" style="display:flex;align-items:flex-end">
-          <button id="btn-bulk-delete" class="btn btn-error hidden" style="width:100%;height:38px;white-space:nowrap;background-color:rgba(239,68,68,0.15);border:1px solid var(--color-error);color:var(--color-error)">
+          <button id="btn-bulk-delete" class="btn btn-error hidden" data-i18n="library.bulkDelete" style="width:100%;height:38px;white-space:nowrap;background-color:rgba(239,68,68,0.15);border:1px solid var(--color-error);color:var(--color-error)">
             表示中の動画を一括削除
           </button>
         </div>
@@ -157,8 +165,8 @@
         <svg xmlns="http://www.w3.org/2000/svg" style="width:64px;height:64px;color:var(--color-text-dim);margin:0 auto 16px" fill="none" viewBox="0 0 24 24" stroke="currentColor">
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M7 4v16M17 4v16M3 8h4m10 0h4M3 12h18M3 16h4m10 0h4M4 20h16a1 1 0 001-1V5a1 1 0 00-1-1H4a1 1 0 00-1 1v14a1 1 0 001 1z" />
         </svg>
-        <h3>登録されている動画がありません</h3>
-        <p style="font-size:0.875rem;margin-top:8px">上のボタンから動画を追加してください。</p>
+        <h3 data-i18n="library.emptyTitle">登録されている動画がありません</h3>
+        <p data-i18n="library.emptyDescription" style="font-size:0.875rem;margin-top:8px">上のボタンから動画を追加してください。</p>
       </div>
     </main>
 
@@ -166,21 +174,21 @@
          SCREEN 2: Dual Column Review Workspace (Editor)
          ============================================== -->
     <main id="view-editor" class="screen-editor hidden">
-      <div id="provisional-warning-banner" class="hidden" style="background-color: #f59e0b; color: white; font-weight: 600; font-size: 0.875rem; padding: 8px; text-align: center; grid-column: 1 / -1; width: 100%;">
+      <div id="provisional-warning-banner" class="hidden" data-i18n="editor.provisionalWarning" style="background-color: #f59e0b; color: white; font-weight: 600; font-size: 0.875rem; padding: 8px; text-align: center; grid-column: 1 / -1; width: 100%;">
         フルハッシュ（SHA-256）検証中ですが、編集・評価は可能です。
       </div>
       <!-- Left Column: Video and Basic Controls -->
       <div class="editor-left-pane">
         <div class="pane-nav-bar">
           <div class="video-title-area" style="display:flex;align-items:center;gap:8px;flex:1;min-width:0">
-            <button id="editor-btn-back" class="btn btn-icon" title="動画一覧へ戻る">
+            <button id="editor-btn-back" class="btn btn-icon" data-i18n="common.backToLibrary" data-i18n-attr="title,aria-label" title="動画一覧へ戻る">
               <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 19l-7-7m0 0l7-7m-7 7h18" />
               </svg>
             </button>
             <div id="title-display-container" style="display:flex;align-items:center;gap:8px;flex:1;min-width:0">
               <h3 id="editor-video-title" class="video-title-heading" style="margin:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:350px">動画タイトル...</h3>
-              <button id="btn-edit-display-title" class="btn btn-icon" title="表示タイトルを変更" style="padding:4px;width:24px;height:24px;color:var(--color-text-muted)">
+              <button id="btn-edit-display-title" class="btn btn-icon" data-i18n="editor.editDisplayTitle" data-i18n-attr="title,aria-label" title="表示タイトルを変更" style="padding:4px;width:24px;height:24px;color:var(--color-text-muted)">
                 <svg xmlns="http://www.w3.org/2000/svg" style="width:14px;height:14px" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
                 </svg>
@@ -188,16 +196,16 @@
             </div>
             <div id="title-edit-container" class="hidden" style="display:flex;align-items:center;gap:6px;flex:1;min-width:0">
               <div style="display:flex;flex-direction:column;flex:1;min-width:0">
-                <input type="text" id="display-title-input" class="form-input" style="height:32px;padding:4px 8px;font-size:0.9rem;width:100%" placeholder="表示タイトルを入力...">
-                <div style="font-size: 0.6875rem; color: var(--color-text-muted); margin-top: 2px;">※ 動画ファイル名は変更されません</div>
+                <input type="text" id="display-title-input" class="form-input" data-i18n="editor.displayTitlePlaceholder" data-i18n-attr="placeholder" style="height:32px;padding:4px 8px;font-size:0.9rem;width:100%" placeholder="表示タイトルを入力...">
+                <div data-i18n="editor.displayTitleNote" style="font-size: 0.6875rem; color: var(--color-text-muted); margin-top: 2px;">※ 動画ファイル名は変更されません</div>
               </div>
-              <button id="btn-save-display-title" class="btn btn-primary" style="padding:4px 10px;height:32px;font-size:0.8rem">保存</button>
-              <button id="btn-cancel-display-title" class="btn btn-secondary" style="padding:4px 10px;height:32px;font-size:0.8rem">キャンセル</button>
+              <button id="btn-save-display-title" class="btn btn-primary" data-i18n="common.save" style="padding:4px 10px;height:32px;font-size:0.8rem">保存</button>
+              <button id="btn-cancel-display-title" class="btn btn-secondary" data-i18n="common.cancel" style="padding:4px 10px;height:32px;font-size:0.8rem">キャンセル</button>
             </div>
           </div>
           <div class="player-nav-buttons">
-            <button id="player-btn-prev" class="btn btn-secondary" title="前の動画">前の動画</button>
-            <button id="player-btn-next" class="btn btn-secondary" title="次の動画">次の動画</button>
+            <button id="player-btn-prev" class="btn btn-secondary" data-i18n="player.prevVideo" data-i18n-attr="title" title="前の動画"><span data-i18n="player.prevVideo">前の動画</span></button>
+            <button id="player-btn-next" class="btn btn-secondary" data-i18n="player.nextVideo" data-i18n-attr="title" title="次の動画"><span data-i18n="player.nextVideo">次の動画</span></button>
           </div>
         </div>
 
@@ -216,7 +224,7 @@
             </div>
             <div class="controls-row">
               <div class="controls-left">
-                <button id="player-btn-play" class="control-btn" title="再生 (Space)">
+                <button id="player-btn-play" class="control-btn" data-i18n="player.playPauseTooltip" data-i18n-attr="title,aria-label" title="再生 (Space)">
                   <!-- Play Icon -->
                   <svg id="play-icon" xmlns="http://www.w3.org/2000/svg" fill="currentColor" viewBox="0 0 24 24">
                     <path d="M8 5v14l11-7z" />
@@ -227,7 +235,7 @@
                   </svg>
                 </button>
                 <div class="volume-container">
-                  <button id="player-btn-mute" class="control-btn" title="ミュート (M)">
+                  <button id="player-btn-mute" class="control-btn" data-i18n="player.muteTooltip" data-i18n-attr="title,aria-label" title="ミュート (M)">
                     <!-- Speaker Low Icon -->
                     <svg id="mute-icon-off" xmlns="http://www.w3.org/2000/svg" fill="currentColor" viewBox="0 0 24 24">
                       <path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02z" />
@@ -244,7 +252,7 @@
                 </div>
               </div>
               <div class="controls-right">
-                <button id="player-btn-fullscreen" class="control-btn" title="全画面表示">
+                <button id="player-btn-fullscreen" class="control-btn" data-i18n="player.fullscreenTooltip" data-i18n-attr="title,aria-label" title="全画面表示">
                   <svg xmlns="http://www.w3.org/2000/svg" fill="currentColor" viewBox="0 0 24 24">
                     <path d="M7 14H5v5h5v-2H7v-3zm-2-4h2V7h3V5H5v5zm12 7h-3v2h5v-5h-2v3zM14 5v2h3v3h2V5h-5z" />
                   </svg>
@@ -260,42 +268,42 @@
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
           </svg>
           <div>
-            <h4 style="color:var(--color-warning)">ローカル動画ファイルを再接続してください</h4>
+            <h4 data-i18n="player.reconnectTitle" style="color:var(--color-warning)">ローカル動画ファイルを再接続してください</h4>
             <p style="color:var(--color-text-muted);font-size:0.875rem;margin-top:6px">
-              セキュリティ制限のため、ページ読み込み後はファイルを再度指定する必要があります。<br>
-              ファイル名: <strong id="warning-file-name" style="color:var(--color-text-main)">filename.mp4</strong>
+              <span data-i18n="player.reconnectDesc1">セキュリティ制限のため、ページ読み込み後はファイルを再度指定する必要があります。</span><br>
+              <span data-i18n="player.reconnectFileNamePrefix">ファイル名: </span><strong id="warning-file-name" style="color:var(--color-text-main)">filename.mp4</strong>
             </p>
           </div>
-          <button id="player-folder-permission-button" class="btn btn-primary hidden">
+          <button id="player-folder-permission-button" class="btn btn-primary hidden" data-i18n="player.grantFolderPermission">
             フォルダのアクセスを許可する
           </button>
           <label id="player-file-reconnect-label" class="btn btn-primary" style="cursor:pointer">
             <input type="file" id="player-reconnect-file" accept="video/*" style="display:none">
-            <span>ファイルを指定して再生</span>
+            <span data-i18n="player.selectFileToPlay">ファイルを指定して再生</span>
           </label>
         </div>
 
         <!-- Details & Stats block -->
         <div class="glass-card" style="padding:16px 20px;font-size:0.8125rem;color:var(--color-text-muted)">
           <div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:8px">
-            <div>ファイル名: <span id="info-file-name" style="color:var(--color-text-main)">-</span></div>
-            <div>サイズ: <span id="info-file-size" style="color:var(--color-text-main)">-</span></div>
-            <div>再生時間: <span id="info-duration" style="color:var(--color-text-main)">-</span></div>
+            <div><span data-i18n="editor.labelFileName">ファイル名: </span><span id="info-file-name" style="color:var(--color-text-main)">-</span></div>
+            <div><span data-i18n="editor.labelFileSize">サイズ: </span><span id="info-file-size" style="color:var(--color-text-main)">-</span></div>
+            <div><span data-i18n="editor.labelDuration">再生時間: </span><span id="info-duration" style="color:var(--color-text-main)">-</span></div>
           </div>
           <div id="info-locations-container" style="margin-top: 12px; border-top: 1px solid var(--color-border); padding-top: 8px;">
-            <div style="font-weight: 600; margin-bottom: 4px;">保存ロケーション一覧:</div>
+            <div data-i18n="editor.labelLocations" style="font-weight: 600; margin-bottom: 4px;">保存ロケーション一覧:</div>
             <div id="info-locations-list" style="display: flex; flex-direction: column; gap: 4px;"></div>
           </div>
           <div id="info-poster-container" style="margin-top: 12px; border-top: 1px solid var(--color-border); padding-top: 8px;">
             <div style="display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 6px;">
-              <div style="font-weight: 600;">カスタムポスター:</div>
+              <div data-i18n="poster.labelCustomPoster" style="font-weight: 600;">カスタムポスター:</div>
               <div style="display: flex; gap: 8px;">
-                <button id="btn-editor-upload-poster" class="btn btn-secondary" style="padding: 4px 8px; font-size: 0.75rem;">ポスター画像を設定</button>
-                <button id="btn-editor-delete-poster" class="btn btn-error hidden" style="padding: 4px 8px; font-size: 0.75rem;">削除</button>
+                <button id="btn-editor-upload-poster" class="btn btn-secondary" data-i18n="poster.setButton" style="padding: 4px 8px; font-size: 0.75rem;">ポスター画像を設定</button>
+                <button id="btn-editor-delete-poster" class="btn btn-error hidden" data-i18n="common.delete" style="padding: 4px 8px; font-size: 0.75rem;">削除</button>
               </div>
             </div>
             <div id="editor-poster-preview-container" class="hidden" style="position: relative; border-radius: 4px; overflow: hidden; max-height: 120px; background-color: var(--color-bg-dim); border: 1px solid var(--color-border);">
-              <img id="editor-poster-preview-img" style="width: 100%; height: auto; display: block; object-fit: contain; max-height: 120px;" alt="カスタムポスタープレビュー">
+              <img id="editor-poster-preview-img" data-i18n="poster.previewAlt" data-i18n-attr="alt" style="width: 100%; height: auto; display: block; object-fit: contain; max-height: 120px;" alt="カスタムポスタープレビュー">
             </div>
           </div>
         </div>
@@ -306,31 +314,31 @@
             <svg xmlns="http://www.w3.org/2000/svg" style="width:16px;height:16px;color:var(--color-primary)" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
             </svg>
-            キーボードショートカット
+            <span data-i18n="shortcuts.title">キーボードショートカット</span>
           </h4>
           <div class="shortcuts-grid">
             <div class="shortcut-item">
-              <span>再生 / 一時停止</span>
+              <span data-i18n="shortcuts.playPause">再生 / 一時停止</span>
               <kbd class="shortcut-key">Space</kbd>
             </div>
             <div class="shortcut-item">
-              <span>5秒戻る / 進む</span>
+              <span data-i18n="shortcuts.seek5s">5秒戻る / 進む</span>
               <kbd class="shortcut-key">← / →</kbd>
             </div>
             <div class="shortcut-item">
-              <span>10秒戻る / 進む</span>
+              <span data-i18n="shortcuts.seek10s">10秒戻る / 進む</span>
               <kbd class="shortcut-key">Shift + ← / →</kbd>
             </div>
             <div class="shortcut-item">
-              <span>ミュートの切替</span>
+              <span data-i18n="shortcuts.toggleMute">ミュートの切替</span>
               <kbd class="shortcut-key">M</kbd>
             </div>
             <div class="shortcut-item">
-              <span>現在時刻の引用</span>
+              <span data-i18n="shortcuts.captureTime">現在時刻の引用</span>
               <kbd class="shortcut-key">T</kbd>
             </div>
             <div class="shortcut-item">
-              <span>評価の保存</span>
+              <span data-i18n="shortcuts.saveReview">評価の保存</span>
               <kbd class="shortcut-key">Ctrl / Cmd + S</kbd>
             </div>
           </div>
@@ -343,7 +351,7 @@
 
           <!-- 0. Video Genre Selection -->
           <div class="editor-section">
-            <label class="editor-section-title" for="video-genre-select">0. 動画ジャンル</label>
+            <label class="editor-section-title" for="video-genre-select" data-i18n="review.sectionGenre">0. 動画ジャンル</label>
             <select id="video-genre-select" class="form-input" style="width:100%">
               <!-- Genre options dynamically injected -->
             </select>
@@ -351,20 +359,20 @@
 
           <!-- 1. Overall Evaluation Grade -->
           <div class="editor-section">
-            <label class="editor-section-title">1. 総合評価</label>
+            <label class="editor-section-title" data-i18n="review.sectionOverall">1. 総合評価</label>
             <div class="grade-selector-group">
               <button class="grade-btn" data-grade="A">A</button>
               <button class="grade-btn" data-grade="B">B</button>
               <button class="grade-btn" data-grade="C">C</button>
               <button class="grade-btn" data-grade="D">D</button>
               <button class="grade-btn" data-grade="E">E</button>
-              <button id="btn-grade-clear" class="btn btn-secondary grade-btn-clear" title="クリア">クリア</button>
+              <button id="btn-grade-clear" class="btn btn-secondary grade-btn-clear" data-i18n="common.clear" data-i18n-attr="title" title="クリア"><span data-i18n="common.clear">クリア</span></button>
             </div>
           </div>
 
           <!-- 2. Individual Star Criteria Ratings -->
           <div class="editor-section">
-            <label class="editor-section-title">2. 個別評価</label>
+            <label class="editor-section-title" data-i18n="review.sectionCriteria">2. 個別評価</label>
             <div id="criteria-ratings-panel" class="criteria-ratings-panel">
               <!-- Star rating elements will be injected here by app.js -->
             </div>
@@ -372,7 +380,7 @@
 
           <!-- 3. Radar Chart Representation -->
           <div class="editor-section">
-            <label class="editor-section-title">3. レーダーチャート</label>
+            <label class="editor-section-title" data-i18n="review.sectionRadar">3. レーダーチャート</label>
             <div id="radar-chart-container" class="radar-chart-container">
               <!-- SVG Radar is injected here -->
             </div>
@@ -380,13 +388,13 @@
 
           <!-- 4. Tags Manager -->
           <div class="editor-section">
-            <label class="editor-section-title">4. タグ</label>
+            <label class="editor-section-title" data-i18n="review.sectionTags">4. タグ</label>
             <div class="tags-widget-container">
               <div id="tags-chips-list" class="tags-chips-list">
                 <!-- Tag chips render here -->
               </div>
               <div class="tag-input-box-wrapper">
-                <input type="text" id="tag-input-field" class="form-input" style="width:100%" placeholder="タグ名を入力してEnterで追加...">
+                <input type="text" id="tag-input-field" class="form-input" data-i18n="review.tagInputPlaceholder" data-i18n-attr="placeholder" style="width:100%" placeholder="タグ名を入力してEnterで追加...">
                 <!-- Suggestions Dropdown -->
                 <div id="tag-autocomplete-dropdown" class="tag-autocomplete-dropdown glass-panel hidden">
                   <!-- autocomplete suggestions injected here -->
@@ -397,16 +405,16 @@
 
           <!-- 5. Timeline Comments & Annotations -->
           <div class="editor-section">
-            <label class="editor-section-title">5. コメント ＆ タイムライン引用</label>
+            <label class="editor-section-title" data-i18n="review.sectionComments">5. コメント ＆ タイムライン引用</label>
 
             <div style="display:flex;flex-direction:column;gap:8px">
-              <label class="input-label">全体コメント</label>
-              <textarea id="comment-editor" class="form-input comment-editor-textarea" placeholder="動画全体の評価コメントやメモを記載..."></textarea>
+              <label class="input-label" data-i18n="review.overallCommentLabel">全体コメント</label>
+              <textarea id="comment-editor" class="form-input comment-editor-textarea" data-i18n="review.commentPlaceholder" data-i18n-attr="placeholder" placeholder="動画全体の評価コメントやメモを記載..."></textarea>
             </div>
 
             <div style="display:flex;flex-direction:column;gap:12px;margin-top:12px">
               <div style="display:flex;justify-content:between;align-items:center">
-                <label class="input-label">タイムライン引用メモ</label>
+                <label class="input-label" data-i18n="timeline.sectionTitle">タイムライン引用メモ</label>
               </div>
 
               <!-- Captured Note Composer -->
@@ -419,12 +427,12 @@
                     <svg xmlns="http://www.w3.org/2000/svg" style="width:14px;height:14px;margin-right:2px" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                       <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
                     </svg>
-                    現在時刻を引用 (T)
+                    <span data-i18n="timeline.captureButton">現在時刻を引用 (T)</span>
                   </button>
                 </div>
-                <input type="text" id="timeline-comment-field" class="form-input timeline-editor-comment-input" placeholder="この場面についてのメモを入力...">
+                <input type="text" id="timeline-comment-field" class="form-input timeline-editor-comment-input" data-i18n="timeline.inputPlaceholder" data-i18n-attr="placeholder" placeholder="この場面についてのメモを入力...">
                 <div style="display:flex;justify-content:flex-end">
-                  <button id="btn-timeline-add-note" class="btn btn-primary" style="padding:4px 12px;font-size:0.75rem">追加</button>
+                  <button id="btn-timeline-add-note" class="btn btn-primary" data-i18n="common.add" style="padding:4px 12px;font-size:0.75rem">追加</button>
                 </div>
               </div>
 
@@ -437,13 +445,13 @@
 
           <!-- 6. Shared Reviews (Multiple Reviewers) -->
           <div id="shared-reviews-section" class="editor-section hidden">
-            <label class="editor-section-title">6. 共有レビュー</label>
+            <label class="editor-section-title" data-i18n="review.sectionShared">6. 共有レビュー</label>
             <div class="shared-reviews-container glass-panel" style="padding:12px;margin-top:8px;display:flex;flex-direction:column;gap:12px">
 
               <!-- Overall Rating Summary -->
               <div style="display:flex;justify-content:space-between;align-items:center">
                 <div>
-                  <span style="font-size:0.75rem;color:var(--color-text-dim)">平均評価</span>
+                  <span style="font-size:0.75rem;color:var(--color-text-dim)" data-i18n="share.averageRating">平均評価</span>
                   <div style="display:flex;align-items:baseline;gap:6px">
                     <span id="shared-average-rating" style="font-size:1.5rem;font-weight:700;color:var(--color-primary)">-</span>
                     <span style="font-size:0.875rem;color:var(--color-text-muted)">/ 5</span>
@@ -459,7 +467,7 @@
 
               <!-- Reviewers List -->
               <div>
-                <label class="input-label" style="margin-bottom:6px">レビュアー別評価</label>
+                <label class="input-label" style="margin-bottom:6px" data-i18n="share.reviewersBreakdown">レビュアー別評価</label>
                 <div id="shared-reviewers-list" style="display:flex;flex-direction:column;gap:6px">
                   <!-- Injected dynamically -->
                 </div>
@@ -469,7 +477,7 @@
 
               <!-- Merged Tags -->
               <div>
-                <label class="input-label" style="margin-bottom:6px">統合タグ</label>
+                <label class="input-label" style="margin-bottom:6px" data-i18n="share.mergedTags">統合タグ</label>
                 <div id="shared-tags-list" class="tags-chips-list">
                   <!-- Injected dynamically -->
                 </div>
@@ -479,7 +487,7 @@
 
               <!-- Merged Timeline Comments -->
               <div>
-                <label class="input-label" style="margin-bottom:6px">共有タイムライン</label>
+                <label class="input-label" style="margin-bottom:6px" data-i18n="share.sharedTimeline">共有タイムライン</label>
                 <div id="shared-timeline-list" class="timeline-notes-list" style="margin-top:6px;max-height:300px;overflow-y:auto">
                   <!-- Injected dynamically -->
                 </div>
@@ -492,14 +500,14 @@
 
         <!-- Sticky Save Review Action Bar -->
         <div class="pane-save-bar">
-          <span id="autosave-indicator" style="color:var(--color-text-dim);font-size:0.75rem;align-self:center;margin-right:auto">
+          <span id="autosave-indicator" data-i18n="editor.autosaveEnabled" style="color:var(--color-text-dim);font-size:0.75rem;align-self:center;margin-right:auto">
             自動保存: 有効
           </span>
           <button id="editor-btn-save" class="btn btn-primary">
             <svg xmlns="http://www.w3.org/2000/svg" style="width:16px;height:16px" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-3m-1 4l-3 3m0 0l-3-3m3 3V4" />
             </svg>
-            評価を保存 (Ctrl+S)
+            <span data-i18n="editor.saveReview">評価を保存 (Ctrl+S)</span>
           </button>
         </div>
       </div>
@@ -513,8 +521,8 @@
   <div id="modal-settings" class="modal-overlay">
     <div class="modal-container glass-panel">
       <div class="modal-header">
-        <h3>個別評価項目設定</h3>
-        <button id="settings-close-x" class="btn btn-icon" style="width:32px;height:32px">
+        <h3 data-i18n="settings.modalTitle">個別評価項目設定</h3>
+        <button id="settings-close-x" class="btn btn-icon" data-i18n="common.close" data-i18n-attr="title,aria-label" title="閉じる" style="width:32px;height:32px">
           <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
           </svg>
@@ -524,26 +532,26 @@
 
         <!-- Genre Configuration Section -->
         <div class="editor-section" style="gap: 8px; margin-bottom: 20px;">
-          <h4 style="font-size: 1rem; font-weight: 600; color: var(--color-text-main); margin-bottom: 4px;">動画ジャンル設定</h4>
+          <h4 data-i18n="settings.genreSectionTitle" style="font-size: 1rem; font-weight: 600; color: var(--color-text-main); margin-bottom: 4px;">動画ジャンル設定</h4>
           <div style="display:flex; gap:8px; align-items: center; margin-bottom: 8px;">
             <select id="settings-genre-select" class="form-input" style="flex:1; height:38px;">
               <!-- Genres dynamically loaded -->
             </select>
-            <button id="settings-btn-genre-rename" class="btn btn-secondary" style="height:38px; font-size:0.8125rem; padding: 0 12px;">変更</button>
-            <button id="settings-btn-genre-toggle-active" class="btn btn-danger" style="height:38px; font-size:0.8125rem; padding: 0 12px;">無効化</button>
+            <button id="settings-btn-genre-rename" class="btn btn-secondary" data-i18n="common.rename" style="height:38px; font-size:0.8125rem; padding: 0 12px;">変更</button>
+            <button id="settings-btn-genre-toggle-active" class="btn btn-danger" data-i18n="common.disable" style="height:38px; font-size:0.8125rem; padding: 0 12px;">無効化</button>
           </div>
 
           <!-- Add New Genre form -->
           <div class="settings-add-box" style="margin-top: 8px;">
-            <input type="text" id="settings-new-genre-input" class="form-input" style="flex:1;" placeholder="新しいジャンル名を入力 (例: インタビュー)...">
-            <button id="settings-btn-genre-add" class="btn btn-primary" style="padding: 0 16px;">追加</button>
+            <input type="text" id="settings-new-genre-input" class="form-input" data-i18n="settings.newGenrePlaceholder" data-i18n-attr="placeholder" style="flex:1;" placeholder="新しいジャンル名を入力 (例: インタビュー)...">
+            <button id="settings-btn-genre-add" class="btn btn-primary" data-i18n="common.add" style="padding: 0 16px;">追加</button>
           </div>
 
           <div style="display:flex; justify-content: space-between; align-items: center; margin-top: 10px;">
-            <span style="font-size:0.75rem; color:var(--color-text-muted);">ジャンル並べ替え：</span>
+            <span data-i18n="settings.genreReorderLabel" style="font-size:0.75rem; color:var(--color-text-muted);">ジャンル並べ替え：</span>
             <div style="display:flex; gap:6px;">
-              <button id="settings-btn-genre-up" class="btn btn-secondary" style="padding:4px 10px; font-size:0.75rem;">▲ 上へ</button>
-              <button id="settings-btn-genre-down" class="btn btn-secondary" style="padding:4px 10px; font-size:0.75rem;">▼ 下へ</button>
+              <button id="settings-btn-genre-up" class="btn btn-secondary" data-i18n="common.moveUp" style="padding:4px 10px; font-size:0.75rem;">▲ 上へ</button>
+              <button id="settings-btn-genre-down" class="btn btn-secondary" data-i18n="common.moveDown" style="padding:4px 10px; font-size:0.75rem;">▼ 下へ</button>
             </div>
           </div>
         </div>
@@ -553,18 +561,18 @@
 
         <!-- Criteria Configuration Section (for Selected Genre) -->
         <div class="editor-section" style="gap: 8px; margin-bottom: 20px;">
-          <h4 style="font-size: 1rem; font-weight: 600; color: var(--color-text-main); margin-bottom: 4px;">ジャンル別評価項目設定</h4>
-          <p style="color:var(--color-text-muted);font-size:0.8125rem;line-height:1.4;margin-bottom:8px">
+          <h4 data-i18n="settings.criteriaSectionTitle" style="font-size: 1rem; font-weight: 600; color: var(--color-text-main); margin-bottom: 4px;">ジャンル別評価項目設定</h4>
+          <p data-i18n="settings.criteriaSectionDesc" style="color:var(--color-text-muted);font-size:0.8125rem;line-height:1.4;margin-bottom:8px">
             選択中ジャンルに紐づく評価項目は最大6項目まで登録できます。項目名の変更、並べ替え、無効化が行えます。
           </p>
 
           <!-- Copy Criteria Box -->
           <div style="display:flex; gap:8px; align-items: center; background: rgba(255,255,255,0.03); padding:8px 12px; border-radius:var(--radius-sm); border: 1px dashed var(--color-border); margin-bottom: 12px;">
-            <span style="font-size: 0.75rem; white-space: nowrap; color: var(--color-text-muted);">他ジャンルからコピー:</span>
+            <span data-i18n="settings.copyCriteriaLabel" style="font-size: 0.75rem; white-space: nowrap; color: var(--color-text-muted);">他ジャンルからコピー:</span>
             <select id="settings-copy-source-select" class="form-input" style="flex:1; height:30px; font-size: 0.75rem; padding: 2px 6px;">
               <!-- Other genres to copy from -->
             </select>
-            <button id="settings-btn-copy-criteria" class="btn btn-secondary" style="height:30px; padding:0 8px; font-size:0.75rem;">コピー実行</button>
+            <button id="settings-btn-copy-criteria" class="btn btn-secondary" data-i18n="settings.copyCriteriaButton" style="height:30px; padding:0 8px; font-size:0.75rem;">コピー実行</button>
           </div>
 
           <!-- Criteria List Grid -->
@@ -574,8 +582,8 @@
 
           <!-- Add New Field Form -->
           <div class="settings-add-box">
-            <input type="text" id="settings-new-name-input" class="form-input" style="flex:1" placeholder="項目名を入力 (例: 内容)...">
-            <button id="settings-btn-add" class="btn btn-primary">項目追加</button>
+            <input type="text" id="settings-new-name-input" class="form-input" data-i18n="settings.newCriteriaPlaceholder" data-i18n-attr="placeholder" style="flex:1" placeholder="項目名を入力 (例: 内容)...">
+            <button id="settings-btn-add" class="btn btn-primary" data-i18n="settings.addCriteriaButton">項目追加</button>
           </div>
         </div>
 
@@ -584,39 +592,40 @@
 
         <!-- Video Folder Settings Section -->
         <div class="editor-section" style="gap: 12px; margin-bottom: 20px;">
-          <h4 style="font-size: 1rem; font-weight: 600; color: var(--color-text-main);">動画フォルダ設定</h4>
+          <h4 data-i18n="folder.settingsTitle" style="font-size: 1rem; font-weight: 600; color: var(--color-text-main);">動画フォルダ設定</h4>
           <p id="folder-api-fallback-msg" class="hidden" style="color: var(--color-warning); font-size: 0.8125rem; line-height: 1.4;">
-            このブラウザではフォルダの継続参照に対応していません。<br>従来の「動画を追加」を使用してください。
+            <span data-i18n="folder.apiFallbackMsg1">このブラウザではフォルダの継続参照に対応していません。</span><br>
+            <span data-i18n="folder.apiFallbackMsg2">従来の「動画を追加」を使用してください。</span>
           </p>
           <div id="folder-settings-panel" class="glass-card" style="padding: 16px; display: flex; flex-direction: column; gap: 10px; font-size: 0.875rem;">
-            <div style="display: flex; justify-content: space-between;"><span style="color: var(--color-text-muted);">接続先：</span><strong id="folder-name-val">-</strong></div>
-            <div style="display: flex; justify-content: space-between;"><span style="color: var(--color-text-muted);">状態：</span><span id="folder-status-val">未接続</span></div>
-            <div style="display: flex; justify-content: space-between;"><span style="color: var(--color-text-muted);">権限：</span><span id="folder-permission-val">-</span></div>
-            <div style="display: flex; justify-content: space-between;"><span style="color: var(--color-text-muted);">登録動画：</span><span id="folder-video-count-val">0本</span></div>
-            <div style="display: flex; justify-content: space-between;"><span style="color: var(--color-text-muted);">最終スキャン：</span><span id="folder-last-scan-val">-</span></div>
+            <div style="display: flex; justify-content: space-between;"><span data-i18n="folder.labelConnected" style="color: var(--color-text-muted);">接続先：</span><strong id="folder-name-val">-</strong></div>
+            <div style="display: flex; justify-content: space-between;"><span data-i18n="folder.labelStatus" style="color: var(--color-text-muted);">状態：</span><span id="folder-status-val" data-i18n="folder.statusDisconnected">未接続</span></div>
+            <div style="display: flex; justify-content: space-between;"><span data-i18n="folder.labelPermission" style="color: var(--color-text-muted);">権限：</span><span id="folder-permission-val">-</span></div>
+            <div style="display: flex; justify-content: space-between;"><span data-i18n="folder.labelRegisteredVideos" style="color: var(--color-text-muted);">登録動画：</span><span id="folder-video-count-val">0本</span></div>
+            <div style="display: flex; justify-content: space-between;"><span data-i18n="folder.labelLastScan" style="color: var(--color-text-muted);">最終スキャン：</span><span id="folder-last-scan-val">-</span></div>
 
             <label style="display: flex; align-items: center; gap: 6px; margin-top: 6px; cursor: pointer;">
               <input type="checkbox" id="folder-recursive-checkbox" checked>
-              <span>サブフォルダも検索する</span>
+              <span data-i18n="folder.searchSubfolders">サブフォルダも検索する</span>
             </label>
 
             <!-- Scan Progress Indicator Overlay inside panel -->
             <div id="scan-progress-box" class="hidden" style="margin-top: 8px; padding: 10px; border-radius: var(--radius-sm); background-color: rgba(99, 102, 241, 0.1); border: 1px solid rgba(99, 102, 241, 0.25);">
-              <div id="scan-progress-title" style="font-weight: 600; color: var(--color-primary); font-size: 0.8125rem;">動画フォルダをスキャン中…</div>
+              <div id="scan-progress-title" data-i18n="folder.scanningTitle" style="font-weight: 600; color: var(--color-primary); font-size: 0.8125rem;">動画フォルダをスキャン中…</div>
               <div style="font-size: 0.75rem; margin-top: 4px; display: flex; flex-direction: column; gap: 2px;">
-                <div>確認済み：<span id="scan-progress-files">0</span> ファイル</div>
-                <div>動画検出：<span id="scan-progress-videos">0</span> 本</div>
+                <div><span data-i18n="folder.scannedFilesLabel">確認済み：</span><span id="scan-progress-files">0</span> <span data-i18n="folder.filesUnit">ファイル</span></div>
+                <div><span data-i18n="folder.detectedVideosLabel">動画検出：</span><span id="scan-progress-videos">0</span> <span data-i18n="folder.videosUnit">本</span></div>
               </div>
               <div style="display: flex; justify-content: flex-end; margin-top: 6px;">
-                <button id="btn-folder-scan-abort" class="btn btn-danger" style="padding: 2px 8px; font-size: 0.6875rem;">中止</button>
+                <button id="btn-folder-scan-abort" class="btn btn-danger" data-i18n="common.abort" style="padding: 2px 8px; font-size: 0.6875rem;">中止</button>
               </div>
             </div>
 
             <div style="display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap;">
-              <button id="btn-folder-select" class="btn btn-primary" style="flex: 1; padding: 6px 12px; font-size: 0.8125rem;">フォルダを選択</button>
-              <button id="btn-folder-rescan" class="btn btn-secondary hidden" style="flex: 1; padding: 6px 12px; font-size: 0.8125rem;">再スキャン</button>
-              <button id="btn-folder-request-perm" class="btn btn-secondary hidden" style="flex: 1; padding: 6px 12px; font-size: 0.8125rem; border-color: var(--color-warning); color: var(--color-warning);">アクセスを許可</button>
-              <button id="btn-folder-disconnect" class="btn btn-danger hidden" style="padding: 6px 12px; font-size: 0.8125rem;">接続解除</button>
+              <button id="btn-folder-select" class="btn btn-primary" data-i18n="folder.selectButton" style="flex: 1; padding: 6px 12px; font-size: 0.8125rem;">フォルダを選択</button>
+              <button id="btn-folder-rescan" class="btn btn-secondary hidden" data-i18n="folder.rescanButton" style="flex: 1; padding: 6px 12px; font-size: 0.8125rem;">再スキャン</button>
+              <button id="btn-folder-request-perm" class="btn btn-secondary hidden" data-i18n="folder.requestPermissionButton" style="flex: 1; padding: 6px 12px; font-size: 0.8125rem; border-color: var(--color-warning); color: var(--color-warning);">アクセスを許可</button>
+              <button id="btn-folder-disconnect" class="btn btn-danger hidden" data-i18n="folder.disconnectButton" style="padding: 6px 12px; font-size: 0.8125rem;">接続解除</button>
             </div>
           </div>
         </div>
@@ -626,15 +635,15 @@
 
         <!-- Tag Management Section -->
         <div class="editor-section" style="gap: 12px; margin-bottom: 20px;">
-          <h4 style="font-size: 1rem; font-weight: 600; color: var(--color-text-main);">タグ管理</h4>
-          <p style="color: var(--color-text-muted); font-size: 0.8125rem; line-height: 1.4;">
+          <h4 data-i18n="tag.settingsTitle" style="font-size: 1rem; font-weight: 600; color: var(--color-text-main);">タグ管理</h4>
+          <p data-i18n="tag.settingsDesc" style="color: var(--color-text-muted); font-size: 0.8125rem; line-height: 1.4;">
             登録されているタグの検索および削除が行えます。1件以上のレビューで使用されているタグを削除すると、それらのレビューからもタグの紐付けが自動で解除されます。
           </p>
           <div class="glass-card" style="padding: 16px; display: flex; flex-direction: column; gap: 10px; font-size: 0.875rem;">
             <!-- Search bar -->
             <div style="display: flex; gap: 8px;">
-              <input type="text" id="settings-tag-search-input" class="form-input" style="flex: 1; height: 34px;" placeholder="タグ名で検索...">
-              <button id="settings-tag-search-clear" class="btn btn-secondary" style="height: 34px; padding: 0 12px; font-size: 0.8125rem;">クリア</button>
+              <input type="text" id="settings-tag-search-input" class="form-input" data-i18n="tag.searchPlaceholder" data-i18n-attr="placeholder" style="flex: 1; height: 34px;" placeholder="タグ名で検索...">
+              <button id="settings-tag-search-clear" class="btn btn-secondary" data-i18n="common.clear" style="height: 34px; padding: 0 12px; font-size: 0.8125rem;">クリア</button>
             </div>
             <!-- Tag List Container -->
             <div id="settings-tag-list" style="max-height: 200px; overflow-y: auto; border: 1px solid var(--color-border); border-radius: var(--radius-sm); background: rgba(0,0,0,0.1); padding: 8px; display: flex; flex-direction: column; gap: 6px;">
@@ -648,28 +657,28 @@
 
         <!-- Data Management (Backup/Restore) Section -->
         <div class="editor-section" style="gap: 12px">
-          <h4 style="font-size: 1rem; font-weight: 600; color: var(--color-text-main);">データ管理</h4>
-          <p style="color: var(--color-text-muted); font-size: 0.8125rem; line-height: 1.4;">
+          <h4 data-i18n="backup.sectionTitle" style="font-size: 1rem; font-weight: 600; color: var(--color-text-main);">データ管理</h4>
+          <p data-i18n="backup.sectionDesc" style="color: var(--color-text-muted); font-size: 0.8125rem; line-height: 1.4;">
             アプリ内DBのバックアップ（ZIP形式）を作成・復元します。動画ファイル本体やフォルダ権限（DirectoryHandle）はバックアップに含まれません。復元後は再度フォルダの接続が必要となります。
           </p>
           <div class="glass-card" style="padding: 16px; display: flex; flex-direction: column; gap: 10px; font-size: 0.875rem;">
             <div style="display: flex; justify-content: space-between;">
-              <span style="color: var(--color-text-muted);">最終バックアップ：</span>
+              <span data-i18n="backup.lastBackupLabel" style="color: var(--color-text-muted);">最終バックアップ：</span>
               <strong id="backup-last-time-val">-</strong>
             </div>
             <div style="display: flex; gap: 8px; margin-top: 6px;">
-              <button id="btn-backup-create" class="btn btn-primary" style="flex: 1; padding: 6px 12px; font-size: 0.8125rem;">バックアップを作成</button>
-              <button id="btn-backup-restore-trigger" class="btn btn-secondary" style="flex: 1; padding: 6px 12px; font-size: 0.8125rem;">バックアップから復元</button>
+              <button id="btn-backup-create" class="btn btn-primary" data-i18n="backup.createButton" style="flex: 1; padding: 6px 12px; font-size: 0.8125rem;">バックアップを作成</button>
+              <button id="btn-backup-restore-trigger" class="btn btn-secondary" data-i18n="backup.restoreButton" style="flex: 1; padding: 6px 12px; font-size: 0.8125rem;">バックアップから復元</button>
               <input type="file" id="backup-restore-file" accept=".zip" style="display:none">
             </div>
             <div style="display: flex; margin-top: 4px;">
-              <button id="btn-clean-orphan-data" class="btn btn-secondary" style="flex: 1; padding: 6px 12px; font-size: 0.8125rem; background-color: transparent; border: 1px solid var(--color-border); color: var(--color-text-main);">孤立データを確認・整理</button>
+              <button id="btn-clean-orphan-data" class="btn btn-secondary" data-i18n="backup.cleanOrphanButton" style="flex: 1; padding: 6px 12px; font-size: 0.8125rem; background-color: transparent; border: 1px solid var(--color-border); color: var(--color-text-main);">孤立データを確認・整理</button>
             </div>
           </div>
         </div>
       </div>
       <div class="modal-footer">
-        <button id="settings-btn-save" class="btn btn-primary" style="padding:10px 24px">設定を保存して閉じる</button>
+        <button id="settings-btn-save" class="btn btn-primary" data-i18n="settings.saveAndClose" style="padding:10px 24px">設定を保存して閉じる</button>
       </div>
     </div>
   </div>
@@ -680,33 +689,33 @@
   <div id="modal-share-import-preview" class="modal-overlay">
     <div class="modal-container glass-panel" style="max-width: 800px; width: 90%; display: flex; flex-direction: column; max-height: 85vh;">
       <div class="modal-header" style="padding: 16px; border-bottom: 1px solid var(--color-border); display: flex; justify-content: space-between; align-items: center;">
-        <h3 style="margin: 0;">共有レビューのインポート確認</h3>
-        <button id="share-import-preview-close-x" class="btn btn-icon" style="width:32px;height:32px">
+        <h3 data-i18n="share.importModalTitle" style="margin: 0;">共有レビューのインポート確認</h3>
+        <button id="share-import-preview-close-x" class="btn btn-icon" data-i18n="common.close" data-i18n-attr="title,aria-label" title="閉じる" style="width:32px;height:32px">
           <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" /></svg>
         </button>
       </div>
       <div class="modal-body" style="padding: 16px; overflow-y: auto; flex: 1;">
         <div class="import-meta-info" style="margin-bottom: 16px; padding: 12px; background: rgba(255,255,255,0.05); border-radius: 6px;">
-          <div><strong>送信元レビュアー:</strong> <span id="import-exporter-name">-</span></div>
-          <div style="margin-top: 4px;"><strong>作成日時:</strong> <span id="import-exported-at">-</span></div>
+          <div><strong data-i18n="share.sourceReviewerLabel">送信元レビュアー:</strong> <span id="import-exporter-name">-</span></div>
+          <div style="margin-top: 4px;"><strong data-i18n="share.exportedAtLabel">作成日時:</strong> <span id="import-exported-at">-</span></div>
         </div>
 
-        <h4 style="margin: 0 0 8px;">インポート対象の選択</h4>
+        <h4 data-i18n="share.selectTargetsTitle" style="margin: 0 0 8px;">インポート対象の選択</h4>
         <div style="margin-bottom: 8px; display: flex; gap: 8px;">
-          <button id="btn-share-import-select-all" class="btn btn-secondary" style="padding: 4px 10px; font-size: 0.75rem;">全選択</button>
-          <button id="btn-share-import-deselect-all" class="btn btn-secondary" style="padding: 4px 10px; font-size: 0.75rem;">全解除</button>
+          <button id="btn-share-import-select-all" class="btn btn-secondary" data-i18n="common.selectAll" style="padding: 4px 10px; font-size: 0.75rem;">全選択</button>
+          <button id="btn-share-import-deselect-all" class="btn btn-secondary" data-i18n="common.deselectAll" style="padding: 4px 10px; font-size: 0.75rem;">全解除</button>
         </div>
 
         <div style="border: 1px solid var(--color-border); border-radius: 6px; overflow: hidden;">
           <table style="width: 100%; border-collapse: collapse; text-align: left; font-size: 0.875rem;">
             <thead>
               <tr style="background: rgba(255,255,255,0.05); border-bottom: 1px solid var(--color-border);">
-                <th style="padding: 10px; width: 40px; text-align: center;">選択</th>
-                <th style="padding: 10px;">動画タイトル / ハッシュ</th>
-                <th style="padding: 10px; width: 120px;">状態</th>
-                <th style="padding: 10px; width: 80px; text-align: center;">総合評価</th>
-                <th style="padding: 10px; width: 60px; text-align: center;">タグ</th>
-                <th style="padding: 10px; width: 60px; text-align: center;">メモ</th>
+                <th style="padding: 10px; width: 40px; text-align: center;" data-i18n="common.select">選択</th>
+                <th style="padding: 10px;" data-i18n="share.thTitleHash">動画タイトル / ハッシュ</th>
+                <th style="padding: 10px; width: 120px;" data-i18n="share.thStatus">状態</th>
+                <th style="padding: 10px; width: 80px; text-align: center;" data-i18n="share.thOverallGrade">総合評価</th>
+                <th style="padding: 10px; width: 60px; text-align: center;" data-i18n="share.thTags">タグ</th>
+                <th style="padding: 10px; width: 60px; text-align: center;" data-i18n="share.thNotes">メモ</th>
               </tr>
             </thead>
             <tbody id="share-import-preview-list">
@@ -716,8 +725,8 @@
         </div>
       </div>
       <div class="modal-footer" style="padding: 16px; border-top: 1px solid var(--color-border); display: flex; justify-content: flex-end; gap: 12px;">
-        <button id="btn-share-import-preview-cancel" class="btn btn-secondary" style="padding: 8px 16px;">キャンセル</button>
-        <button id="btn-share-import-preview-submit" class="btn btn-primary" style="padding: 8px 24px;">インポート実行 (<span id="import-preview-selected-count">0</span>件)</button>
+        <button id="btn-share-import-preview-cancel" class="btn btn-secondary" data-i18n="common.cancel" style="padding: 8px 16px;">キャンセル</button>
+        <button id="btn-share-import-preview-submit" class="btn btn-primary" style="padding: 8px 24px;"><span data-i18n="share.executeImportPrefix">インポート実行 (</span><span id="import-preview-selected-count">0</span><span data-i18n="share.executeImportSuffix">件)</span></button>
       </div>
     </div>
   </div>
@@ -729,8 +738,8 @@
   <div id="modal-backup-progress" class="modal-overlay">
     <div class="modal-container glass-panel" style="max-width: 400px; text-align: center; padding: 30px;">
       <div id="backup-progress-spinner" class="spinner" style="margin: 0 auto 16px; width: 40px; height: 40px; border: 4px solid rgba(255,255,255,0.1); border-top-color: var(--color-primary); border-radius: 50%; animation: spin 1s linear infinite;"></div>
-      <h3 id="backup-progress-title" style="margin-bottom: 8px;">データを処理中...</h3>
-      <p id="backup-progress-msg" style="color: var(--color-text-muted); font-size: 0.875rem;">ブラウザを閉じずに少々お待ちください。</p>
+      <h3 id="backup-progress-title" data-i18n="backup.processingTitle" style="margin-bottom: 8px;">データを処理中...</h3>
+      <p id="backup-progress-msg" data-i18n="backup.processingMsg" style="color: var(--color-text-muted); font-size: 0.875rem;">ブラウザを閉じずに少々お待ちください。</p>
     </div>
   </div>
 

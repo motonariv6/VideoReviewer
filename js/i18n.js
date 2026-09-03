@@ -69,7 +69,11 @@ function getSupportedLocale(locale) {
  * @param {Object} [nav=navigator] - Optional mock navigator for testing
  * @returns {string}
  */
-export function estimateLocale(nav = navigator) {
+export function estimateLocale(nav = (typeof navigator !== 'undefined' ? navigator : {})) {
+  if (typeof nav === 'string') {
+    nav = { language: nav };
+  }
+
   try {
     const saved = localStorage.getItem(STORAGE_KEY);
     if (saved) {
@@ -101,12 +105,23 @@ export function estimateLocale(nav = navigator) {
   return 'en';
 }
 
+function updateDocumentLang(locale) {
+  if (typeof document !== 'undefined' && document.documentElement) {
+    document.documentElement.lang = locale;
+  }
+}
+
 /**
  * Initializes i18n state
- * @param {Object} [nav=navigator]
+ * @param {Object|string} [nav=navigator]
  */
-export function initI18n(nav = navigator) {
-  currentLocale = estimateLocale(nav);
+export function initI18n(nav = (typeof navigator !== 'undefined' ? navigator : {})) {
+  let navObj = nav;
+  if (typeof nav === 'string') {
+    navObj = { language: nav };
+  }
+  currentLocale = estimateLocale(navObj);
+  updateDocumentLang(currentLocale);
 }
 
 /**
@@ -121,6 +136,7 @@ export function setLocale(locale) {
   } catch (e) {
     // Ignore storage lock errors
   }
+  updateDocumentLang(norm);
 }
 
 /**
@@ -175,8 +191,19 @@ export function translateDOM(container = document) {
 
     const attr = el.getAttribute('data-i18n-attr');
     if (attr) {
-      el.setAttribute(attr, translated);
+      attr.split(',').forEach(a => {
+        const trimmed = a.trim();
+        if (trimmed) el.setAttribute(trimmed, translated);
+      });
     } else {
+      if (el.tagName === 'TITLE') {
+        el.textContent = translated;
+        if (typeof document !== 'undefined') {
+          document.title = translated;
+        }
+        return;
+      }
+
       let hasElementChildren = false;
       for (const child of el.childNodes) {
         if (child.nodeType === Node.ELEMENT_NODE) {
