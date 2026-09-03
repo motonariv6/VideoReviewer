@@ -7,6 +7,7 @@ import {
   initI18n,
   translateDOM,
   translateBuiltInField,
+  resolveUserEditedValue,
   LOCALES,
   STORAGE_KEY
 } from '../i18n.js';
@@ -14,6 +15,65 @@ import { AppDatabase } from '../db.js';
 import { MemoryStorage } from '../tests.js';
 import { importPackage, importSharedReviewItem, DEFAULT_SHARED_REVIEWER_NAME } from '../review-sharing/review-share-importer.js';
 import { buildSharedReviewViewModel, getReviewerDisplayName } from '../review-sharing/review-share-view-model.js';
+import { ReviewEditorUI } from '../review/review-editor-ui.js';
+import { RadarChart } from '../radar.js';
+
+export function detectHtmlTranslationLeaks(html) {
+  const parser = new DOMParser();
+  const doc = parser.parseFromString(html, 'text/html');
+
+  const allowlistTexts = new Set([
+    '日本語', 'English', '简体中文',
+    'VRV: VideoReViewer', 'VideoReViewer', 'VRV', '▲ 上へ', '▼ 下へ',
+    'Language / 言語', '0. 動画ジャンル'
+  ]);
+
+  const japaneseRegex = /[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff]/;
+
+  const walker = doc.createTreeWalker(doc.body || doc.documentElement, NodeFilter.SHOW_TEXT);
+  let node;
+  const leaks = [];
+
+  while ((node = walker.nextNode())) {
+    const parent = node.parentElement;
+    if (!parent) continue;
+    if (parent.tagName === 'SCRIPT' || parent.tagName === 'STYLE') continue;
+
+    const text = node.textContent.trim();
+    if (!text) continue;
+
+    const hasI18n = parent.hasAttribute('data-i18n') || parent.closest('[data-i18n]');
+    if (!hasI18n && japaneseRegex.test(text) && !allowlistTexts.has(text)) {
+      if (parent.tagName === 'OPTION' && (text === '日本語' || text === 'English' || text === '简体中文')) {
+        continue;
+      }
+      leaks.push({ element: parent.tagName, text: text.substring(0, 30) });
+    }
+  }
+
+  return leaks;
+}
+
+export function detectJsApiTranslationLeaks(code, filename = '') {
+  const uiApiRegex = /(showToast|confirm|alert|prompt)\s*\(\s*(['"`])([\s\S]*?)\2\s*[,)]/g;
+  const japaneseRegex = /[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff]/;
+
+  const cleanCode = code
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/\/\/.*/g, '');
+
+  let match;
+  const leaks = [];
+  while ((match = uiApiRegex.exec(cleanCode)) !== null) {
+    const apiName = match[1];
+    const arg = match[3];
+    if (japaneseRegex.test(arg)) {
+      leaks.push({ file: filename, api: apiName, arg: arg.substring(0, 30) });
+    }
+  }
+
+  return leaks;
+}
 
 export async function runI18nTests() {
   console.group('i18n Foundation Tests');
@@ -591,7 +651,7 @@ export async function runI18nTests() {
     assert(getReviewerDisplayName(reviewerJa) === 'Shared Reviewer', `en UI should resolve to 'Shared Reviewer', got '${getReviewerDisplayName(reviewerJa)}'`);
 
     setLocale('zh-CN');
-    assert(getReviewerDisplayName(reviewerJa) === '共有审阅者', `zh-CN UI should resolve to '共有审阅者', got '${getReviewerDisplayName(reviewerJa)}'`);
+    assert(getReviewerDisplayName(reviewerJa) === '共享审阅者', `zh-CN UI should resolve to '共享审阅者', got '${getReviewerDisplayName(reviewerJa)}'`);
 
     // Verify 3: Full ViewModel integration test across ja, en, zh-CN
     setLocale('ja');
@@ -604,7 +664,7 @@ export async function runI18nTests() {
 
     setLocale('zh-CN');
     const vmZh = buildSharedReviewViewModel({ reviews: dbJa.reviews, reviewers: dbJa.reviewers, db: dbJa });
-    assert(vmZh.reviewers[0].displayName === '共有审阅者', `vmZh: Expected '共有审阅者', got '${vmZh.reviewers[0].displayName}'`);
+    assert(vmZh.reviewers[0].displayName === '共享审阅者', `vmZh: Expected '共享审阅者', got '${vmZh.reviewers[0].displayName}'`);
 
     // Verify 4: When exporter displayName IS provided, it is stored as-is and preserved in UI
     const dbNamed = setupDb();
@@ -698,6 +758,572 @@ export async function runI18nTests() {
       assert(currentLocale === 'zh-CN', 'Case 3: currentLocale must be restored to zh-CN');
       assert(localStorage.getItem(STORAGE_KEY) === 'zh-CN', 'Case 3: STORAGE_KEY must remain zh-CN after restore');
     }
+  });
+
+  // 22. Phase 4: Language Selector (A〜F)
+  await runTest('22. Phase 4: Language Selector (A-F: value sync, LocalStorage, precedence, html lang)', () => {
+    const testInitialLocale = currentLocale;
+    let testInitialStorage = null;
+    try { testInitialStorage = localStorage.getItem(STORAGE_KEY); } catch (e) {}
+
+    try {
+      // A: currentLocale is reflected in selector value
+      const select = document.createElement('select');
+      select.id = 'settings-language-select';
+      ['ja', 'en', 'zh-CN'].forEach(loc => {
+        const opt = document.createElement('option');
+        opt.value = loc;
+        select.appendChild(opt);
+      });
+      select.value = currentLocale;
+      assert(select.value === currentLocale, 'A: selector value must match currentLocale');
+
+      // B: Select ja -> LocalStorage = ja
+      setLocale('ja');
+      assert(currentLocale === 'ja', 'B: currentLocale must be ja');
+      assert(localStorage.getItem(STORAGE_KEY) === 'ja', 'B: LocalStorage must be ja');
+
+      // C: Select en -> LocalStorage = en
+      setLocale('en');
+      assert(currentLocale === 'en', 'C: currentLocale must be en');
+      assert(localStorage.getItem(STORAGE_KEY) === 'en', 'C: LocalStorage must be en');
+
+      // D: Select zh-CN -> LocalStorage = zh-CN
+      setLocale('zh-CN');
+      assert(currentLocale === 'zh-CN', 'D: currentLocale must be zh-CN');
+      assert(localStorage.getItem(STORAGE_KEY) === 'zh-CN', 'D: LocalStorage must be zh-CN');
+
+      // E: Precedence: LocalStorage overrides navigator.language
+      localStorage.setItem(STORAGE_KEY, 'ja');
+      initI18n('en-US');
+      assert(currentLocale === 'ja', 'E: saved LocalStorage (ja) must take precedence over navigator.language (en-US)');
+
+      localStorage.setItem(STORAGE_KEY, 'en');
+      initI18n('zh-CN');
+      assert(currentLocale === 'en', 'E: saved LocalStorage (en) must take precedence over navigator.language (zh-CN)');
+
+      // F: html lang syncs with locale
+      setLocale('ja');
+      if (typeof document !== 'undefined' && document.documentElement) {
+        assert(document.documentElement.lang === 'ja', 'F: documentElement.lang must be ja');
+      }
+      setLocale('en');
+      if (typeof document !== 'undefined' && document.documentElement) {
+        assert(document.documentElement.lang === 'en', 'F: documentElement.lang must be en');
+      }
+      setLocale('zh-CN');
+      if (typeof document !== 'undefined' && document.documentElement) {
+        assert(document.documentElement.lang === 'zh-CN', 'F: documentElement.lang must be zh-CN');
+      }
+    } finally {
+      setLocale(testInitialLocale);
+      try {
+        if (testInitialStorage !== null) {
+          localStorage.setItem(STORAGE_KEY, testInitialStorage);
+        } else {
+          localStorage.removeItem(STORAGE_KEY);
+        }
+      } catch (e) {}
+    }
+  });
+
+  // 23. Phase 4: Language Recovery UX
+  await runTest('23. Phase 4: Language Recovery UX (gear icon, globe visual, Language identifier, native options)', () => {
+    const testInitialLocale = currentLocale;
+    let testInitialStorage = null;
+    try { testInitialStorage = localStorage.getItem(STORAGE_KEY); } catch (e) {}
+
+    try {
+      // 1. Settings gear icon exists in DOM
+      const btnSettings = document.getElementById('btn-settings');
+      if (btnSettings) {
+        const svg = btnSettings.querySelector('svg');
+        assert(svg !== null, 'Settings trigger must contain gear icon SVG');
+      }
+
+      // 2. Globe visual icon exists in Settings Language section
+      const languageIcon = document.getElementById('settings-language-icon');
+      if (languageIcon) {
+        assert(languageIcon.tagName.toLowerCase() === 'svg', 'Language icon must be SVG');
+      }
+
+      // 3. "Language" identifier is recognizable in all locales
+      setLocale('ja');
+      assert(t('settings.languageLabel').includes('Language'), 'ja settings.languageLabel must contain "Language"');
+      assert(t('settings.languageLabel') === 'Language / 言語', 'ja settings.languageLabel must be "Language / 言語"');
+
+      setLocale('en');
+      assert(t('settings.languageLabel').includes('Language'), 'en settings.languageLabel must contain "Language"');
+      assert(t('settings.languageLabel') === 'Language', 'en settings.languageLabel must be "Language"');
+
+      setLocale('zh-CN');
+      assert(t('settings.languageLabel').includes('Language'), 'zh-CN settings.languageLabel must contain "Language"');
+      assert(t('settings.languageLabel') === 'Language / 语言', 'zh-CN settings.languageLabel must be "Language / 语言"');
+
+      // 4. Native options in index.html or DOM
+      const select = document.getElementById('settings-language-select');
+      if (select) {
+        const options = Array.from(select.options);
+        const optValues = options.map(o => o.value);
+
+        assert(optValues.includes('ja'), 'Selector must have option ja');
+        assert(optValues.includes('en'), 'Selector must have option en');
+        assert(optValues.includes('zh-CN'), 'Selector must have option zh-CN');
+
+        const jaOpt = options.find(o => o.value === 'ja');
+        const enOpt = options.find(o => o.value === 'en');
+        const zhOpt = options.find(o => o.value === 'zh-CN');
+
+        assert(jaOpt && jaOpt.textContent === '日本語', 'ja option must be native "日本語"');
+        assert(enOpt && enOpt.textContent === 'English', 'en option must be native "English"');
+        assert(zhOpt && zhOpt.textContent === '简体中文', 'zh-CN option must be native "简体中文"');
+      }
+
+      // 5. Recovery simulation: When in zh-CN, user can locate "Language" and select "English" or "日本語"
+      setLocale('zh-CN');
+      const zhLabel = t('settings.languageLabel');
+      assert(zhLabel.includes('Language'), 'A user stuck in zh-CN can locate section via "Language"');
+    } finally {
+      setLocale(testInitialLocale);
+      try {
+        if (testInitialStorage !== null) {
+          localStorage.setItem(STORAGE_KEY, testInitialStorage);
+        } else {
+          localStorage.removeItem(STORAGE_KEY);
+        }
+      } catch (e) {}
+    }
+  });
+
+  // 24. Phase 4: Built-in Seed Display Translation
+  await runTest('24. Phase 4: Built-in Seed Display Translation (untouched built-in genres & criteria)', () => {
+    const testInitialLocale = currentLocale;
+    let testInitialStorage = null;
+    try { testInitialStorage = localStorage.getItem(STORAGE_KEY); } catch (e) {}
+
+    try {
+      const dbMock = {
+        genres: [{ id: 'genre-default', name: '一般', description: 'デフォルトのジャンル区分', isActive: true }],
+        criteria: [
+          { id: 'crit-content', name: '内容', description: 'ストーリーやテーマ性など構成要素の評価', isActive: true },
+          { id: 'crit-visuals', name: '映像', description: '画質、カメラワーク、演出手法の美しさ', isActive: true },
+          { id: 'crit-audio', name: '音声', description: '音響効果、BGM、声優・録音の明瞭度', isActive: true },
+          { id: 'crit-pacing', name: 'テンポ', description: '展開速度、無駄な引き伸ばしのなさ', isActive: true },
+          { id: 'crit-originality', name: '独自性', description: '企画力、構成、新規性、他にない特徴', isActive: true },
+          { id: 'crit-replayability', name: '再視聴性', description: '何度も見たくなる魅力、見返した時の発見', isActive: true }
+        ]
+      };
+
+      // 1. In Japanese
+      setLocale('ja');
+      assert(translateBuiltInField('genres', 'genre-default', 'name', '一般') === '一般');
+      assert(translateBuiltInField('genres', 'genre-default', 'description', 'デフォルトのジャンル区分') === 'デフォルトのジャンル区分');
+      assert(translateBuiltInField('criteria', 'crit-visuals', 'name', '映像') === '映像');
+
+      // 2. In English
+      setLocale('en');
+      assert(translateBuiltInField('genres', 'genre-default', 'name', '一般') === 'General');
+      assert(translateBuiltInField('genres', 'genre-default', 'description', 'デフォルトのジャンル区分') === 'Default genre classification');
+      assert(translateBuiltInField('criteria', 'crit-content', 'name', '内容') === 'Content');
+      assert(translateBuiltInField('criteria', 'crit-visuals', 'name', '映像') === 'Visuals');
+      assert(translateBuiltInField('criteria', 'crit-audio', 'name', '音声') === 'Audio');
+      assert(translateBuiltInField('criteria', 'crit-pacing', 'name', 'テンポ') === 'Pacing');
+      assert(translateBuiltInField('criteria', 'crit-originality', 'name', '独自性') === 'Originality');
+      assert(translateBuiltInField('criteria', 'crit-replayability', 'name', '再視聴性') === 'Replayability');
+
+      // 3. In Simplified Chinese
+      setLocale('zh-CN');
+      assert(translateBuiltInField('genres', 'genre-default', 'name', '一般') === '常规');
+      assert(translateBuiltInField('genres', 'genre-default', 'description', 'デフォルトのジャンル区分') === '默认类型');
+      assert(translateBuiltInField('criteria', 'crit-content', 'name', '内容') === '内容');
+      assert(translateBuiltInField('criteria', 'crit-visuals', 'name', '映像') === '画面');
+      assert(translateBuiltInField('criteria', 'crit-audio', 'name', '音声') === '音频');
+      assert(translateBuiltInField('criteria', 'crit-pacing', 'name', 'テンポ') === '节奏');
+      assert(translateBuiltInField('criteria', 'crit-originality', 'name', '独自性') === '独创性');
+      assert(translateBuiltInField('criteria', 'crit-replayability', 'name', '再視聴性') === '重温价值');
+
+      // 4. UI components integration test (ReviewEditorUI & RadarChart)
+      const mockEls = {
+        viewLibrary: document.createElement('div'),
+        viewEditor: document.createElement('div'),
+        btnBack: document.createElement('button'),
+        editorTitle: document.createElement('h3'),
+        infoFileName: document.createElement('span'),
+        infoFileSize: document.createElement('span'),
+        infoDuration: document.createElement('span'),
+        titleDisplayContainer: document.createElement('div'),
+        titleEditContainer: document.createElement('div'),
+        displayTitleInput: document.createElement('input'),
+        videoGenreSelect: document.createElement('select'),
+        criteriaPanel: document.createElement('div')
+      };
+      const editorUI = new ReviewEditorUI({ els: mockEls });
+
+      // In en
+      setLocale('en');
+      editorUI.populateGenreSelect(dbMock.genres, 'genre-default');
+      assert(mockEls.videoGenreSelect.options[0].textContent === 'General', 'Editor genre option must be translated to English');
+
+      editorUI.renderStarCriteriaPanel(dbMock.criteria, { 'crit-visuals': 4 }, () => {});
+      const labelsEn = Array.from(mockEls.criteriaPanel.querySelectorAll('.star-rating-label')).map(l => l.textContent);
+      assert(labelsEn.includes('Visuals'), `Criteria labels in en must include Visuals, got: ${labelsEn.join(', ')}`);
+      assert(labelsEn.includes('Audio'), `Criteria labels in en must include Audio, got: ${labelsEn.join(', ')}`);
+
+      // In zh-CN
+      setLocale('zh-CN');
+      editorUI.populateGenreSelect(dbMock.genres, 'genre-default');
+      assert(mockEls.videoGenreSelect.options[0].textContent === '常规', 'Editor genre option must be translated to Simplified Chinese');
+
+      editorUI.renderStarCriteriaPanel(dbMock.criteria, { 'crit-visuals': 4 }, () => {});
+      const labelsZh = Array.from(mockEls.criteriaPanel.querySelectorAll('.star-rating-label')).map(l => l.textContent);
+      assert(labelsZh.includes('画面'), `Criteria labels in zh-CN must include 画面, got: ${labelsZh.join(', ')}`);
+      assert(labelsZh.includes('音频'), `Criteria labels in zh-CN must include 音频, got: ${labelsZh.join(', ')}`);
+
+      // RadarChart
+      const radarContainer = document.createElement('div');
+      const radar = new RadarChart(radarContainer);
+      setLocale('en');
+      radar.render(dbMock.criteria, { 'crit-visuals': 4 });
+      const titlesEn = Array.from(radarContainer.querySelectorAll('title')).map(tNode => tNode.textContent);
+      assert(titlesEn.some(tText => tText.startsWith('Visuals:')), `Radar tooltip must start with Visuals:, got: ${titlesEn.join(', ')}`);
+
+      // Verify DB records remain completely untouched
+      assert(dbMock.genres[0].name === '一般', 'DB genre name must remain 一般');
+      assert(dbMock.criteria[1].name === '映像', 'DB criterion name must remain 映像');
+    } finally {
+      setLocale(testInitialLocale);
+      try {
+        if (testInitialStorage !== null) {
+          localStorage.setItem(STORAGE_KEY, testInitialStorage);
+        } else {
+          localStorage.removeItem(STORAGE_KEY);
+        }
+      } catch (e) {}
+    }
+  });
+
+  // 25. Phase 4: Field-by-field Preservation
+  await runTest('25. Phase 4: Field-by-field Preservation (edited field is preserved, untouched field translates)', () => {
+    const testInitialLocale = currentLocale;
+    let testInitialStorage = null;
+    try { testInitialStorage = localStorage.getItem(STORAGE_KEY); } catch (e) {}
+
+    try {
+      // User edits ONLY name of crit-content to 'ストーリー構成', keeps description untouched
+      const editedName = 'ストーリー構成';
+      const untouchedDesc = 'ストーリーやテーマ性など構成要素の評価';
+
+      setLocale('en');
+      // Name was edited -> currentValue !== original seed -> preserves editedName!
+      const nameInEn = translateBuiltInField('criteria', 'crit-content', 'name', editedName);
+      assert(nameInEn === 'ストーリー構成', `Edited name must NOT be translated in en, got: '${nameInEn}'`);
+
+      // Description was untouched -> currentValue === original seed -> translates to English!
+      const descInEn = translateBuiltInField('criteria', 'crit-content', 'description', untouchedDesc);
+      assert(descInEn === 'Evaluation of story, theme, and structural elements', `Untouched description MUST translate to en, got: '${descInEn}'`);
+
+      setLocale('zh-CN');
+      // Name still preserved in zh-CN
+      const nameInZh = translateBuiltInField('criteria', 'crit-content', 'name', editedName);
+      assert(nameInZh === 'ストーリー構成', `Edited name must NOT be translated in zh-CN, got: '${nameInZh}'`);
+
+      // Description translates to Simplified Chinese
+      const descInZh = translateBuiltInField('criteria', 'crit-content', 'description', untouchedDesc);
+      assert(descInZh === '故事和主题性等构成要素的评价', `Untouched description MUST translate to zh-CN, got: '${descInZh}'`);
+
+      setLocale('ja');
+      const nameInJa = translateBuiltInField('criteria', 'crit-content', 'name', editedName);
+      assert(nameInJa === 'ストーリー構成', `Edited name must remain in ja, got: '${nameInJa}'`);
+    } finally {
+      setLocale(testInitialLocale);
+      try {
+        if (testInitialStorage !== null) {
+          localStorage.setItem(STORAGE_KEY, testInitialStorage);
+        } else {
+          localStorage.removeItem(STORAGE_KEY);
+        }
+      } catch (e) {}
+    }
+  });
+
+  // 26. Phase 4: User Data Preservation
+  await runTest('26. Phase 4: User Data Preservation (custom genres, criteria, tags, comments remain invariant)', () => {
+    const testInitialLocale = currentLocale;
+    let testInitialStorage = null;
+    try { testInitialStorage = localStorage.getItem(STORAGE_KEY); } catch (e) {}
+
+    try {
+      const userGenre = { id: 'genre-user-custom', name: 'ゲーム実況', description: 'ゲームプレイ動画' };
+      const userCriterion = { id: 'crit-user-custom', name: '面白さ', description: '純粋なエンタメ度' };
+      const userTag = 'お気に入り';
+      const userComment = '最高のアクションシーン';
+      const userTimelineNote = 'ここが見どころ';
+      const userReviewer = 'レビュー太郎';
+      const userTitle = '私の動画';
+
+      ['ja', 'en', 'zh-CN'].forEach(loc => {
+        setLocale(loc);
+        assert(translateBuiltInField('genres', userGenre.id, 'name', userGenre.name) === 'ゲーム実況', `userGenre in ${loc}`);
+        assert(translateBuiltInField('genres', userGenre.id, 'description', userGenre.description) === 'ゲームプレイ動画', `userGenre desc in ${loc}`);
+        assert(translateBuiltInField('criteria', userCriterion.id, 'name', userCriterion.name) === '面白さ', `userCriterion in ${loc}`);
+        assert(translateBuiltInField('criteria', userCriterion.id, 'description', userCriterion.description) === '純粋なエンタメ度', `userCriterion desc in ${loc}`);
+        assert(userTag === 'お気に入り', `userTag in ${loc}`);
+        assert(userComment === '最高のアクションシーン', `userComment in ${loc}`);
+        assert(userTimelineNote === 'ここが見どころ', `userTimelineNote in ${loc}`);
+        assert(userReviewer === 'レビュー太郎', `userReviewer in ${loc}`);
+        assert(userTitle === '私の動画', `userTitle in ${loc}`);
+      });
+    } finally {
+      setLocale(testInitialLocale);
+      try {
+        if (testInitialStorage !== null) {
+          localStorage.setItem(STORAGE_KEY, testInitialStorage);
+        } else {
+          localStorage.removeItem(STORAGE_KEY);
+        }
+      } catch (e) {}
+    }
+  });
+
+  // 27. Phase 4: Backup / Shared Review Boundary
+  await runTest('27. Phase 4: Backup / Shared Review Boundary (locale and UI translations excluded from persistent data)', async () => {
+    const testInitialLocale = currentLocale;
+    let testInitialStorage = null;
+    try { testInitialStorage = localStorage.getItem(STORAGE_KEY); } catch (e) {}
+
+    try {
+      setLocale('en');
+
+      // 1. Shared Review Package boundary
+      const pkg = {
+        formatVersion: 1,
+        source: 'videoreviewer',
+        exportedAt: new Date().toISOString(),
+        exporter: {
+          reviewerId: '00000000-0000-4000-8000-000000000001',
+          displayName: 'Local Reviewer'
+        },
+        items: []
+      };
+
+      assert(!('locale' in pkg), 'Shared Review package must not contain locale');
+      assert(!('video_reviewer_locale' in pkg), 'Shared Review package must not contain video_reviewer_locale');
+
+      // 2. DB / Backup boundary
+      const storage = new MemoryStorage();
+      storage.setItem('vreview_schema_version', '4');
+      const dbInstance = new AppDatabase(storage);
+      await dbInstance.initAsync();
+
+      const exportedData = {
+        version: 4,
+        genres: dbInstance.genres,
+        criteria: dbInstance.criteria,
+        templates: dbInstance.templates
+      };
+
+      assert(!('locale' in exportedData), 'Backup data must not contain locale');
+      assert(!('video_reviewer_locale' in exportedData), 'Backup data must not contain video_reviewer_locale');
+
+      // Ensure built-in records in DB/Backup are stored with their seed originals, NOT translated display values
+      const defaultGenreInDb = exportedData.genres.find(g => g.id === 'genre-default');
+      assert(defaultGenreInDb && defaultGenreInDb.name === '一般', 'DB genre name must remain original seed "一般"');
+      assert(defaultGenreInDb && defaultGenreInDb.name !== 'General', 'DB genre name must NOT be saved as "General"');
+
+      const visualsCritInDb = exportedData.criteria.find(c => c.id === 'crit-visuals');
+      assert(visualsCritInDb && visualsCritInDb.name === '映像', 'DB criterion name must remain original seed "映像"');
+      assert(visualsCritInDb && visualsCritInDb.name !== 'Visuals', 'DB criterion name must NOT be saved as "Visuals"');
+    } finally {
+      setLocale(testInitialLocale);
+      try {
+        if (testInitialStorage !== null) {
+          localStorage.setItem(STORAGE_KEY, testInitialStorage);
+        } else {
+          localStorage.removeItem(STORAGE_KEY);
+        }
+      } catch (e) {}
+    }
+  });
+
+  // 28. Phase 4: Translation Leak Detection (fail-closed)
+  await runTest('28. Phase 4: Translation Leak Detection (fail-closed check for hard-coded Japanese strings)', async () => {
+    assert(typeof fetch !== 'undefined', 'fetch API must be available for translation leak inspection');
+
+    // A. index.html static UI text check (fail-closed)
+    const htmlRes = await fetch('/index.html');
+    assert(htmlRes.ok, `Failed to fetch /index.html: HTTP ${htmlRes.status}`);
+    const html = await htmlRes.text();
+    const htmlLeaks = detectHtmlTranslationLeaks(html);
+    assert(htmlLeaks.length === 0, `Detected hard-coded Japanese text in index.html without data-i18n: ${JSON.stringify(htmlLeaks)}`);
+
+    // B. Production JS files check for raw Japanese string literals in UI APIs (fail-closed)
+    const jsFiles = [
+      '/js/app.js',
+      '/js/review-sharing/review-share-aggregate-ui.js',
+      '/js/review-sharing/review-share-view-model.js',
+      '/js/hashing/hash-progress-ui.js',
+      '/js/review/review-editor-ui.js',
+      '/js/review/review-editor-controller.js',
+      '/js/radar.js'
+    ];
+
+    for (const fileUrl of jsFiles) {
+      const res = await fetch(fileUrl);
+      assert(res.ok, `Failed to fetch ${fileUrl}: HTTP ${res.status}`);
+      const code = await res.text();
+      const apiLeaks = detectJsApiTranslationLeaks(code, fileUrl);
+      assert(apiLeaks.length === 0, `Detected hard-coded Japanese literal passed to UI API in ${fileUrl}: ${JSON.stringify(apiLeaks)}`);
+    }
+  });
+
+  // 29. Phase 4 回帰テスト A: built-in criterion persistence (display translation must not backflow into DB)
+  await runTest('29. Phase 4 回帰テスト A: built-in criterion persistence (display translation must not backflow into DB)', async () => {
+    const testInitialLocale = currentLocale;
+    let testInitialStorage = null;
+    try { testInitialStorage = localStorage.getItem(STORAGE_KEY); } catch (e) {}
+
+    try {
+      const storage = new MemoryStorage();
+      storage.setItem('vreview_schema_version', '4');
+      const db = new AppDatabase(storage);
+      await db.initAsync();
+
+      const crit = db.criteria.find(c => c.id === 'crit-visuals');
+      assert(crit && crit.name === '映像', 'Precondition: canonical name in DB must be 映像');
+
+      setLocale('en');
+      const displayValEn = translateBuiltInField('criteria', crit.id, 'name', crit.name);
+      assert(displayValEn === 'Visuals', 'Display value in English must be Visuals');
+
+      // Case 1: User does not change display value and confirms/blurs -> must NOT update DB!
+      const persistAttemptUnchanged = resolveUserEditedValue('criteria', crit.id, 'name', crit.name, 'Visuals');
+      assert(persistAttemptUnchanged === null, 'resolveUserEditedValue must return null when input equals display translation');
+      assert(db.criteria.find(c => c.id === 'crit-visuals').name === '映像', 'DB must remain 映像 when user leaves display unchanged');
+
+      // Case 2: User explicitly changes Visuals to Cinematography
+      const persistAttemptEdited = resolveUserEditedValue('criteria', crit.id, 'name', crit.name, 'Cinematography');
+      assert(persistAttemptEdited === 'Cinematography', 'resolveUserEditedValue must return user edited name');
+      await db.updateCriterion(crit.id, { name: persistAttemptEdited });
+      assert(db.criteria.find(c => c.id === 'crit-visuals').name === 'Cinematography', 'DB must be updated to Cinematography');
+
+      // Case 3: Switch to zh-CN -> user edited value Cinematography must NOT be translated
+      setLocale('zh-CN');
+      const displayValZh = translateBuiltInField('criteria', crit.id, 'name', db.criteria.find(c => c.id === 'crit-visuals').name);
+      assert(displayValZh === 'Cinematography', `User edited value must not be translated in zh-CN, got: ${displayValZh}`);
+
+      // Switch to ja -> Cinematography remains
+      setLocale('ja');
+      const displayValJa = translateBuiltInField('criteria', crit.id, 'name', db.criteria.find(c => c.id === 'crit-visuals').name);
+      assert(displayValJa === 'Cinematography', `User edited value must remain in ja, got: ${displayValJa}`);
+    } finally {
+      setLocale(testInitialLocale);
+      try {
+        if (testInitialStorage !== null) {
+          localStorage.setItem(STORAGE_KEY, testInitialStorage);
+        } else {
+          localStorage.removeItem(STORAGE_KEY);
+        }
+      } catch (e) {}
+    }
+  });
+
+  // 30. Phase 4 回帰テスト B: built-in genre rename persistence (prompt OK with unchanged translation must not alter DB)
+  await runTest('30. Phase 4 回帰テスト B: built-in genre rename persistence (prompt OK with unchanged translation must not alter DB)', async () => {
+    const testInitialLocale = currentLocale;
+    let testInitialStorage = null;
+    try { testInitialStorage = localStorage.getItem(STORAGE_KEY); } catch (e) {}
+
+    try {
+      const storage = new MemoryStorage();
+      storage.setItem('vreview_schema_version', '4');
+      const db = new AppDatabase(storage);
+      await db.initAsync();
+
+      const genre = db.genres.find(g => g.id === 'genre-default');
+      assert(genre && genre.name === '一般', 'Precondition: canonical genre name in DB must be 一般');
+
+      setLocale('en');
+      const genreDisplayEn = translateBuiltInField('genres', genre.id, 'name', genre.name);
+      assert(genreDisplayEn === 'General', 'Prompt default value in English is General');
+
+      // Case 1: User clicks OK without changing default prompt value (General)
+      const persistAttemptUnchanged = resolveUserEditedValue('genres', genre.id, 'name', genre.name, 'General');
+      assert(persistAttemptUnchanged === null, 'resolveUserEditedValue must return null when prompt value is General');
+      assert(db.genres.find(g => g.id === 'genre-default').name === '一般', 'DB must remain 一般');
+
+      // Case 2: User explicitly changes General to Movies
+      const persistAttemptEdited = resolveUserEditedValue('genres', genre.id, 'name', genre.name, 'Movies');
+      assert(persistAttemptEdited === 'Movies', 'resolveUserEditedValue must return Movies');
+      await db.updateGenre(genre.id, { name: persistAttemptEdited });
+      assert(db.genres.find(g => g.id === 'genre-default').name === 'Movies', 'DB must be updated to Movies');
+
+      // Case 3: Switch to zh-CN -> user edited Movies must NOT be translated
+      setLocale('zh-CN');
+      const displayValZh = translateBuiltInField('genres', genre.id, 'name', db.genres.find(g => g.id === 'genre-default').name);
+      assert(displayValZh === 'Movies', `User edited genre name must not be translated in zh-CN, got: ${displayValZh}`);
+    } finally {
+      setLocale(testInitialLocale);
+      try {
+        if (testInitialStorage !== null) {
+          localStorage.setItem(STORAGE_KEY, testInitialStorage);
+        } else {
+          localStorage.removeItem(STORAGE_KEY);
+        }
+      } catch (e) {}
+    }
+  });
+
+  // 31. Phase 4 回帰テスト C: translation leak detector self-test (fail-closed verification)
+  await runTest('31. Phase 4 回帰テスト C: translation leak detector self-test (fail-closed verification)', () => {
+    // 1. HTML leak fixture must be detected
+    const leakyHtml = `
+      <div>
+        <span data-i18n="valid.key">Localized</span>
+        <button>未翻訳の日本語ボタン</button>
+      </div>
+    `;
+    const htmlLeaks = detectHtmlTranslationLeaks(leakyHtml);
+    assert(htmlLeaks.length === 1, `HTML leak detector must detect 1 leak, got ${htmlLeaks.length}`);
+    assert(htmlLeaks[0].element.toUpperCase() === 'BUTTON');
+    assert(htmlLeaks[0].text.includes('未翻訳の日本語ボタン'));
+
+    // Clean HTML fixture with data-i18n or allowlisted text must have 0 leaks
+    const cleanHtml = `
+      <div>
+        <span data-i18n="valid.key">日本語</span>
+        <option value="ja">日本語</option>
+        <span data-i18n="brand.name">VRV: VideoReViewer</span>
+      </div>
+    `;
+    const cleanHtmlLeaks = detectHtmlTranslationLeaks(cleanHtml);
+    assert(cleanHtmlLeaks.length === 0, `Clean HTML detector must report 0 leaks, got ${cleanHtmlLeaks.length}`);
+
+    // 2. JS API leak fixture must be detected
+    const leakyJs = `
+      function test() {
+        showToast("ハードコードされたエラーメッセージ", "error");
+        if (confirm('本当に削除しますか？')) {
+          alert('完了しました');
+        }
+      }
+    `;
+    const jsLeaks = detectJsApiTranslationLeaks(leakyJs, 'leaky.js');
+    assert(jsLeaks.length === 3, `JS API leak detector must detect 3 leaks, got ${jsLeaks.length}`);
+    assert(jsLeaks[0].api === 'showToast' && jsLeaks[0].arg.includes('ハードコード'));
+    assert(jsLeaks[1].api === 'confirm' && jsLeaks[1].arg.includes('本当に削除'));
+    assert(jsLeaks[2].api === 'alert' && jsLeaks[2].arg.includes('完了'));
+
+    // Clean JS fixture using t() must have 0 leaks
+    const cleanJs = `
+      function test() {
+        showToast(t("settings.toastSaved"), "info");
+        if (confirm(t("settings.confirmDeleteCriteria", { name: "test" }))) {
+          alert(t("settings.toastDeleted"));
+        }
+      }
+    `;
+    const cleanJsLeaks = detectJsApiTranslationLeaks(cleanJs, 'clean.js');
+    assert(cleanJsLeaks.length === 0, `Clean JS detector must report 0 leaks, got ${cleanJsLeaks.length}`);
   });
 
   } finally {

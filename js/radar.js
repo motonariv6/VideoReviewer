@@ -1,4 +1,4 @@
-import { t } from './i18n.js';
+import { t, translateBuiltInField } from './i18n.js';
 
 /**
  * Custom SVG Radar Chart component.
@@ -221,23 +221,24 @@ export class RadarChart {
       textNode.setAttribute('font-weight', '500');
 
       // Native browser tooltip
+      const displayName = translateBuiltInField('criteria', crit.id, 'name', crit.name);
       const titleNode = document.createElementNS('http://www.w3.org/2000/svg', 'title');
-      titleNode.textContent = `${crit.name}: ${val > 0 ? val : '-'}`;
+      titleNode.textContent = `${displayName}: ${val > 0 ? val : '-'}`;
       textNode.appendChild(titleNode);
 
-      // Split labels mapping: 8 characters per line limit for Japanese
+      // Split labels mapping: 8 characters per line limit for Japanese / short labels
       const splitLimit = 8;
       const scoreStr = `: ${val > 0 ? val : '-'}`;
 
-      if (crit.name.length <= splitLimit) {
+      if (displayName.length <= splitLimit) {
         const labelTspan = document.createElementNS('http://www.w3.org/2000/svg', 'tspan');
         labelTspan.setAttribute('x', labelX);
         labelTspan.setAttribute('dy', dy);
-        labelTspan.textContent = `${crit.name}${scoreStr}`;
+        labelTspan.textContent = `${displayName}${scoreStr}`;
         textNode.appendChild(labelTspan);
       } else {
-        const line1 = crit.name.substring(0, splitLimit);
-        let line2 = crit.name.substring(splitLimit);
+        const line1 = displayName.substring(0, splitLimit);
+        let line2 = displayName.substring(splitLimit);
 
         if (line2.length > splitLimit) {
           line2 = line2.substring(0, splitLimit - 1) + '...';

@@ -123,7 +123,8 @@ export const en = {
     folderErrorFileNotFound: "File not found: {path}",
     folderErrorDisconnected: "Folder settings have been removed.",
     btnReconnectFolder: "Reconnect Folder",
-    videoUnplayableFormat: "This video format or codec cannot be played in this browser.\nThe file exists and review data is safely preserved."
+    videoUnplayableFormat: "This video format or codec cannot be played in this browser.\nThe file exists and review data is safely preserved.",
+    placeholderVideoTitle: "Video title..."
   },
   poster: {
     labelCustomPoster: "Custom Poster:",
@@ -202,6 +203,7 @@ export const en = {
     tooltipRemoveTag: "Remove tag"
   },
   settings: {
+    languageLabel: "Language",
     modalTitle: "Review Settings",
     genreSectionTitle: "Video Genre Settings",
     newGenrePlaceholder: "Enter new genre name (e.g. Interview)...",
@@ -291,6 +293,7 @@ export const en = {
     btnReconnectFolder: "Reconnect Folder",
     btnGrantAccess: "Grant Access",
     videoCountFormat: "{count} videos",
+    videoCountZero: "0 videos",
     neverScanned: "Never scanned",
     folderUnknown: "Unknown Folder"
   },

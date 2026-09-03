@@ -34,7 +34,7 @@ import {
 import { renderFolderSettingsUI, updateScanProgressUI } from './folder/folder-settings-ui.js';
 import { initShareUI } from './review-sharing/review-share-ui.js';
 import { isVideoEligibleForExport } from './review-sharing/review-share-exporter.js';
-import { initI18n, translateDOM, t, currentLocale } from './i18n.js';
+import { initI18n, translateDOM, t, currentLocale, setLocale, translateBuiltInField, resolveUserEditedValue } from './i18n.js';
 
 export {
   bgHashState,
@@ -182,6 +182,7 @@ const els = {
 
   // Settings Modal (Evaluation)
   modalSettings: document.getElementById('modal-settings'),
+  settingsLanguageSelect: document.getElementById('settings-language-select'),
   settingsCloseX: document.getElementById('settings-close-x'),
   settingsCriteriaList: document.getElementById('settings-criteria-list'),
   settingsNewNameInput: document.getElementById('settings-new-name-input'),
@@ -363,6 +364,16 @@ function initEventListeners() {
   els.settingsCloseX.addEventListener('click', closeSettingsModal);
   els.settingsBtnAdd.addEventListener('click', handleSettingsAddCriterion);
   els.settingsBtnSave.addEventListener('click', closeSettingsModal);
+  if (els.settingsLanguageSelect) {
+    els.settingsLanguageSelect.value = currentLocale;
+    els.settingsLanguageSelect.addEventListener('change', (e) => {
+      const selectedLocale = e.target.value;
+      if (selectedLocale && selectedLocale !== currentLocale) {
+        setLocale(selectedLocale);
+        window.location.reload();
+      }
+    });
+  }
 
   // Settings tag management event listeners
   if (els.settingsTagSearchInput) {
@@ -450,7 +461,8 @@ function initEventListeners() {
     const genre = db.getGenre(genreId);
     if (!genre) return;
 
-    const newName = prompt(t('settings.promptNewGenreName'), genre.name);
+    const genreDisplayName = translateBuiltInField('genres', genre.id, 'name', genre.name);
+    const newName = prompt(t('settings.promptNewGenreName'), genreDisplayName);
     if (newName === null) return;
     const cleanName = newName.trim();
     if (!cleanName) {
@@ -458,8 +470,14 @@ function initEventListeners() {
       return;
     }
 
+    const valueToPersist = resolveUserEditedValue('genres', genre.id, 'name', genre.name, cleanName);
+    if (valueToPersist === null) {
+      // Unchanged from either original persisted name or display translation -> no-op
+      return;
+    }
+
     try {
-      await db.updateGenre(genreId, { name: cleanName });
+      await db.updateGenre(genreId, { name: valueToPersist });
       populateSettingsGenreSelect();
       renderSettingsGenreControls();
       showToast(t('settings.toastGenreRenamed'));
@@ -479,20 +497,21 @@ function initEventListeners() {
     const genre = db.getGenre(genreId);
     if (!genre) return;
 
+    const genreDisplayName = translateBuiltInField('genres', genre.id, 'name', genre.name);
     if (genre.isActive) {
-      if (confirm(t('settings.confirmDisableGenre', { name: genre.name }))) {
+      if (confirm(t('settings.confirmDisableGenre', { name: genreDisplayName }))) {
         await db.updateGenre(genreId, { isActive: false });
         populateSettingsGenreSelect();
         renderSettingsCriteriaList();
         renderSettingsGenreControls();
-        showToast(t('settings.toastGenreDisabled', { name: genre.name }));
+        showToast(t('settings.toastGenreDisabled', { name: genreDisplayName }));
       }
     } else {
       await db.updateGenre(genreId, { isActive: true });
       populateSettingsGenreSelect();
       renderSettingsCriteriaList();
       renderSettingsGenreControls();
-      showToast(t('settings.toastGenreEnabled', { name: genre.name }));
+      showToast(t('settings.toastGenreEnabled', { name: genreDisplayName }));
     }
   });
 
@@ -1864,6 +1883,9 @@ function openSettingsModal() {
   }
 
   // Populate dropdowns & configure states
+  if (els.settingsLanguageSelect) {
+    els.settingsLanguageSelect.value = currentLocale;
+  }
   populateSettingsGenreSelect();
   renderSettingsGenreControls();
   renderSettingsCriteriaList();
@@ -2108,16 +2130,19 @@ function renderSettingsCriteriaList() {
     controlsDiv.appendChild(downBtn);
     row.appendChild(controlsDiv);
 
+    const critDisplayName = translateBuiltInField('criteria', crit.id, 'name', crit.name);
+
     const input = document.createElement('input');
     input.type = 'text';
     input.className = 'form-input criterion-input-field';
-    input.value = crit.name;
+    input.value = critDisplayName;
     input.addEventListener('change', async () => {
-      const newName = input.value.trim();
-      if (newName) {
-        await db.updateCriterion(crit.id, { name: newName });
+      const trimmed = input.value.trim();
+      const valueToPersist = resolveUserEditedValue('criteria', crit.id, 'name', crit.name, trimmed);
+      if (valueToPersist !== null) {
+        await db.updateCriterion(crit.id, { name: valueToPersist });
       } else {
-        input.value = crit.name;
+        input.value = critDisplayName;
       }
     });
     row.appendChild(input);
@@ -2158,7 +2183,7 @@ function renderSettingsCriteriaList() {
     deleteBtn.style.height = '30px';
     deleteBtn.innerHTML = `<svg fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>`;
     deleteBtn.addEventListener('click', async () => {
-      if (confirm(t('settings.confirmDeleteCriteria', { name: crit.name }))) {
+      if (confirm(t('settings.confirmDeleteCriteria', { name: critDisplayName }))) {
         await db.deleteCriterion(crit.id);
         renderSettingsCriteriaList();
         showToast(t('settings.toastCriteriaDeleted'));
@@ -2339,9 +2364,10 @@ function populateSettingsGenreSelect() {
   // 1. Configure configuration genre select dropdown
   els.settingsGenreSelect.innerHTML = '';
   genres.forEach(g => {
+    const displayName = translateBuiltInField('genres', g.id, 'name', g.name);
     const opt = document.createElement('option');
     opt.value = g.id;
-    opt.textContent = g.isActive ? g.name : t('settings.disabledGenreLabel', { name: g.name });
+    opt.textContent = g.isActive ? displayName : t('settings.disabledGenreLabel', { name: displayName });
     els.settingsGenreSelect.appendChild(opt);
   });
 
@@ -2363,9 +2389,10 @@ function populateSettingsGenreSelect() {
 
   genres.forEach(g => {
     if (g.isActive && g.id !== currentGenreId) {
+      const displayName = translateBuiltInField('genres', g.id, 'name', g.name);
       const opt = document.createElement('option');
       opt.value = g.id;
-      opt.textContent = g.name;
+      opt.textContent = displayName;
       els.settingsCopySourceSelect.appendChild(opt);
     }
   });

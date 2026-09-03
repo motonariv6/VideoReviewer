@@ -257,5 +257,27 @@ export function translateBuiltInField(type, id, field, currentValue) {
   return currentValue;
 }
 
+/**
+ * Resolves whether an input value represents a genuine user edit or merely the unchanged display translation.
+ * Returns null if the value is unchanged (either matching canonical or translated display),
+ * or the new trimmed value to be persisted.
+ * @param {string} type - 'criteria' | 'genres'
+ * @param {string} id
+ * @param {string} field - 'name' | 'description'
+ * @param {string} currentPersisted - value currently stored in DB
+ * @param {string} inputValue - user input value
+ * @returns {string|null} - new value to persist, or null if unchanged
+ */
+export function resolveUserEditedValue(type, id, field, currentPersisted, inputValue) {
+  const trimmed = (inputValue || '').trim();
+  if (!trimmed) return null;
+  // If identical to canonical persisted value, no change
+  if (trimmed === currentPersisted) return null;
+  // If identical to the display translation of the untouched seed, no change!
+  const displayVal = translateBuiltInField(type, id, field, currentPersisted);
+  if (trimmed === displayVal) return null;
+  return trimmed;
+}
+
 // Automatically bootstrap on script evaluation
 initI18n();
