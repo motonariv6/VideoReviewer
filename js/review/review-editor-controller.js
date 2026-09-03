@@ -1,5 +1,6 @@
 // review-editor-controller.js - Business logic and use case controller for Video Review Editor workspace
 import { buildSharedReviewViewModel } from '../review-sharing/review-share-view-model.js';
+import { t } from '../i18n.js';
 
 export class ReviewEditorController {
   constructor({
@@ -200,7 +201,7 @@ export class ReviewEditorController {
       this.renderVideoTagsList();
       this.renderSharedReviews();
     } catch (err) {
-      this.showToast(`タグの削除に失敗しました: ${err.message}`, 'error');
+      this.showToast(t('tag.toastDeleteFailed', { error: err.message }), 'error');
     }
   }
 
@@ -215,7 +216,7 @@ export class ReviewEditorController {
     }
 
     const matches = this.db.getTags()
-      .filter(t => t.normalizedName.includes(val))
+      .filter(tItem => tItem.normalizedName.includes(val))
       .slice(0, 5);
 
     this.ui.renderTagAutocomplete(matches, (tagName) => this.onAddAutocompleteTag(tagName));
@@ -251,8 +252,8 @@ export class ReviewEditorController {
       if (val && this.state.currentVideoId) {
         try {
           const existingTags = this.db.getVideoTags(this.state.currentVideoId);
-          if (existingTags.some(t => t.name.toLowerCase() === val.toLowerCase())) {
-            this.showToast('このタグは既に追加されています', 'error');
+          if (existingTags.some(tItem => tItem.name.toLowerCase() === val.toLowerCase())) {
+            this.showToast(t('tag.toastAlreadyAdded'), 'error');
             this.ui.clearTagInput();
             this.ui.hideTagAutocomplete();
             return;
@@ -289,14 +290,14 @@ export class ReviewEditorController {
    * Delete timeline note action
    */
   async onDeleteTimelineNote(noteId) {
-    if (this.confirm('タイムラインメモを削除しますか？')) {
+    if (this.confirm(t('timeline.confirmDelete'))) {
       try {
         await this.db.deleteTimelineNote(noteId);
         this.renderTimelineNotesList();
         this.renderSharedReviews();
-        this.showToast('メモを削除しました');
+        this.showToast(t('timeline.toastDeleted'));
       } catch (err) {
-        this.showToast(`削除に失敗しました: ${err.message}`, 'error');
+        this.showToast(t('timeline.toastDeleteFailed', { error: err.message }), 'error');
       }
     }
   }
@@ -339,9 +340,9 @@ export class ReviewEditorController {
 
       this.renderTimelineNotesList();
       this.renderSharedReviews();
-      this.showToast('タイムラインメモを追加しました');
+      this.showToast(t('timeline.toastAdded'));
     } catch (err) {
-      this.showToast(`保存できませんでした: ${err.message}`, 'error');
+      this.showToast(t('timeline.toastAddFailed', { error: err.message }), 'error');
     }
   }
 
@@ -376,12 +377,12 @@ export class ReviewEditorController {
       this.clearDirty();
 
       if (!isAutosave) {
-        this.showToast('評価内容を保存しました');
+        this.showToast(t('review.toastSaved'));
       } else {
         this.ui.showAutosaveSuccess(this.state.isDirty, this.state.currentView);
       }
     } catch (err) {
-      this.showToast(`保存できませんでした: ${err.message}`, 'error');
+      this.showToast(t('review.toastSaveFailed', { error: err.message }), 'error');
     }
   }
 
@@ -391,7 +392,7 @@ export class ReviewEditorController {
   renderLocationsListInEditor(video) {
     const locsResolved = video.locations.map(loc => {
       const source = this.db.getDirectorySource(loc.directoryId);
-      const folderName = source ? source.name : 'フォルダ不明';
+      const folderName = source ? source.name : t('folder.folderUnknown');
       return {
         id: loc.id,
         relativePath: loc.relativePath,
@@ -437,7 +438,7 @@ export class ReviewEditorController {
     // Update UI headers
     this.ui.finishDisplayTitleEdit(titleVal || video.title);
 
-    this.showToast('表示タイトルを更新しました。');
+    this.showToast(t('editor.toastTitleUpdated'));
 
     this.renderLibrary();
   }
@@ -465,7 +466,7 @@ export class ReviewEditorController {
     this.renderStarCriteriaPanel();
     this.updateRadar();
     this.markDirty();
-    this.showToast('動画のジャンルを切り替えました。');
+    this.showToast(t('editor.toastGenreSwitched'));
   }
 
   /**

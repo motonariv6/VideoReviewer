@@ -1,3 +1,5 @@
+import { t } from './i18n.js';
+
 /**
  * Custom SVG Radar Chart component.
  * Standard mathematical formula:
@@ -27,7 +29,7 @@ export class RadarChart {
     this.container.innerHTML = '';
 
     if (!criteria || criteria.length < 3) {
-      this.renderPlaceholder('チャート表示には項目が3つ以上必要です');
+      this.renderPlaceholder(t('radar.placeholderNeed3Criteria'));
       return;
     }
 

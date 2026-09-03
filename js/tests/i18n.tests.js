@@ -10,10 +10,21 @@ import {
   LOCALES,
   STORAGE_KEY
 } from '../i18n.js';
+import { AppDatabase } from '../db.js';
+import { MemoryStorage } from '../tests.js';
+import { importPackage, importSharedReviewItem, DEFAULT_SHARED_REVIEWER_NAME } from '../review-sharing/review-share-importer.js';
+import { buildSharedReviewViewModel, getReviewerDisplayName } from '../review-sharing/review-share-view-model.js';
 
 export async function runI18nTests() {
   console.group('i18n Foundation Tests');
   const results = [];
+  const initialLocale = currentLocale;
+  let initialStorageLocale = null;
+  try {
+    initialStorageLocale = localStorage.getItem(STORAGE_KEY);
+  } catch (e) {}
+
+  try {
 
   const runTest = async (name, fn) => {
     try {
@@ -413,6 +424,292 @@ export async function runI18nTests() {
     }
   });
 
-  console.groupEnd();
+  // 17. Phase 3: Dynamic UI key translation across ja, en, zh-CN
+  await runTest('17. Phase 3: 主要な動的UIキー（toast, confirm, badge, folder, backup等）が全言語で正しく取得できること', () => {
+    const testKeys = [
+      'common.confirmUnsavedChanges',
+      'library.toastSystemFileIgnored',
+      'library.badgeMissingFile',
+      'library.badgePermRequired',
+      'library.badgeNoDir',
+      'player.confirmUnsavedBack',
+      'player.confirmUnsavedAdjacent',
+      'folder.toastScanAborting',
+      'folder.toastPermGranted',
+      'tag.confirmDelete',
+      'settings.toastMaxCriteriaExceeded',
+      'settings.confirmDeleteCriteria',
+      'backup.progressCreatingTitle',
+      'backup.toastCreated',
+      'backup.alertNoOrphanFound',
+      'share.reviewerSelf',
+      'share.reviewerUnknown',
+      'share.toastExportSuccess',
+      'poster.confirmDelete',
+      'poster.toastSetSuccess'
+    ];
+
+    ['ja', 'en', 'zh-CN'].forEach(loc => {
+      setLocale(loc);
+      testKeys.forEach(key => {
+        const val = t(key);
+        assert(typeof val === 'string' && val.length > 0, `Locale ${loc} for key '${key}' returned empty or non-string`);
+        assert(val !== key, `Locale ${loc} for key '${key}' returned the key itself (untranslated)`);
+      });
+    });
+  });
+
+  // 18. Phase 3: Parameter replacement preserves user data untouched
+  await runTest('18. Phase 3: パラメータ置換でユーザーデータ（タイトル、パス等）がそのまま保持されること', () => {
+    const sampleTitle = '【重要】サンプル動画_2026.mp4';
+    const sampleCount = 42;
+
+    setLocale('ja');
+    const jaResult = t('library.btnBulkDeleteCount', { count: sampleCount });
+    assert(jaResult.includes('42'), `ja: Expected count '42' in '${jaResult}'`);
+
+    setLocale('en');
+    const enResult = t('library.btnBulkDeleteCount', { count: sampleCount });
+    assert(enResult.includes('42'), `en: Expected count '42' in '${enResult}'`);
+
+    setLocale('zh-CN');
+    const zhResult = t('library.btnBulkDeleteCount', { count: sampleCount });
+    assert(zhResult.includes('42'), `zh-CN: Expected count '42' in '${zhResult}'`);
+
+    // Title parameter preservation
+    setLocale('ja');
+    const jaResolved = t('library.toastPendingResolved', { count: 3, title: sampleTitle });
+    assert(jaResolved.includes(sampleTitle), `ja: Expected sampleTitle in '${jaResolved}'`);
+
+    setLocale('en');
+    const enResolved = t('library.toastPendingResolved', { count: 3, title: sampleTitle });
+    assert(enResolved.includes(sampleTitle), `en: Expected sampleTitle in '${enResolved}'`);
+
+    setLocale('zh-CN');
+    const zhResolved = t('library.toastPendingResolved', { count: 3, title: sampleTitle });
+    assert(zhResolved.includes(sampleTitle), `zh-CN: Expected sampleTitle in '${zhResolved}'`);
+  });
+
+  // 19. Phase 3: Complex multi-parameter replacement (backup restore & clean)
+  await runTest('19. Phase 3: 複数パラメータ置換（バックアップ復元・クリーンアップ文言）の正確性', () => {
+    setLocale('ja');
+    const jaClean = t('backup.toastCleaned', { notes: 12, images: 5 });
+    assert(jaClean.includes('12') && jaClean.includes('5'), `ja: Multi-param failed in '${jaClean}'`);
+
+    setLocale('en');
+    const enClean = t('backup.toastCleaned', { notes: 12, images: 5 });
+    assert(enClean.includes('12') && enClean.includes('5'), `en: Multi-param failed in '${enClean}'`);
+
+    setLocale('zh-CN');
+    const zhClean = t('backup.toastCleaned', { notes: 12, images: 5 });
+    assert(zhClean.includes('12') && zhClean.includes('5'), `zh-CN: Multi-param failed in '${zhClean}'`);
+  });
+
+  // 20. Phase 3 Regression Test: imported reviewer DB persistence invariance across ja/en/zh-CN and UI fallback translation
+  await runTest('20. Phase 3 回帰テスト: imported reviewer の DB 保存値が locale に依存せず不変であり、UI表示時のみ翻訳されること', () => {
+    const videoHash = 'aaaa111111111111111111111111111111111111111111111111111111111111';
+
+    const setupDb = () => {
+      const storage = new MemoryStorage();
+      storage.setItem('vreview_schema_version', '4');
+      const db = new AppDatabase(storage);
+      db.mediaAssets = [
+        {
+          id: 'vid-test-fallback-01',
+          title: 'test-fallback.mp4',
+          fileName: 'test-fallback.mp4',
+          contentHash: videoHash,
+          hashAlgorithm: 'SHA-256',
+          hashStatus: 'completed',
+          fileSize: 5000,
+          duration: 30,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString()
+        }
+      ];
+      return db;
+    };
+
+    const dummyReview = {
+      reviewId: '11111111-2222-4333-8444-aaaaaaaaaaaa',
+      reviewerId: '11111111-2222-4333-8444-999999999999',
+      overallRating: 5,
+      comment: 'Great shared video',
+      tags: [],
+      timelineComments: []
+    };
+
+    // Step 1: Import with empty/undefined exporterDisplayName under ja, en, and zh-CN
+    const dbJa = setupDb();
+    setLocale('ja');
+    importSharedReviewItem(dbJa, {
+      videoHash,
+      review: dummyReview,
+      exporterDisplayName: '',
+      matchedVideo: dbJa.mediaAssets[0]
+    });
+
+    const dbEn = setupDb();
+    setLocale('en');
+    importSharedReviewItem(dbEn, {
+      videoHash,
+      review: dummyReview,
+      exporterDisplayName: '',
+      matchedVideo: dbEn.mediaAssets[0]
+    });
+
+    const dbZh = setupDb();
+    setLocale('zh-CN');
+    importSharedReviewItem(dbZh, {
+      videoHash,
+      review: dummyReview,
+      exporterDisplayName: '',
+      matchedVideo: dbZh.mediaAssets[0]
+    });
+
+    // Verify 1: DB persistence values MUST be identical across all locales (locale-independent)
+    const reviewerJa = dbJa.reviewers.find(r => r.sourceReviewerId === '11111111-2222-4333-8444-999999999999');
+    const reviewerEn = dbEn.reviewers.find(r => r.sourceReviewerId === '11111111-2222-4333-8444-999999999999');
+    const reviewerZh = dbZh.reviewers.find(r => r.sourceReviewerId === '11111111-2222-4333-8444-999999999999');
+
+    assert(reviewerJa !== undefined, 'reviewerJa should exist in DB');
+    assert(reviewerEn !== undefined, 'reviewerEn should exist in DB');
+    assert(reviewerZh !== undefined, 'reviewerZh should exist in DB');
+
+    // All three must store the EXACT same fallback string in DB, regardless of UI locale at import time
+    assert(reviewerJa.displayName === DEFAULT_SHARED_REVIEWER_NAME, `reviewerJa.displayName should be '${DEFAULT_SHARED_REVIEWER_NAME}', got '${reviewerJa.displayName}'`);
+    assert(reviewerEn.displayName === DEFAULT_SHARED_REVIEWER_NAME, `reviewerEn.displayName should be '${DEFAULT_SHARED_REVIEWER_NAME}', got '${reviewerEn.displayName}'`);
+    assert(reviewerZh.displayName === DEFAULT_SHARED_REVIEWER_NAME, `reviewerZh.displayName should be '${DEFAULT_SHARED_REVIEWER_NAME}', got '${reviewerZh.displayName}'`);
+    assert(reviewerJa.displayName === reviewerEn.displayName, 'DB stored reviewer name must not vary between ja and en');
+    assert(reviewerEn.displayName === reviewerZh.displayName, 'DB stored reviewer name must not vary between en and zh-CN');
+
+    // Verify 2: UI View Model MUST resolve fallback dynamically according to current UI locale
+    setLocale('ja');
+    assert(getReviewerDisplayName(reviewerEn) === '共有レビュアー', `ja UI should resolve to '共有レビュアー', got '${getReviewerDisplayName(reviewerEn)}'`);
+
+    setLocale('en');
+    assert(getReviewerDisplayName(reviewerJa) === 'Shared Reviewer', `en UI should resolve to 'Shared Reviewer', got '${getReviewerDisplayName(reviewerJa)}'`);
+
+    setLocale('zh-CN');
+    assert(getReviewerDisplayName(reviewerJa) === '共有审阅者', `zh-CN UI should resolve to '共有审阅者', got '${getReviewerDisplayName(reviewerJa)}'`);
+
+    // Verify 3: Full ViewModel integration test across ja, en, zh-CN
+    setLocale('ja');
+    const vmJa = buildSharedReviewViewModel({ reviews: dbJa.reviews, reviewers: dbJa.reviewers, db: dbJa });
+    assert(vmJa.reviewers[0].displayName === '共有レビュアー', `vmJa: Expected '共有レビュアー', got '${vmJa.reviewers[0].displayName}'`);
+
+    setLocale('en');
+    const vmEn = buildSharedReviewViewModel({ reviews: dbJa.reviews, reviewers: dbJa.reviewers, db: dbJa });
+    assert(vmEn.reviewers[0].displayName === 'Shared Reviewer', `vmEn: Expected 'Shared Reviewer', got '${vmEn.reviewers[0].displayName}'`);
+
+    setLocale('zh-CN');
+    const vmZh = buildSharedReviewViewModel({ reviews: dbJa.reviews, reviewers: dbJa.reviewers, db: dbJa });
+    assert(vmZh.reviewers[0].displayName === '共有审阅者', `vmZh: Expected '共有审阅者', got '${vmZh.reviewers[0].displayName}'`);
+
+    // Verify 4: When exporter displayName IS provided, it is stored as-is and preserved in UI
+    const dbNamed = setupDb();
+    setLocale('en');
+    importSharedReviewItem(dbNamed, {
+      videoHash,
+      review: {
+        ...dummyReview,
+        reviewId: '11111111-2222-4333-8444-bbbbbbbbbbbb',
+        reviewerId: '11111111-2222-4333-8444-888888888888'
+      },
+      exporterDisplayName: 'Alice (Reviewer)',
+      matchedVideo: dbNamed.mediaAssets[0]
+    });
+    const namedReviewer = dbNamed.reviewers.find(r => r.sourceReviewerId === '11111111-2222-4333-8444-888888888888');
+    assert(namedReviewer.displayName === 'Alice (Reviewer)', 'Custom displayName must be saved as-is');
+
+    setLocale('ja');
+    assert(getReviewerDisplayName(namedReviewer) === 'Alice (Reviewer)', 'Custom displayName must not be translated in ja');
+    setLocale('zh-CN');
+    assert(getReviewerDisplayName(namedReviewer) === 'Alice (Reviewer)', 'Custom displayName must not be translated in zh-CN');
+  });
+
+  // 21. Phase 3 回帰テスト: currentLocale および LocalStorage の完全復元（未設定／設定済みの両ケース）
+  await runTest('21. Phase 3 回帰テスト: ロケール変更テスト終了後に currentLocale および LocalStorage が完全復元されること', () => {
+    const restoreHelper = (initialLoc, initialStorage) => {
+      setLocale(initialLoc);
+      try {
+        if (initialStorage !== null) {
+          localStorage.setItem(STORAGE_KEY, initialStorage);
+        } else {
+          localStorage.removeItem(STORAGE_KEY);
+        }
+      } catch (e) {}
+    };
+
+    // Case 1: STORAGE_KEY 未設定の場合
+    {
+      const initialLoc = 'ja';
+      setLocale(initialLoc);
+      localStorage.removeItem(STORAGE_KEY);
+      assert(localStorage.getItem(STORAGE_KEY) === null, 'Precondition: storage key should be unset');
+      assert(currentLocale === 'ja', 'Precondition: currentLocale should be ja');
+
+      try {
+        setLocale('en');
+        assert(currentLocale === 'en');
+        assert(localStorage.getItem(STORAGE_KEY) === 'en');
+      } finally {
+        restoreHelper(initialLoc, null);
+      }
+
+      assert(currentLocale === 'ja', 'Case 1: currentLocale must be restored to ja');
+      assert(localStorage.getItem(STORAGE_KEY) === null, 'Case 1: STORAGE_KEY must remain unset after restore');
+    }
+
+    // Case 2: STORAGE_KEY='en' で明示設定されていた場合
+    {
+      const initialLoc = 'en';
+      setLocale(initialLoc);
+      localStorage.setItem(STORAGE_KEY, 'en');
+      assert(localStorage.getItem(STORAGE_KEY) === 'en', 'Precondition: storage key should be en');
+      assert(currentLocale === 'en', 'Precondition: currentLocale should be en');
+
+      try {
+        setLocale('zh-CN');
+        assert(currentLocale === 'zh-CN');
+        assert(localStorage.getItem(STORAGE_KEY) === 'zh-CN');
+      } finally {
+        restoreHelper(initialLoc, 'en');
+      }
+
+      assert(currentLocale === 'en', 'Case 2: currentLocale must be restored to en');
+      assert(localStorage.getItem(STORAGE_KEY) === 'en', 'Case 2: STORAGE_KEY must remain en after restore');
+    }
+
+    // Case 3: STORAGE_KEY='zh-CN' で明示設定されていた場合
+    {
+      const initialLoc = 'zh-CN';
+      setLocale(initialLoc);
+      localStorage.setItem(STORAGE_KEY, 'zh-CN');
+
+      try {
+        setLocale('ja');
+        assert(currentLocale === 'ja');
+        assert(localStorage.getItem(STORAGE_KEY) === 'ja');
+      } finally {
+        restoreHelper(initialLoc, 'zh-CN');
+      }
+
+      assert(currentLocale === 'zh-CN', 'Case 3: currentLocale must be restored to zh-CN');
+      assert(localStorage.getItem(STORAGE_KEY) === 'zh-CN', 'Case 3: STORAGE_KEY must remain zh-CN after restore');
+    }
+  });
+
+  } finally {
+    setLocale(initialLocale);
+    try {
+      if (initialStorageLocale !== null) {
+        localStorage.setItem(STORAGE_KEY, initialStorageLocale);
+      } else {
+        localStorage.removeItem(STORAGE_KEY);
+      }
+    } catch (e) {}
+    console.groupEnd();
+  }
   return results;
 }

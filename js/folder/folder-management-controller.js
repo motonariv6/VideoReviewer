@@ -1,5 +1,7 @@
 // folder-management-controller.js - Business logic for folder management
 
+import { t } from '../i18n.js';
+
 let scanAbortController = null;
 let scanAbortState = false;
 let isScanning = false;
@@ -53,7 +55,7 @@ export async function handleFolderSelect({
   startFolderScanningFn
 }) {
   if (!window.showDirectoryPicker) {
-    showToast('このブラウザはフォルダ選択に対応していません。', 'error');
+    showToast(t('folder.toastBrowserUnsupported'), 'error');
     return;
   }
 
@@ -102,7 +104,7 @@ export async function handleFolderSelect({
       await db.deleteDirectoryHandle(tempKey);
       handleSavedToTemp = false;
 
-      showToast('フォルダを再接続しました。');
+      showToast(t('folder.toastReconnected'));
       if (!window.__TEST_ENV__) {
         renderFolderSettingsPanel();
         renderLibrary();
@@ -114,7 +116,7 @@ export async function handleFolderSelect({
       // Phase 4: Overwrite confirmation
       const oldSourceIds = db.getDirectorySources().map(s => s.id);
       if (oldSourceIds.length > 0) {
-        if (!confirm('すでに接続されているフォルダ設定があります。上書きして新しいフォルダを選択しますか？')) {
+        if (!confirm(t('folder.confirmOverwriteFolder'))) {
           // Clean temp handle and return
           await db.deleteDirectoryHandle(tempKey);
           return;
@@ -145,7 +147,7 @@ export async function handleFolderSelect({
         }
       }
 
-      showToast(`フォルダ「${handle.name}」を接続しました。`);
+      showToast(t('folder.toastConnected', { name: handle.name }));
       if (!window.__TEST_ENV__) {
         renderFolderSettingsPanel();
         // Trigger initial scan
@@ -166,7 +168,7 @@ export async function handleFolderSelect({
       try { await db.deleteDirectoryHandle(tempKey); } catch (e) {}
     }
 
-    showToast(`フォルダ接続エラー: ${err.message}`, 'error');
+    showToast(t('folder.toastConnectError', { error: err.message }), 'error');
   }
 }
 
@@ -190,7 +192,7 @@ export async function handleFolderRequestPermission({
     const handle = await db.getDirectoryHandle(source.handleKey);
     if (!handle) {
       await db.updateDirectorySource(source.id, { handleKey: '', permissionStatus: 'disconnected' });
-      showToast('フォルダの参照データが見つかりません。フォルダを再接続してください。', 'error');
+      showToast(t('folder.toastRefNotFound'), 'error');
       if (!window.__TEST_ENV__) {
         renderFolderSettingsPanel();
       }
@@ -203,13 +205,13 @@ export async function handleFolderRequestPermission({
     // Update and persist video availability statuses via public DB method
     await db.updateDirectoryVideosAvailability(source.id, status === 'granted' ? 'available' : 'permission-required');
 
-    showToast(status === 'granted' ? 'アクセス権限が許可されました。' : 'アクセス権限が拒否されました。');
+    showToast(status === 'granted' ? t('folder.toastPermGranted') : t('folder.toastPermDenied'));
     if (!window.__TEST_ENV__) {
       renderFolderSettingsPanel();
       renderLibrary();
     }
   } catch (err) {
-    showToast(`権限要求エラー: ${err.message}`, 'error');
+    showToast(t('folder.toastPermError', { error: err.message }), 'error');
   }
 }
 
@@ -224,12 +226,12 @@ export async function handleFolderRescan({
   try {
     const handle = await db.getDirectoryHandle(source.handleKey);
     if (!handle) {
-      showToast('フォルダが見つかりません。再接続してください。', 'error');
+      showToast(t('folder.toastNotFound'), 'error');
       return;
     }
     await startFolderScanningFn(source, handle);
   } catch (err) {
-    showToast(`スキャン起動エラー: ${err.message}`, 'error');
+    showToast(t('folder.toastScanLaunchError', { error: err.message }), 'error');
   }
 }
 
@@ -278,7 +280,7 @@ export async function startFolderScanning({
     }
 
     if (scanResult.aborted || scanAbortState) {
-      showToast('フォルダスキャンが中止されました。', 'error');
+      showToast(t('folder.toastScanAborted'), 'error');
       scanAbortState = false;
       isScanning = false;
       return;
@@ -312,7 +314,15 @@ export async function startFolderScanning({
     }
     const pendingValidationCount = eligibleCount;
 
-    alert(`スキャン完了\n\n新規：${summary.added}本\n更新：${summary.updated}本\n変更なし：${summary.unchanged}本\n見つからない：${summary.missing}本\n判定保留：${summary.pending}本\nエラー：${summary.error}件\nバックグラウンド検証待ち：${pendingValidationCount}件`);
+    alert(t('folder.alertScanComplete', {
+      added: summary.added,
+      updated: summary.updated,
+      unchanged: summary.unchanged,
+      missing: summary.missing,
+      pending: summary.pending,
+      error: summary.error,
+      pendingValidation: pendingValidationCount
+    }));
 
     if (!window.__TEST_ENV__) {
       renderFolderSettingsPanel();
@@ -324,9 +334,9 @@ export async function startFolderScanning({
       updateScanProgressUI(0, 0, false);
     }
     if (err.name === 'AbortError' || scanAbortState) {
-      showToast('フォルダスキャンが中止されました。', 'error');
+      showToast(t('folder.toastScanAborted'), 'error');
     } else {
-      showToast(`スキャンエラー: ${err.message}`, 'error');
+      showToast(t('folder.toastScanError', { error: err.message }), 'error');
     }
   } finally {
     isScanning = false;
@@ -355,7 +365,7 @@ export async function handleFolderDisconnect({
   if (sources.length === 0) return;
 
   const source = sources[0];
-  if (!confirm(`動画フォルダ「${source.name}」との接続を解除します。\n登録済みの評価・タグ・コメントは削除されません。`)) {
+  if (!confirm(t('folder.confirmDisconnectFolder', { name: source.name }))) {
     return;
   }
 
@@ -371,12 +381,12 @@ export async function handleFolderDisconnect({
     updateBackgroundHashingProgress(true);
 
     await db.deleteDirectorySource(source.id);
-    showToast('動画フォルダの接続を解除しました。');
+    showToast(t('folder.toastDisconnected'));
     if (!window.__TEST_ENV__) {
       renderFolderSettingsPanel();
       renderLibrary();
     }
   } catch (err) {
-    showToast(`接続解除エラー: ${err.message}`, 'error');
+    showToast(t('folder.toastDisconnectError', { error: err.message }), 'error');
   }
 }

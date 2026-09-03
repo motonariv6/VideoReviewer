@@ -1,4 +1,5 @@
 import { bgHashState } from './hash-verification-controller.js';
+import { t } from '../i18n.js';
 
 let bgHashCloseTimeout = null;
 let bgHashLastUpdateTime = 0;
@@ -249,14 +250,14 @@ export function updateBackgroundHashingUI(current, total) {
   const fillEl = progressContainer.querySelector('.bg-hash-progress-fill');
 
   if (bgHashState.panelMinimized) {
-    titleEl.textContent = `ハッシュ検証 ${current} / ${total}`;
+    titleEl.textContent = t('hashing.titleProgress', { current, total });
     minBtn.textContent = '＋';
     fileEl.style.display = 'none';
     progressContainer.style.display = 'none';
     indicator.style.gap = '0px';
     indicator.style.padding = '8px 12px';
   } else {
-    let headerText = `フルハッシュ検証中 ${current} / ${total}`;
+    let headerText = t('hashing.headerProgress', { current, total });
     const extraStats = [];
     let failedCount = 0;
     let skippedCount = 0;
@@ -265,8 +266,8 @@ export function updateBackgroundHashingUI(current, total) {
       else if (bgHashState.skippedKeys.has(id)) skippedCount++;
     }
 
-    if (failedCount > 0) extraStats.push(`失敗: ${failedCount}件`);
-    if (skippedCount > 0) extraStats.push(`スキップ: ${skippedCount}件`);
+    if (failedCount > 0) extraStats.push(t('hashing.statFailed', { count: failedCount }));
+    if (skippedCount > 0) extraStats.push(t('hashing.statSkipped', { count: skippedCount }));
     if (extraStats.length > 0) headerText += ` (${extraStats.join(', ')})`;
 
     titleEl.textContent = headerText;
@@ -284,7 +285,7 @@ export function updateBackgroundHashingUI(current, total) {
 
     if (bgHashState.activeId) {
       const pct = bgHashState.activePercent;
-      fileEl.textContent = `${clipName(bgHashState.activeName)} (${pct === null ? '検証中' : pct + '%'})`;
+      fileEl.textContent = `${clipName(bgHashState.activeName)} (${pct === null ? t('hashing.verifyingText') : pct + '%'})`;
       fileEl.style.display = '';
       progressContainer.style.display = '';
 

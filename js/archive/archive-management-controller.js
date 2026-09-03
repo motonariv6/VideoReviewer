@@ -1,5 +1,7 @@
 // archive-management-controller.js - Business logic for video archiving, permanent deletion, and location deletion
 
+import { t } from '../i18n.js';
+
 export async function archiveVideoAction({
   db,
   mediaAssetId,
@@ -16,7 +18,7 @@ export async function archiveVideoAction({
   if (!asset) return;
 
   const displayTitle = asset.displayTitle || asset.title;
-  const confirmMsg = `一覧からこの動画を削除します。評価データは保持され、再スキャン時に復元可能です。実際の動画ファイルは削除されません。\n\n動画: 「${displayTitle}」\n本当に削除しますか？`;
+  const confirmMsg = t('archive.confirmArchiveDelete', { title: displayTitle });
 
   if (confirm(confirmMsg)) {
     try {
@@ -30,7 +32,7 @@ export async function archiveVideoAction({
       const success = await db.archiveVideo(mediaAssetId);
       if (success) {
         videoFilesMap.delete(mediaAssetId);
-        showToast('動画をアーカイブ削除しました。');
+        showToast(t('archive.toastArchived'));
 
         if (onLocationsRemoved) {
           onLocationsRemoved(locIds);
@@ -43,10 +45,10 @@ export async function archiveVideoAction({
           renderLibrary();
         }
       } else {
-        showToast('動画のアーカイブ削除に失敗しました。', 'error');
+        showToast(t('archive.toastArchiveFailed'), 'error');
       }
     } catch (err) {
-      showToast(`削除エラー: ${err.message}`, 'error');
+      showToast(t('archive.toastDeleteError', { error: err.message }), 'error');
     }
   }
 }
@@ -67,7 +69,7 @@ export async function deleteVideoCascadeAction({
   if (!asset) return;
 
   const displayTitle = asset.displayTitle || asset.title;
-  const confirmMsg = `完全に削除します。\n評価・タグ・コメント・タイムラインメモも削除され、再スキャンしても復元できません。実際の動画ファイルは削除されません。\n\n動画: 「${displayTitle}」\n本当に完全に削除しますか？`;
+  const confirmMsg = t('archive.confirmPermanentDelete', { title: displayTitle });
 
   if (confirm(confirmMsg)) {
     try {
@@ -81,7 +83,7 @@ export async function deleteVideoCascadeAction({
       const success = await db.deleteVideoCascade(mediaAssetId);
       if (success) {
         videoFilesMap.delete(mediaAssetId);
-        showToast('データベースから完全に削除しました。');
+        showToast(t('archive.toastPermanentlyDeleted'));
 
         if (onLocationsRemoved) {
           onLocationsRemoved(locIds);
@@ -94,10 +96,10 @@ export async function deleteVideoCascadeAction({
           renderLibrary();
         }
       } else {
-        showToast('動画の完全削除に失敗しました。', 'error');
+        showToast(t('archive.toastPermanentDeleteFailed'), 'error');
       }
     } catch (err) {
-      showToast(`完全削除エラー: ${err.message}`, 'error');
+      showToast(t('archive.toastPermanentDeleteError', { error: err.message }), 'error');
     }
   }
 }
@@ -113,13 +115,13 @@ export async function deleteFileLocationAction({
   onLocationsRemoved,
   confirm
 }) {
-  const confirmMsg = `このロケーション登録を削除しますか？\n他のロケーション、アセット、評価データは削除しないでおきます。\n\nパス: ${relativePath}`;
+  const confirmMsg = t('archive.confirmRemoveLocation', { path: relativePath });
 
   if (confirm(confirmMsg)) {
     try {
       const success = await db.deleteFileLocation(locId);
       if (success) {
-        showToast('ロケーション登録を削除しました。');
+        showToast(t('archive.toastLocationRemoved'));
 
         if (onLocationsRemoved) {
           onLocationsRemoved([locId]);
@@ -133,7 +135,7 @@ export async function deleteFileLocationAction({
         }
       }
     } catch (err) {
-      showToast(`削除エラー: ${err.message}`, 'error');
+      showToast(t('archive.toastDeleteError', { error: err.message }), 'error');
     }
   }
 }
@@ -153,7 +155,7 @@ export async function handleBulkDeleteAction({
   const filteredVideos = getFilteredVideosList();
   if (filteredVideos.length === 0) return;
 
-  const confirmMsg = `表示中のリンク切れ・エラー動画 ${filteredVideos.length}本 を一括削除します。\n評価、タグ、コメント、タイムラインメモもすべて削除されます。実際の動画ファイルは削除されません。\n\n本当によろしいですか？`;
+  const confirmMsg = t('archive.confirmBulkDelete', { count: filteredVideos.length });
   if (!confirm(confirmMsg)) return;
 
   let successCount = 0;
@@ -183,9 +185,9 @@ export async function handleBulkDeleteAction({
     }
   }
 
-  showToast(`${successCount}本の動画を一覧から削除しました。実ファイルは削除されていません。`);
+  showToast(t('archive.toastBulkDeleted', { count: successCount }));
   if (failCount > 0) {
-    showToast(`${failCount}本の動画の削除に失敗しました。`, 'error');
+    showToast(t('archive.toastBulkDeleteFailed', { count: failCount }), 'error');
   }
 
   if (allDeletedLocIds.length > 0 && onLocationsRemoved) {

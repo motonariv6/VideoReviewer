@@ -1,5 +1,23 @@
 // review-share-view-model.js - Converts database reviews to structured view model using pure functions
 import { aggregateOverallRating, aggregateTags, aggregateTimelineComments } from './review-share-model.js';
+import { DEFAULT_SHARED_REVIEWER_NAME } from './review-share-importer.js';
+import { t } from '../i18n.js';
+
+/**
+ * Resolves user-facing reviewer display name with i18n support.
+ * Local owner -> share.reviewerSelf
+ * Default/Missing shared reviewer -> share.sharedReviewerDefault
+ * Custom reviewer name -> preserved as-is (user data)
+ * Missing reviewer -> share.reviewerUnknown
+ */
+export function getReviewerDisplayName(reviewer) {
+  if (!reviewer) return t('share.reviewerUnknown');
+  if (reviewer.isLocal) return t('share.reviewerSelf');
+  if (!reviewer.displayName || reviewer.displayName === DEFAULT_SHARED_REVIEWER_NAME) {
+    return t('share.sharedReviewerDefault');
+  }
+  return reviewer.displayName;
+}
 
 /**
  * Builds the View Model for Shared Reviews of a specific video asset.
@@ -20,7 +38,7 @@ export function buildSharedReviewViewModel({ reviews, reviewers, db }) {
   const pkgReviews = reviews.map(r => {
     // Get tags for this review
     const dbTags = db.getTagsForReview(r.id) || [];
-    const tags = dbTags.map(t => ({ tag: t.name }));
+    const tags = dbTags.map(tItem => ({ tag: tItem.name }));
 
     // Get timeline notes for this review
     const dbTimeline = db.getTimelineNotesForReview(r.id) || [];
@@ -49,24 +67,24 @@ export function buildSharedReviewViewModel({ reviews, reviewers, db }) {
     const reviewer = reviewers.find(rev => rev.id === r.reviewerId);
     return {
       reviewerId: r.reviewerId,
-      displayName: reviewer ? (reviewer.isLocal ? '自分' : reviewer.displayName) : '不明なレビュアー',
+      displayName: getReviewerDisplayName(reviewer),
       isLocal: reviewer ? !!reviewer.isLocal : false,
       overallRating: typeof r.overallScore === 'number' ? r.overallScore : null
     };
   });
 
   // Map tags list in VM (including resolver for display names of reviewers who added the tag)
-  const vmTags = tagsAggregate.map(t => {
-    const sources = t.sources.map(src => {
+  const vmTags = tagsAggregate.map(tItem => {
+    const sources = tItem.sources.map(src => {
       const reviewer = reviewers.find(rev => rev.id === src.reviewerId);
       return {
         reviewerId: src.reviewerId,
-        reviewerName: reviewer ? (reviewer.isLocal ? '自分' : reviewer.displayName) : '不明なレビュアー',
+        reviewerName: getReviewerDisplayName(reviewer),
         isLocal: reviewer ? !!reviewer.isLocal : false
       };
     });
     return {
-      tag: t.tag,
+      tag: tItem.tag,
       sources
     };
   });
@@ -79,7 +97,7 @@ export function buildSharedReviewViewModel({ reviews, reviewers, db }) {
       time: c.time,
       comment: c.comment,
       reviewerId: c.reviewerId || c.sourceReviewerId,
-      reviewerName: reviewer ? (reviewer.isLocal ? '自分' : reviewer.displayName) : '不明なレビュアー',
+      reviewerName: getReviewerDisplayName(reviewer),
       isLocal: reviewer ? !!reviewer.isLocal : false
     };
   });

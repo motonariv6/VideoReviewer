@@ -1,5 +1,6 @@
 // review-editor-ui.js - View and rendering logic for Video Review Editor workspace
 import { renderSharedReviewsUI } from '../review-sharing/review-share-aggregate-ui.js';
+import { t } from '../i18n.js';
 
 export class ReviewEditorUI {
   /**
@@ -16,7 +17,7 @@ export class ReviewEditorUI {
     this.els.btnBack.classList.remove('hidden');
 
     this.els.editorTitle.textContent = video.displayTitle || video.title;
-    this.els.infoFileName.textContent = video.fileName || 'フォルダ内動画';
+    this.els.infoFileName.textContent = video.fileName || t('editor.fileNameFallback');
     this.els.infoFileSize.textContent = video.fileSize ? (video.fileSize / 1024 / 1024).toFixed(1) + ' MB' : '-';
     this.els.infoDuration.textContent = formattedDuration;
 
@@ -36,7 +37,7 @@ export class ReviewEditorUI {
     allGenres.forEach(g => {
       const opt = document.createElement('option');
       opt.value = g.id;
-      opt.textContent = g.isActive ? g.name : `${g.name} (無効)`;
+      opt.textContent = g.isActive ? g.name : t('settings.disabledGenreLabel', { name: g.name });
       this.els.videoGenreSelect.appendChild(opt);
     });
     this.els.videoGenreSelect.value = currentGenreId || 'genre-default';
@@ -71,7 +72,7 @@ export class ReviewEditorUI {
       p.style.color = 'var(--color-text-dim)';
       p.style.textAlign = 'center';
       p.style.padding = '12px';
-      p.textContent = '有効な評価項目が登録されていません。「設定」から項目を追加してください。';
+      p.textContent = t('settings.noActiveCriteria');
       this.els.criteriaPanel.appendChild(p);
       return;
     }
@@ -85,7 +86,7 @@ export class ReviewEditorUI {
       const labelSpan = document.createElement('span');
       labelSpan.className = 'star-rating-label';
       if (crit.isActive === false) {
-        labelSpan.textContent = crit.name + ' (非表示)';
+        labelSpan.textContent = t('settings.hiddenCriteriaLabel', { name: crit.name });
         labelSpan.style.color = 'var(--color-text-muted)';
       } else {
         labelSpan.textContent = crit.name;
@@ -116,8 +117,8 @@ export class ReviewEditorUI {
 
       const clearBtn = document.createElement('button');
       clearBtn.className = 'star-clear-btn';
-      clearBtn.title = '評価をクリア';
-      clearBtn.textContent = 'クリア';
+      clearBtn.title = t('review.tooltipClearRating');
+      clearBtn.textContent = t('common.clear');
       clearBtn.addEventListener('click', () => {
         onStarClear(crit.id);
       });
@@ -156,23 +157,23 @@ export class ReviewEditorUI {
       const span = document.createElement('span');
       span.style.fontSize = '0.75rem';
       span.style.color = 'var(--color-text-dim)';
-      span.textContent = 'タグ登録がありません';
+      span.textContent = t('review.noTags');
       this.els.tagsChipsList.appendChild(span);
     } else {
-      tags.forEach(t => {
+      tags.forEach(tItem => {
         const chip = document.createElement('span');
         chip.className = 'tag-chip';
 
         const label = document.createElement('span');
-        label.textContent = t.name;
+        label.textContent = tItem.name;
         chip.appendChild(label);
 
         const removeBtn = document.createElement('button');
         removeBtn.className = 'tag-chip-remove';
-        removeBtn.title = 'タグを削除';
+        removeBtn.title = t('tag.tooltipRemoveTag');
         removeBtn.innerHTML = `<svg fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clip-rule="evenodd" /></svg>`;
         removeBtn.addEventListener('click', () => {
-          onRemoveClick(t.id);
+          onRemoveClick(tItem.id);
         });
         chip.appendChild(removeBtn);
 
@@ -196,12 +197,12 @@ export class ReviewEditorUI {
     }
 
     this.els.tagAutocomplete.innerHTML = '';
-    matches.forEach(t => {
+    matches.forEach(tItem => {
       const item = document.createElement('div');
       item.className = 'autocomplete-item';
-      item.textContent = t.name;
+      item.textContent = tItem.name;
       item.addEventListener('click', () => {
-        onMatchClick(t.name);
+        onMatchClick(tItem.name);
       });
       this.els.tagAutocomplete.appendChild(item);
     });
@@ -225,7 +226,7 @@ export class ReviewEditorUI {
       p.style.color = 'var(--color-text-dim)';
       p.style.textAlign = 'center';
       p.style.padding = '20px';
-      p.textContent = 'タイムライン引用メモはまだありません。';
+      p.textContent = t('timeline.noNotes');
       this.els.timelineNotesList.appendChild(p);
       return;
     }
@@ -260,7 +261,7 @@ export class ReviewEditorUI {
 
       const tsBtn = document.createElement('button');
       tsBtn.className = 'timeline-note-timestamp';
-      tsBtn.title = 'この再生位置へ移動';
+      tsBtn.title = t('timeline.tooltipJumpToTime');
       tsBtn.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" style="width:12px;height:12px" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" /></svg>`;
       const tsLabelText = document.createTextNode(` ${note.timestampLabel}`);
       tsBtn.appendChild(tsLabelText);
@@ -274,7 +275,7 @@ export class ReviewEditorUI {
 
       const delBtn = document.createElement('button');
       delBtn.className = 'timeline-note-action-btn delete';
-      delBtn.title = 'メモを削除';
+      delBtn.title = t('timeline.tooltipDeleteNote');
       delBtn.innerHTML = `<svg fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>`;
       delBtn.addEventListener('click', () => {
         onDeleteClick(note.id);
@@ -290,7 +291,7 @@ export class ReviewEditorUI {
         const italicSpan = document.createElement('span');
         italicSpan.style.color = 'var(--color-text-dim)';
         italicSpan.style.fontStyle = 'italic';
-        italicSpan.textContent = 'コメント未入力';
+        italicSpan.textContent = t('review.noOverallComment');
         commentP.appendChild(italicSpan);
       }
 
@@ -323,14 +324,14 @@ export class ReviewEditorUI {
       pathSpan.style.wordBreak = 'break-all';
       pathSpan.textContent = `📁 ${loc.folderName} / ${loc.relativePath}`;
       if (loc.verificationStatus === 'provisional') {
-        pathSpan.textContent += ' (ハッシュ検証前)';
+        pathSpan.textContent += t('editor.hashUnverified');
         pathSpan.style.color = 'var(--color-warning, #f59e0b)';
       }
       row.appendChild(pathSpan);
 
       const delBtn = document.createElement('button');
       delBtn.className = 'btn btn-icon';
-      delBtn.title = 'ロケーション登録を削除 (評価データは残ります)';
+      delBtn.title = t('editor.tooltipRemoveLocation');
       delBtn.style.color = 'var(--color-text-muted)';
       delBtn.style.cursor = 'pointer';
       delBtn.style.padding = '2px';
@@ -366,11 +367,11 @@ export class ReviewEditorUI {
   }
 
   showAutosaveSuccess(isDirty, currentView) {
-    this.els.autosaveIndicator.textContent = '自動保存しました';
+    this.els.autosaveIndicator.textContent = t('editor.autosaveSaved');
     this.els.autosaveIndicator.style.color = 'var(--color-success)';
     setTimeout(() => {
       if (!isDirty && currentView === 'editor') {
-        this.els.autosaveIndicator.textContent = '自動保存: 有効';
+        this.els.autosaveIndicator.textContent = t('editor.autosaveEnabled');
         this.els.autosaveIndicator.style.color = 'var(--color-text-dim)';
       }
     }, 1500);

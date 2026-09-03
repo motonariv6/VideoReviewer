@@ -1,5 +1,7 @@
 // folder-settings-ui.js - Pure DOM rendering logic for folder management
 
+import { t, currentLocale } from '../i18n.js';
+
 export function renderFolderSettingsUI({
   source,
   dirVideoCount,
@@ -7,10 +9,10 @@ export function renderFolderSettingsUI({
 }) {
   if (!source) {
     els.folderNameVal.textContent = '-';
-    els.folderStatusVal.textContent = '未接続';
+    els.folderStatusVal.textContent = t('folder.statusDisconnected');
     els.folderStatusVal.style.color = 'var(--color-text-muted)';
     els.folderPermissionVal.textContent = '-';
-    els.folderVideoCountVal.textContent = '0本';
+    els.folderVideoCountVal.textContent = t('folder.videoCountFormat', { count: 0 });
     els.folderLastScanVal.textContent = '-';
 
     els.btnFolderRescan.classList.add('hidden');
@@ -25,35 +27,35 @@ export function renderFolderSettingsUI({
 
   // Status check
   const isDisconnected = !source.handleKey || source.permissionStatus === 'disconnected';
-  els.folderStatusVal.textContent = isDisconnected ? '再接続が必要' : '接続済み';
+  els.folderStatusVal.textContent = isDisconnected ? t('folder.statusReconnecting') : t('folder.statusConnected');
   els.folderStatusVal.style.color = isDisconnected ? 'var(--color-error)' : 'var(--color-success)';
 
   // Permission status
   let permColor = 'var(--color-text-dim)';
-  let permText = '確認中';
+  let permText = t('folder.statusChecking');
 
   if (isDisconnected) {
-    permText = '再接続が必要';
+    permText = t('folder.statusReconnecting');
     permColor = 'var(--color-error)';
-    els.btnFolderRequestPerm.textContent = 'フォルダを再接続';
+    els.btnFolderRequestPerm.textContent = t('folder.btnReconnectFolder');
     els.btnFolderRequestPerm.classList.remove('hidden');
     els.btnFolderRescan.classList.add('hidden');
   } else {
-    els.btnFolderRequestPerm.textContent = 'アクセスを許可';
+    els.btnFolderRequestPerm.textContent = t('folder.btnGrantAccess');
     if (source.permissionStatus === 'granted') {
-      permText = '許可済み';
+      permText = t('folder.statusPermGranted');
       permColor = 'var(--color-success)';
 
       els.btnFolderRequestPerm.classList.add('hidden');
       els.btnFolderRescan.classList.remove('hidden');
     } else if (source.permissionStatus === 'prompt') {
-      permText = '許可が必要';
+      permText = t('folder.statusPermRequired');
       permColor = 'var(--color-warning)';
 
       els.btnFolderRequestPerm.classList.remove('hidden');
       els.btnFolderRescan.classList.add('hidden');
     } else {
-      permText = '拒否';
+      permText = t('folder.statusPermDenied');
       permColor = 'var(--color-error)';
 
       els.btnFolderRequestPerm.classList.remove('hidden');
@@ -65,12 +67,12 @@ export function renderFolderSettingsUI({
   els.folderPermissionVal.style.color = permColor;
 
   // Registered videos count
-  els.folderVideoCountVal.textContent = `${dirVideoCount}本`;
+  els.folderVideoCountVal.textContent = t('folder.videoCountFormat', { count: dirVideoCount });
 
   // Last scan
   els.folderLastScanVal.textContent = source.lastScannedAt
-    ? new Date(source.lastScannedAt).toLocaleString('ja-JP')
-    : '未スキャン';
+    ? new Date(source.lastScannedAt).toLocaleString(currentLocale === 'ja' ? 'ja-JP' : (currentLocale === 'zh-CN' ? 'zh-CN' : 'en-US'))
+    : t('folder.neverScanned');
 
   // Checkbox state
   els.folderRecursiveCheckbox.checked = source.includeSubdirectories;

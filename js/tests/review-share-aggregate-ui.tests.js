@@ -5,6 +5,7 @@ import { buildSharedReviewViewModel } from '../review-sharing/review-share-view-
 import { renderSharedReviewsUI } from '../review-sharing/review-share-aggregate-ui.js';
 import { ReviewEditorController } from '../review/review-editor-controller.js';
 import { ReviewEditorUI } from '../review/review-editor-ui.js';
+import { setLocale, currentLocale, t } from '../i18n.js';
 
 export async function runReviewShareAggregateUITests() {
   const results = [];
@@ -263,28 +264,45 @@ export async function runReviewShareAggregateUITests() {
   // ==========================================
 
   await runTest('7. local reviewer表示の確認', async () => {
-    const db = createTestDb({
-      video_reviews: [
-        { id: 'rev-local', mediaAssetId: 'vid-11111111', reviewerId: 'reviewer-owner1234', origin: 'local', overallScore: 4 }
-      ]
-    });
-    await db.initAsync();
+    const origLocale = currentLocale;
+    let origStorage = null;
+    try {
+      origStorage = localStorage.getItem('video_reviewer_locale');
+    } catch (e) {}
+    try {
+      setLocale('ja');
+      const db = createTestDb({
+        video_reviews: [
+          { id: 'rev-local', mediaAssetId: 'vid-11111111', reviewerId: 'reviewer-owner1234', origin: 'local', overallScore: 4 }
+        ]
+      });
+      await db.initAsync();
 
-    const vm = buildSharedReviewViewModel({
-      reviews: db.getReviewsForVideo('vid-11111111'),
-      reviewers: db.getReviewers(),
-      db
-    });
+      const vm = buildSharedReviewViewModel({
+        reviews: db.getReviewsForVideo('vid-11111111'),
+        reviewers: db.getReviewers(),
+        db
+      });
 
-    const { els, root } = createMockEls();
-    renderSharedReviewsUI(els, vm);
+      const { els, root } = createMockEls();
+      renderSharedReviewsUI(els, vm);
 
-    const rows = els.sharedReviewersList.querySelectorAll('div');
-    assert(rows.length === 1);
-    assert(rows[0].textContent.includes('自分'));
-    assert(rows[0].textContent.includes('B (4)'));
+      const rows = els.sharedReviewersList.querySelectorAll('div');
+      assert(rows.length === 1);
+      assert(rows[0].textContent.includes(t('share.reviewerSelf')));
+      assert(rows[0].textContent.includes('B (4)'));
 
-    root.remove();
+      root.remove();
+    } finally {
+      setLocale(origLocale);
+      try {
+        if (origStorage !== null) {
+          localStorage.setItem('video_reviewer_locale', origStorage);
+        } else {
+          localStorage.removeItem('video_reviewer_locale');
+        }
+      } catch (e) {}
+    }
   });
 
   await runTest('8. imported reviewer表示の確認', async () => {
@@ -366,33 +384,50 @@ export async function runReviewShareAggregateUITests() {
   });
 
   await runTest('11. local/imported判定とバッジの視覚区別', async () => {
-    const db = createTestDb({
-      reviewers: [
-        { id: 'reviewer-owner1234', displayName: '自分', isLocal: true },
-        { id: 'reviewer-remote1', displayName: '他ユーザーA', isLocal: false }
-      ],
-      video_reviews: [
-        { id: 'rev-local', mediaAssetId: 'vid-11111111', reviewerId: 'reviewer-owner1234', origin: 'local', overallScore: 4 },
-        { id: 'rev-remote1', mediaAssetId: 'vid-11111111', reviewerId: 'reviewer-remote1', origin: 'imported', overallScore: 5 }
-      ]
-    });
-    await db.initAsync();
+    const origLocale = currentLocale;
+    let origStorage = null;
+    try {
+      origStorage = localStorage.getItem('video_reviewer_locale');
+    } catch (e) {}
+    try {
+      setLocale('ja');
+      const db = createTestDb({
+        reviewers: [
+          { id: 'reviewer-owner1234', displayName: '自分', isLocal: true },
+          { id: 'reviewer-remote1', displayName: '他ユーザーA', isLocal: false }
+        ],
+        video_reviews: [
+          { id: 'rev-local', mediaAssetId: 'vid-11111111', reviewerId: 'reviewer-owner1234', origin: 'local', overallScore: 4 },
+          { id: 'rev-remote1', mediaAssetId: 'vid-11111111', reviewerId: 'reviewer-remote1', origin: 'imported', overallScore: 5 }
+        ]
+      });
+      await db.initAsync();
 
-    const vm = buildSharedReviewViewModel({
-      reviews: db.getReviewsForVideo('vid-11111111'),
-      reviewers: db.getReviewers(),
-      db
-    });
+      const vm = buildSharedReviewViewModel({
+        reviews: db.getReviewsForVideo('vid-11111111'),
+        reviewers: db.getReviewers(),
+        db
+      });
 
-    const { els, root } = createMockEls();
-    renderSharedReviewsUI(els, vm);
+      const { els, root } = createMockEls();
+      renderSharedReviewsUI(els, vm);
 
-    const badges = els.sharedReviewersList.querySelectorAll('.reviewer-badge');
-    assert(badges.length === 2);
-    assert(badges[0].textContent === '自分');
-    assert(badges[1].textContent === 'Imported');
+      const badges = els.sharedReviewersList.querySelectorAll('.reviewer-badge');
+      assert(badges.length === 2);
+      assert(badges[0].textContent === t('share.reviewerSelfBadge'));
+      assert(badges[1].textContent === 'Imported');
 
-    root.remove();
+      root.remove();
+    } finally {
+      setLocale(origLocale);
+      try {
+        if (origStorage !== null) {
+          localStorage.setItem('video_reviewer_locale', origStorage);
+        } else {
+          localStorage.removeItem('video_reviewer_locale');
+        }
+      } catch (e) {}
+    }
   });
 
   // ==========================================
@@ -466,40 +501,57 @@ export async function runReviewShareAggregateUITests() {
   });
 
   await runTest('14. tag reviewer attributionの確認', async () => {
-    const db = createTestDb({
-      reviewers: [
-        { id: 'reviewer-owner1234', displayName: '自分', isLocal: true },
-        { id: 'reviewer-remote1', displayName: '他ユーザーA', isLocal: false }
-      ],
-      video_reviews: [
-        { id: 'rev-local', mediaAssetId: 'vid-11111111', reviewerId: 'reviewer-owner1234', origin: 'local', overallScore: 4 },
-        { id: 'rev-remote1', mediaAssetId: 'vid-11111111', reviewerId: 'reviewer-remote1', origin: 'imported', overallScore: 5 }
-      ],
-      tags: [
-        { id: 'tag-11111111', name: '旅行' }
-      ],
-      review_tags: [
-        { id: 'rt-1', videoReviewId: 'rev-local', tagId: 'tag-11111111' },
-        { id: 'rt-2', videoReviewId: 'rev-remote1', tagId: 'tag-11111111' }
-      ]
-    });
-    await db.initAsync();
+    const origLocale = currentLocale;
+    let origStorage = null;
+    try {
+      origStorage = localStorage.getItem('video_reviewer_locale');
+    } catch (e) {}
+    try {
+      setLocale('ja');
+      const db = createTestDb({
+        reviewers: [
+          { id: 'reviewer-owner1234', displayName: '自分', isLocal: true },
+          { id: 'reviewer-remote1', displayName: '他ユーザーA', isLocal: false }
+        ],
+        video_reviews: [
+          { id: 'rev-local', mediaAssetId: 'vid-11111111', reviewerId: 'reviewer-owner1234', origin: 'local', overallScore: 4 },
+          { id: 'rev-remote1', mediaAssetId: 'vid-11111111', reviewerId: 'reviewer-remote1', origin: 'imported', overallScore: 5 }
+        ],
+        tags: [
+          { id: 'tag-11111111', name: '旅行' }
+        ],
+        review_tags: [
+          { id: 'rt-1', videoReviewId: 'rev-local', tagId: 'tag-11111111' },
+          { id: 'rt-2', videoReviewId: 'rev-remote1', tagId: 'tag-11111111' }
+        ]
+      });
+      await db.initAsync();
 
-    const vm = buildSharedReviewViewModel({
-      reviews: db.getReviewsForVideo('vid-11111111'),
-      reviewers: db.getReviewers(),
-      db
-    });
+      const vm = buildSharedReviewViewModel({
+        reviews: db.getReviewsForVideo('vid-11111111'),
+        reviewers: db.getReviewers(),
+        db
+      });
 
-    const { els, root } = createMockEls();
-    renderSharedReviewsUI(els, vm);
+      const { els, root } = createMockEls();
+      renderSharedReviewsUI(els, vm);
 
-    const tagChips = els.sharedTagsList.querySelectorAll('.tag-chip');
-    assert(tagChips.length === 1);
-    assert(tagChips[0].title.includes('自分'));
-    assert(tagChips[0].title.includes('他ユーザーA'));
+      const tagChips = els.sharedTagsList.querySelectorAll('.tag-chip');
+      assert(tagChips.length === 1);
+      assert(tagChips[0].title.includes(t('share.reviewerSelf')));
+      assert(tagChips[0].title.includes('他ユーザーA'));
 
-    root.remove();
+      root.remove();
+    } finally {
+      setLocale(origLocale);
+      try {
+        if (origStorage !== null) {
+          localStorage.setItem('video_reviewer_locale', origStorage);
+        } else {
+          localStorage.removeItem('video_reviewer_locale');
+        }
+      } catch (e) {}
+    }
   });
 
   await runTest('15. displayNameへの変換確認', async () => {
