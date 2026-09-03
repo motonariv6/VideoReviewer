@@ -131,7 +131,7 @@
     const isAutomated = new URLSearchParams(window.location.search).get('automated') === 'true';
     if (isAutomated) {
       window.onerror = function(message, source, lineno, colno, error) {
-        const errorMsg = error ? error.stack : message;
+        const errorMsg = `${message} at ${source}:${lineno}:${colno} ` + (error ? error.stack : '');
         fetch('/api/test-fatal', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },

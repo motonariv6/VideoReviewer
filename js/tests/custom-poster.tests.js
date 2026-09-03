@@ -4,6 +4,7 @@ import { MemoryStorage, MockFileSystemFileHandle, MockFileSystemDirectoryHandle 
 import { exportReviews } from '../review-sharing/review-share-exporter.js';
 import { setDbForTesting, generateLocalBackupZipBlob } from '../app.js';
 import { scanDirectory, applyScanDifferentials } from '../directory-scanner.js';
+import { setLocale, currentLocale, t } from '../i18n.js';
 
 export async function runCustomPosterTests() {
   const results = [];
@@ -987,38 +988,55 @@ export async function runCustomPosterTests() {
 
   // 20. image以外のFile、空Blob、デコード失敗画像が正しくエラーになること
   await runTest('20. 不正な画像ファイルがバリデーションで弾かれること', async () => {
-    const textFile = new Blob(['not-an-image'], { type: 'text/plain' });
-    let textErr = null;
+    const origLocale = currentLocale;
+    let origStorage = null;
     try {
-      const m = await import('../app.js');
-      await m.validateImageFile(textFile);
-    } catch (err) {
-      textErr = err;
-    }
-    assert(textErr !== null, 'Text file must be rejected');
-    assert(textErr.message.includes('画像ではありません'), 'Error message must specify non-image');
+      origStorage = localStorage.getItem('video_reviewer_locale');
+    } catch (e) {}
+    try {
+      setLocale('ja');
+      const textFile = new Blob(['not-an-image'], { type: 'text/plain' });
+      let textErr = null;
+      try {
+        const m = await import('../app.js');
+        await m.validateImageFile(textFile);
+      } catch (err) {
+        textErr = err;
+      }
+      assert(textErr !== null, 'Text file must be rejected');
+      assert(textErr.message === t('poster.errNotImage'), 'Error message must match poster.errNotImage');
 
-    const emptyBlob = new Blob([], { type: 'image/png' });
-    let emptyErr = null;
-    try {
-      const m = await import('../app.js');
-      await m.validateImageFile(emptyBlob);
-    } catch (err) {
-      emptyErr = err;
-    }
-    assert(emptyErr !== null, 'Empty Blob must be rejected');
-    assert(emptyErr.message.includes('空のファイル'), 'Error should specify empty file');
+      const emptyBlob = new Blob([], { type: 'image/png' });
+      let emptyErr = null;
+      try {
+        const m = await import('../app.js');
+        await m.validateImageFile(emptyBlob);
+      } catch (err) {
+        emptyErr = err;
+      }
+      assert(emptyErr !== null, 'Empty Blob must be rejected');
+      assert(emptyErr.message === t('poster.errEmptyFile'), 'Error should match poster.errEmptyFile');
 
-    const malformedImg = new Blob(['invalid-png-header-data'], { type: 'image/png' });
-    let decodeErr = null;
-    try {
-      const m = await import('../app.js');
-      await m.validateImageFile(malformedImg);
-    } catch (err) {
-      decodeErr = err;
+      const malformedImg = new Blob(['invalid-png-header-data'], { type: 'image/png' });
+      let decodeErr = null;
+      try {
+        const m = await import('../app.js');
+        await m.validateImageFile(malformedImg);
+      } catch (err) {
+        decodeErr = err;
+      }
+      assert(decodeErr !== null, 'Malformed image must fail to decode');
+      assert(decodeErr.message === t('poster.errDecodeFailed'), 'Error should match poster.errDecodeFailed');
+    } finally {
+      setLocale(origLocale);
+      try {
+        if (origStorage !== null) {
+          localStorage.setItem('video_reviewer_locale', origStorage);
+        } else {
+          localStorage.removeItem('video_reviewer_locale');
+        }
+      } catch (e) {}
     }
-    assert(decodeErr !== null, 'Malformed image must fail to decode');
-    assert(decodeErr.message.includes('デコードに失敗'), 'Error should specify decode failure');
   });
 
   // 21. 新規poster設定失敗時 rollback (customPosterIdは元状態、新Blobは削除)
@@ -1212,16 +1230,33 @@ export async function runCustomPosterTests() {
 
   // 25. 10MB容量制限テスト
   await runTest('25. 10MB超のポスター画像ファイルが10MB制限バリデーションにより却下されること', async () => {
-    const largeFile = new Blob([new Uint8Array(11 * 1024 * 1024)], { type: 'image/png' });
-    let error = null;
+    const origLocale = currentLocale;
+    let origStorage = null;
     try {
-      const m = await import('../app.js');
-      await m.validateImageFile(largeFile);
-    } catch (err) {
-      error = err;
+      origStorage = localStorage.getItem('video_reviewer_locale');
+    } catch (e) {}
+    try {
+      setLocale('ja');
+      const largeFile = new Blob([new Uint8Array(11 * 1024 * 1024)], { type: 'image/png' });
+      let error = null;
+      try {
+        const m = await import('../app.js');
+        await m.validateImageFile(largeFile);
+      } catch (err) {
+        error = err;
+      }
+      assert(error !== null, 'Large file (>10MB) must be rejected');
+      assert(error.message === t('poster.errTooLarge'), 'Error message must match poster.errTooLarge');
+    } finally {
+      setLocale(origLocale);
+      try {
+        if (origStorage !== null) {
+          localStorage.setItem('video_reviewer_locale', origStorage);
+        } else {
+          localStorage.removeItem('video_reviewer_locale');
+        }
+      } catch (e) {}
     }
-    assert(error !== null, 'Large file (>10MB) must be rejected');
-    assert(error.message.includes('10MB以下の画像を選択'), 'Error message must mention the 10MB limit');
   });
 
   // 26. Editor表示中のポスター更新で他画像のObject URLを不要にrevokeしない検証

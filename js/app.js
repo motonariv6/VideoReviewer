@@ -315,7 +315,7 @@ function initEventListeners() {
   });
   els.btnEditorDeletePoster.addEventListener('click', async () => {
     if (state.currentVideoId) {
-      if (confirm('カスタムポスター画像を削除しますか？\n自動生成サムネイル表示に戻ります。')) {
+      if (confirm(t('poster.confirmDelete'))) {
         await deletePosterImageAction(state.currentVideoId);
       }
     }
@@ -427,7 +427,7 @@ function initEventListeners() {
   els.settingsBtnGenreAdd.addEventListener('click', async () => {
     const name = els.settingsNewGenreInput.value.trim();
     if (!name) {
-      showToast('ジャンル名を入力してください。', 'error');
+      showToast(t('settings.toastInputGenreName'), 'error');
       return;
     }
     try {
@@ -438,7 +438,7 @@ function initEventListeners() {
       populateSettingsGenreSelect();
       renderSettingsCriteriaList();
       renderSettingsGenreControls();
-      showToast(`ジャンル「${name}」を追加しました。`);
+      showToast(t('settings.toastGenreAdded', { name }));
     } catch (err) {
       showToast(err.message, 'error');
     }
@@ -450,11 +450,11 @@ function initEventListeners() {
     const genre = db.getGenre(genreId);
     if (!genre) return;
 
-    const newName = prompt('新しいジャンル名を入力してください。', genre.name);
+    const newName = prompt(t('settings.promptNewGenreName'), genre.name);
     if (newName === null) return;
     const cleanName = newName.trim();
     if (!cleanName) {
-      showToast('有効なジャンル名を入力してください。', 'error');
+      showToast(t('settings.toastInvalidGenreName'), 'error');
       return;
     }
 
@@ -462,7 +462,7 @@ function initEventListeners() {
       await db.updateGenre(genreId, { name: cleanName });
       populateSettingsGenreSelect();
       renderSettingsGenreControls();
-      showToast('ジャンル名を変更しました。');
+      showToast(t('settings.toastGenreRenamed'));
     } catch (err) {
       showToast(err.message, 'error');
     }
@@ -472,7 +472,7 @@ function initEventListeners() {
   els.settingsBtnGenreToggleActive.addEventListener('click', async () => {
     const genreId = state.selectedSettingsGenreId || 'genre-default';
     if (genreId === 'genre-default') {
-      showToast('既定のジャンルは無効化できません。', 'error');
+      showToast(t('settings.toastDefaultGenreImmutable'), 'error');
       return;
     }
 
@@ -480,19 +480,19 @@ function initEventListeners() {
     if (!genre) return;
 
     if (genre.isActive) {
-      if (confirm(`ジャンル「${genre.name}」を無効化しますか？\n過去に登録した動画および評価データは消えずに残ります。`)) {
+      if (confirm(t('settings.confirmDisableGenre', { name: genre.name }))) {
         await db.updateGenre(genreId, { isActive: false });
         populateSettingsGenreSelect();
         renderSettingsCriteriaList();
         renderSettingsGenreControls();
-        showToast(`ジャンル「${genre.name}」を無効にしました。`);
+        showToast(t('settings.toastGenreDisabled', { name: genre.name }));
       }
     } else {
       await db.updateGenre(genreId, { isActive: true });
       populateSettingsGenreSelect();
       renderSettingsCriteriaList();
       renderSettingsGenreControls();
-      showToast(`ジャンル「${genre.name}」を有効にしました。`);
+      showToast(t('settings.toastGenreEnabled', { name: genre.name }));
     }
   });
 
@@ -542,19 +542,19 @@ function initEventListeners() {
     const fromGenreId = els.settingsCopySourceSelect.value;
     const toGenreId = state.selectedSettingsGenreId || 'genre-default';
     if (!fromGenreId) {
-      showToast('コピー元のジャンルが選択されていません。', 'error');
+      showToast(t('settings.toastNoSourceGenre'), 'error');
       return;
     }
     if (fromGenreId === toGenreId) {
-      showToast('コピー元とコピー先が同じです。', 'error');
+      showToast(t('settings.toastSameGenre'), 'error');
       return;
     }
 
-    if (confirm('現在のジャンルの評価項目を上書きして、コピー元の項目に置き換えますか？')) {
+    if (confirm(t('settings.confirmOverwriteCriteria'))) {
       try {
         await db.copyCriteria(fromGenreId, toGenreId);
         renderSettingsCriteriaList();
-        showToast('他のジャンルから評価項目をコピーしました。');
+        showToast(t('settings.toastCriteriaCopied'));
       } catch (err) {
         showToast(err.message, 'error');
       }
@@ -576,7 +576,7 @@ function initEventListeners() {
   els.btnFolderDisconnect.addEventListener('click', handleFolderDisconnect);
   els.btnFolderScanAbort.addEventListener('click', () => {
     abortFolderScanning();
-    showToast('スキャンを中止しています...', 'error');
+    showToast(t('folder.toastScanAborting'), 'error');
   });
 
   // Next / Prev Video buttons
@@ -763,7 +763,7 @@ export async function processBackgroundHashingQueue() {
     },
     onPendingResolved: (summary, video) => {
       if (summary && summary.resolved > 0 && video) {
-        showToast(`共有レビュー ${summary.resolved}件を動画「${video.displayTitle || video.title}」に紐付けました`);
+        showToast(t('library.toastPendingResolved', { count: summary.resolved, title: video.displayTitle || video.title }));
       }
     },
     onNewBatch: () => clearCloseTimeout()
@@ -864,7 +864,7 @@ export function renderLibrary() {
 
   const defaultOpt = document.createElement('option');
   defaultOpt.value = '';
-  defaultOpt.textContent = 'すべて';
+  defaultOpt.textContent = t('library.filterAllOption');
   els.filterTag.appendChild(defaultOpt);
 
   db.getTags().forEach(tag => {
@@ -895,7 +895,7 @@ export function renderLibrary() {
     } else if (state.filters.sort === 'updatedAt-asc') {
       return getUpdateSecs(a, rA) - getUpdateSecs(b, rB);
     } else if (state.filters.sort === 'title-asc') {
-      return a.title.localeCompare(b.title, 'ja');
+      return a.title.localeCompare(b.title, currentLocale === 'zh-CN' ? 'zh-CN' : (currentLocale === 'en' ? 'en' : 'ja'));
     } else if (state.filters.sort === 'grade-desc') {
       const gradeVal = { 'A': 5, 'B': 4, 'C': 3, 'D': 2, 'E': 1, null: 0, undefined: 0 };
       const valA = gradeVal[rA?.overallGrade];
@@ -918,7 +918,7 @@ export function renderLibrary() {
   const isIsolatedFilter = ['missing', 'scan-error', 'no-directory', 'isolated'].includes(availabilityFilter);
   if (isIsolatedFilter && videos.length > 0) {
     els.btnBulkDelete.classList.remove('hidden');
-    els.btnBulkDelete.textContent = `表示中の${videos.length}本を一括削除`;
+    els.btnBulkDelete.textContent = t('library.btnBulkDeleteCount', { count: videos.length });
   } else {
     els.btnBulkDelete.classList.add('hidden');
   }
@@ -936,14 +936,14 @@ export function renderLibrary() {
       const tags = db.getVideoTags(v.id);
       const notes = db.getTimelineNotes(v.id);
 
-      let avgText = '未評価';
+      let avgText = t('review.unrated');
       let avgScore = 0;
       if (starScores.length > 0) {
         avgScore = starScores.reduce((sum, s) => sum + s.score, 0) / starScores.length;
         avgText = avgScore.toFixed(1);
       }
 
-      const lastUpdatedDate = new Date(v.updatedAt).toLocaleDateString('ja-JP', {
+      const lastUpdatedDate = new Date(v.updatedAt).toLocaleDateString(currentLocale === 'ja' ? 'ja-JP' : (currentLocale === 'zh-CN' ? 'zh-CN' : 'en-US'), {
         month: 'short',
         day: 'numeric',
         hour: '2-digit',
@@ -993,37 +993,37 @@ export function renderLibrary() {
         const noDirBadge = document.createElement('span');
         noDirBadge.className = 'video-card-badge';
         noDirBadge.style.backgroundColor = 'var(--color-error)';
-        noDirBadge.textContent = '参照フォルダなし';
+        noDirBadge.textContent = t('library.badgeNoDir');
         thumbDiv.appendChild(noDirBadge);
       } else if (v.availabilityStatus === 'missing') {
         const missingBadge = document.createElement('span');
         missingBadge.className = 'video-card-badge';
         missingBadge.style.backgroundColor = 'var(--color-error)';
-        missingBadge.textContent = 'ファイル消失';
+        missingBadge.textContent = t('library.badgeMissingFile');
         thumbDiv.appendChild(missingBadge);
       } else if (v.availabilityStatus === 'permission-required') {
         const permBadge = document.createElement('span');
         permBadge.className = 'video-card-badge';
         permBadge.style.backgroundColor = 'var(--color-warning)';
-        permBadge.textContent = 'アクセス許可が必要';
+        permBadge.textContent = t('library.badgePermRequired');
         thumbDiv.appendChild(permBadge);
       } else if (v.availabilityStatus === 'unsupported') {
         const unsuppBadge = document.createElement('span');
         unsuppBadge.className = 'video-card-badge';
         unsuppBadge.style.backgroundColor = 'var(--color-text-dim)';
-        unsuppBadge.textContent = '再生非対応';
+        unsuppBadge.textContent = t('library.badgeUnsupported');
         thumbDiv.appendChild(unsuppBadge);
       } else if (v.availabilityStatus === 'scan-error') {
         const scanErrBadge = document.createElement('span');
         scanErrBadge.className = 'video-card-badge';
         scanErrBadge.style.backgroundColor = 'var(--color-error)';
-        scanErrBadge.textContent = 'スキャンエラー';
+        scanErrBadge.textContent = t('library.badgeScanError');
         thumbDiv.appendChild(scanErrBadge);
       } else if (review && review.overallGrade) {
         const gradeSpan = document.createElement('span');
         gradeSpan.className = 'video-card-badge';
         gradeSpan.style.backgroundColor = `var(--color-grade-${review.overallGrade.toLowerCase()})`;
-        gradeSpan.textContent = `総合: ${review.overallGrade}`;
+        gradeSpan.textContent = t('review.overallGradePrefix', { grade: review.overallGrade });
         thumbDiv.appendChild(gradeSpan);
       }
 
@@ -1049,7 +1049,7 @@ export function renderLibrary() {
         const canExport = isVideoEligibleForExport(db, v);
         if (!canExport) {
           chk.disabled = true;
-          chk.title = 'ハッシュ値計算未完了、またはオーナーレビューが存在しないため選択できません';
+          chk.title = t('library.tooltipUnselectableNoHash');
         }
 
         chk.addEventListener('click', (e) => {
@@ -1066,7 +1066,7 @@ export function renderLibrary() {
         card.addEventListener('click', (e) => {
           e.stopPropagation();
           if (!canExport) {
-            showToast('この動画はハッシュ値計算未完了、またはオーナーレビューが存在しないため選択できません。', 'warning');
+            showToast(t('library.toastUnselectableNoHash'), 'warning');
             return;
           }
           if (state.selectedExportVideoIds.has(v.id)) {
@@ -1106,7 +1106,7 @@ export function renderLibrary() {
       // Card Delete Button (Archive)
       const delBtn = document.createElement('button');
       delBtn.className = 'btn btn-icon btn-delete-card';
-      delBtn.title = 'ライブラリからアーカイブ削除 (評価データは保持されます)';
+      delBtn.title = t('library.tooltipArchiveDelete');
       delBtn.style.padding = '2px';
       delBtn.style.color = 'var(--color-text-muted)';
       delBtn.style.cursor = 'pointer';
@@ -1142,7 +1142,7 @@ export function renderLibrary() {
       // Card Permanent Delete Button
       const permDelBtn = document.createElement('button');
       permDelBtn.className = 'btn btn-icon btn-perm-delete-card';
-      permDelBtn.title = '完全に削除 (評価データも削除され、再スキャンしても復元できません)';
+      permDelBtn.title = t('library.tooltipPermanentDelete');
       permDelBtn.style.padding = '2px';
       permDelBtn.style.color = 'var(--color-text-muted)';
       permDelBtn.style.cursor = 'pointer';
@@ -1178,7 +1178,7 @@ export function renderLibrary() {
 
       const posterBtn = document.createElement('button');
       posterBtn.className = 'btn btn-icon btn-poster-card';
-      posterBtn.title = v.customPosterId ? 'カスタムポスター画像を変更' : 'カスタムポスター画像を設定';
+      posterBtn.title = v.customPosterId ? t('poster.tooltipChange') : t('poster.tooltipSet');
       posterBtn.style.padding = '2px';
       posterBtn.style.color = v.customPosterId ? 'var(--color-primary, #3b82f6)' : 'var(--color-text-muted)';
       posterBtn.style.cursor = 'pointer';
@@ -1207,14 +1207,14 @@ export function renderLibrary() {
         const fileDiv = document.createElement('div');
         fileDiv.className = 'video-card-meta-detail';
         fileDiv.style.fontStyle = 'italic';
-        fileDiv.textContent = `ファイル: ${v.title}`;
+        fileDiv.textContent = t('library.filePrefix', { name: v.title });
         bodyDiv.appendChild(fileDiv);
       }
       if (v.sourceType === 'directory') {
         const pathDiv = document.createElement('div');
         pathDiv.className = 'video-card-meta-detail';
         const source = db.getDirectorySource(v.directoryId);
-        const folderName = source ? source.name : 'フォルダ不明';
+        const folderName = source ? source.name : t('folder.folderUnknown');
         pathDiv.textContent = `📁 ${folderName} / ${v.relativePath}`;
         bodyDiv.appendChild(pathDiv);
       }
@@ -1225,7 +1225,7 @@ export function renderLibrary() {
 
       const avgSpan = document.createElement('span');
       avgSpan.style.color = 'var(--color-text-muted)';
-      avgSpan.textContent = `平均: ${avgText}`;
+      avgSpan.textContent = t('review.avgScorePrefix', { score: avgText });
       ratingRow.appendChild(avgSpan);
 
       const starsDiv = document.createElement('div');
@@ -1248,10 +1248,10 @@ export function renderLibrary() {
       const tagsDiv = document.createElement('div');
       tagsDiv.className = 'video-card-tags';
       if (tags.length > 0) {
-        tags.slice(0, 3).forEach(t => {
+        tags.slice(0, 3).forEach(tItem => {
           const tSpan = document.createElement('span');
           tSpan.className = 'tag-badge';
-          tSpan.textContent = t.name;
+          tSpan.textContent = tItem.name;
           tagsDiv.appendChild(tSpan);
         });
         if (tags.length > 3) {
@@ -1265,7 +1265,7 @@ export function renderLibrary() {
         emptyTagSpan.className = 'tag-badge';
         emptyTagSpan.style.border = 'dashed 1px var(--color-border)';
         emptyTagSpan.style.background = 'transparent';
-        emptyTagSpan.textContent = 'タグ無し';
+        emptyTagSpan.textContent = t('tag.noTags');
         tagsDiv.appendChild(emptyTagSpan);
       }
       bodyDiv.appendChild(tagsDiv);
@@ -1277,7 +1277,7 @@ export function renderLibrary() {
       // Notes counter
       const noteStat = document.createElement('div');
       noteStat.className = 'stat-item';
-      noteStat.title = 'タイムラインメモ数';
+      noteStat.title = t('library.tooltipNotesCount');
       noteStat.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>`;
       const noteCountSpan = document.createElement('span');
       noteCountSpan.textContent = notes.length;
@@ -1287,7 +1287,7 @@ export function renderLibrary() {
       // Comments counter
       const commentStat = document.createElement('div');
       commentStat.className = 'stat-item';
-      commentStat.title = '総コメント';
+      commentStat.title = t('library.tooltipTotalComments');
       commentStat.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" /></svg>`;
       const commentCountSpan = document.createElement('span');
       commentCountSpan.textContent = review && review.comment ? 1 : 0;
@@ -1299,7 +1299,7 @@ export function renderLibrary() {
       dateDiv.style.marginLeft = 'auto';
       dateDiv.style.fontSize = '0.6875rem';
       dateDiv.style.color = 'var(--color-text-dim)';
-      dateDiv.title = '最終更新日時';
+      dateDiv.title = t('library.tooltipLastUpdated');
       dateDiv.textContent = lastUpdatedDate;
       statsDiv.appendChild(dateDiv);
 
@@ -1315,7 +1315,7 @@ export function renderLibrary() {
 // Back to Library screen (revoke resources)
 function handleBackToLibrary() {
   if (state.isDirty) {
-    if (!confirm('保存されていない変更があります。ライブラリに戻りますか？')) {
+    if (!confirm(t('player.confirmUnsavedBack'))) {
       return;
     }
   }
@@ -1393,7 +1393,7 @@ async function handlePlayerFolderPermissionClick() {
   if (isDisconnected || !handle) {
     // Clean up handleKey and update status
     await db.updateDirectorySource(source.id, { handleKey: '', permissionStatus: 'disconnected' });
-    showToast('フォルダの参照データが見つかりません。フォルダを再接続してください。', 'error');
+    showToast(t('folder.toastRefNotFound'), 'error');
     openSettingsModal();
     return;
   }
@@ -1406,14 +1406,14 @@ async function handlePlayerFolderPermissionClick() {
     await db.updateDirectoryVideosAvailability(source.id, status === 'granted' ? 'available' : 'permission-required');
 
     if (status === 'granted') {
-      showToast('アクセスを許可しました');
+      showToast(t('folder.toastPermGranted'));
       loadVideoMediaSource(video);
     } else {
-      showToast('アクセスが拒否されました', 'error');
+      showToast(t('folder.toastPermDenied'), 'error');
       renderLibrary();
     }
   } catch (err) {
-    showToast(`アクセス許可エラー: ${err.message}`, 'error');
+    showToast(t('folder.toastPermError', { error: err.message }), 'error');
   }
 }
 
@@ -1588,7 +1588,7 @@ function handleAddLocalFile(e) {
   if (!file) return;
 
   if (isIgnoredSystemEntry(file.name, file.name)) {
-    showToast('このファイルはシステムファイルのため無視されました。', 'error');
+    showToast(t('library.toastSystemFileIgnored'), 'error');
     els.addLocalFileInput.value = '';
     return;
   }
@@ -1634,7 +1634,7 @@ function handleAddLocalFile(e) {
       els.addLocalFileInput.value = '';
 
       switchScreenToEditor(added.id);
-      showToast('動画を追加しました');
+      showToast(t('library.toastVideoAdded'));
 
       // Trigger background full content hashing
       computeFileSHA256(file).then(async hash => {
@@ -1646,7 +1646,7 @@ function handleAddLocalFile(e) {
           console.log(`Conflict detected for local file contentHash ${hash}. Group ID: ${result.conflictGroupId}`);
         }
         if (result.resolvedPendingSummary && result.resolvedPendingSummary.resolved > 0) {
-          showToast(`共有レビュー ${result.resolvedPendingSummary.resolved}件を動画「${added.title}」に紐付けました`);
+          showToast(t('library.toastPendingResolved', { count: result.resolvedPendingSummary.resolved, title: added.title }));
         }
         renderLibrary();
       }).catch(async err => {
@@ -1655,7 +1655,7 @@ function handleAddLocalFile(e) {
       });
 
     } catch (err) {
-      showToast(`動画を追加できませんでした: ${err.message}`, 'error');
+      showToast(t('library.toastVideoAddFailed', { error: err.message }), 'error');
     }
   };
 
@@ -1678,7 +1678,7 @@ function handleAddLocalFile(e) {
       state.videoFilesMap.set(added.id, file);
       els.addLocalFileInput.value = '';
       switchScreenToEditor(added.id);
-      showToast('動画を追加しました(再生時間未取得)');
+      showToast(t('library.toastVideoAddedNoDuration'));
 
       // Trigger background full content hashing
       computeFileSHA256(file).then(async hash => {
@@ -1690,7 +1690,7 @@ function handleAddLocalFile(e) {
           console.log(`Conflict detected for local file contentHash ${hash}. Group ID: ${result.conflictGroupId}`);
         }
         if (result.resolvedPendingSummary && result.resolvedPendingSummary.resolved > 0) {
-          showToast(`共有レビュー ${result.resolvedPendingSummary.resolved}件を動画「${added.title}」に紐付けました`);
+          showToast(t('library.toastPendingResolved', { count: result.resolvedPendingSummary.resolved, title: added.title }));
         }
         renderLibrary();
       }).catch(async err => {
@@ -1699,7 +1699,7 @@ function handleAddLocalFile(e) {
       });
 
     } catch (err) {
-      showToast(`動画を追加できませんでした: ${err.message}`, 'error');
+      showToast(t('library.toastVideoAddFailed', { error: err.message }), 'error');
     }
   };
 }
@@ -1710,7 +1710,7 @@ function handleReconnectFile(e) {
   if (!file || !state.currentVideoId) return;
 
   if (isIgnoredSystemEntry(file.name, file.name)) {
-    showToast('システムファイルは選択できません。', 'error');
+    showToast(t('library.toastSystemFileNotSelectable'), 'error');
     els.reconnectFileInput.value = '';
     return;
   }
@@ -1746,7 +1746,7 @@ function handleReconnectFile(e) {
     }, { once: true });
   }
 
-  showToast('動画ファイルを再接続しました');
+  showToast(t('library.toastVideoReconnected'));
 }
 
 
@@ -1780,12 +1780,12 @@ function navigateAdjacentVideo(direction) {
 
   const targetIdx = currentIdx + direction;
   if (targetIdx < 0 || targetIdx >= videos.length) {
-    showToast('隣の動画はありません', 'error');
+    showToast(t('player.toastNoAdjacentVideo'), 'error');
     return;
   }
 
   if (state.isDirty) {
-    if (!confirm('保存されていない評価内容があります。隣の動画に移動しますか？')) {
+    if (!confirm(t('player.confirmUnsavedAdjacent'))) {
       return;
     }
   }
@@ -1870,7 +1870,7 @@ function openSettingsModal() {
 
   // Populate backup timestamp label
   const lastBackup = localStorage.getItem('vreview_last_backup_time');
-  els.backupLastTimeVal.textContent = lastBackup ? new Date(lastBackup).toLocaleString() : '未作成';
+  els.backupLastTimeVal.textContent = lastBackup ? new Date(lastBackup).toLocaleString(currentLocale === 'ja' ? 'ja-JP' : (currentLocale === 'zh-CN' ? 'zh-CN' : 'en-US')) : t('backup.lastBackupNever');
 
   // Initialize and render tag management UI
   if (els.settingsTagSearchInput) {
@@ -1894,7 +1894,7 @@ function renderSettingsTagList(filterText = '') {
   if (!els.settingsTagList) return;
 
   const tags = db.getTagsWithUsageCount();
-  const filtered = tags.filter(t => t.name.toLowerCase().includes(filterText.toLowerCase()));
+  const filtered = tags.filter(tItem => tItem.name.toLowerCase().includes(filterText.toLowerCase()));
 
   els.settingsTagList.innerHTML = '';
   if (filtered.length === 0) {
@@ -1903,7 +1903,7 @@ function renderSettingsTagList(filterText = '') {
     emptyMsg.style.fontSize = '0.8125rem';
     emptyMsg.style.textAlign = 'center';
     emptyMsg.style.padding = '12px';
-    emptyMsg.textContent = 'タグが見つかりません';
+    emptyMsg.textContent = t('tag.emptyMessage');
     els.settingsTagList.appendChild(emptyMsg);
     return;
   }
@@ -1938,7 +1938,7 @@ function renderSettingsTagList(filterText = '') {
     labelBox.appendChild(countSpan);
 
     const delBtn = document.createElement('button');
-    delBtn.textContent = '削除';
+    delBtn.textContent = t('tag.btnDelete');
     delBtn.className = 'btn btn-danger';
     delBtn.style.padding = '4px 10px';
     delBtn.style.fontSize = '0.75rem';
@@ -1946,13 +1946,13 @@ function renderSettingsTagList(filterText = '') {
 
     delBtn.addEventListener('click', async () => {
       if (tag.usageCount > 0) {
-        const confirmed = confirm(`このタグは ${tag.usageCount} 件のレビューで使用されています。\n削除すると、これらのレビューからもタグが削除されます。\n\n本当に削除しますか？`);
+        const confirmed = confirm(t('tag.confirmDelete', { count: tag.usageCount }));
         if (!confirmed) return;
       }
 
       try {
         await db.deleteTag(tag.id);
-        showToast('タグを削除しました');
+        showToast(t('tag.toastDeleted'));
         renderSettingsTagList(els.settingsTagSearchInput ? els.settingsTagSearchInput.value : '');
 
         // Refresh Editor UI if editor is active and showing tags
@@ -1961,7 +1961,7 @@ function renderSettingsTagList(filterText = '') {
           reviewEditorController.renderSharedReviews();
         }
       } catch (err) {
-        showToast(`タグの削除に失敗しました: ${err.message}`, 'error');
+        showToast(t('tag.toastDeleteFailed', { error: err.message }), 'error');
       }
     });
 
@@ -2067,7 +2067,7 @@ function renderSettingsCriteriaList() {
 
     const upBtn = document.createElement('button');
     upBtn.className = 'criterion-order-btn up';
-    upBtn.title = '上に移動';
+    upBtn.title = t('settings.tooltipMoveUp');
     upBtn.innerHTML = `<svg fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 15l7-7 7 7" /></svg>`;
     if (index === 0) {
       upBtn.disabled = true;
@@ -2088,7 +2088,7 @@ function renderSettingsCriteriaList() {
 
     const downBtn = document.createElement('button');
     downBtn.className = 'criterion-order-btn down';
-    downBtn.title = '下に移動';
+    downBtn.title = t('settings.tooltipMoveDown');
     downBtn.innerHTML = `<svg fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" /></svg>`;
     if (index === criteria.length - 1) {
       downBtn.disabled = true;
@@ -2139,7 +2139,7 @@ function renderSettingsCriteriaList() {
       if (active) {
         const activeCount = db.getActiveCriteriaForGenre(genreId).length;
         if (activeCount >= 6) {
-          showToast('有効な評価項目は最大6項目までです。', 'error');
+          showToast(t('settings.toastMaxCriteriaExceeded'), 'error');
           checkbox.checked = false;
           return;
         }
@@ -2148,20 +2148,20 @@ function renderSettingsCriteriaList() {
       await db.updateCriterion(crit.id, { isActive: active });
     });
     activeLabel.appendChild(checkbox);
-    activeLabel.appendChild(document.createTextNode('有効'));
+    activeLabel.appendChild(document.createTextNode(t('settings.criteriaActiveBadge')));
     row.appendChild(activeLabel);
 
     const deleteBtn = document.createElement('button');
     deleteBtn.className = 'btn-icon btn-danger settings-criterion-delete';
-    deleteBtn.title = '削除';
+    deleteBtn.title = t('settings.tooltipDelete');
     deleteBtn.style.width = '30px';
     deleteBtn.style.height = '30px';
     deleteBtn.innerHTML = `<svg fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>`;
     deleteBtn.addEventListener('click', async () => {
-      if (confirm(`評価項目「${crit.name}」を削除しますか？\n過去の動画レビューの数値データは非表示として安全に保持されます。`)) {
+      if (confirm(t('settings.confirmDeleteCriteria', { name: crit.name }))) {
         await db.deleteCriterion(crit.id);
         renderSettingsCriteriaList();
-        showToast('項目を削除（非表示）にしました');
+        showToast(t('settings.toastCriteriaDeleted'));
       }
     });
     row.appendChild(deleteBtn);
@@ -2173,11 +2173,11 @@ function renderSettingsCriteriaList() {
   if (activeCount >= 6) {
     els.settingsNewNameInput.disabled = true;
     els.settingsBtnAdd.disabled = true;
-    els.settingsNewNameInput.placeholder = '最大6項目まで有効化できます（それ以上は追加不可）';
+    els.settingsNewNameInput.placeholder = t('settings.criteriaPlaceholderMax');
   } else {
     els.settingsNewNameInput.disabled = false;
     els.settingsBtnAdd.disabled = false;
-    els.settingsNewNameInput.placeholder = '新しい評価項目名を入力 (例: 独自性)...';
+    els.settingsNewNameInput.placeholder = t('settings.criteriaPlaceholderInput');
   }
 }
 
@@ -2191,7 +2191,7 @@ async function handleSettingsAddCriterion() {
     await db.addCriterionToGenre(genreId, name);
     els.settingsNewNameInput.value = '';
     renderSettingsCriteriaList();
-    showToast('評価項目を追加しました');
+    showToast(t('settings.toastCriteriaAdded'));
   } catch (error) {
     showToast(error.message, 'error');
   }
@@ -2341,7 +2341,7 @@ function populateSettingsGenreSelect() {
   genres.forEach(g => {
     const opt = document.createElement('option');
     opt.value = g.id;
-    opt.textContent = g.isActive ? g.name : `${g.name} (無効)`;
+    opt.textContent = g.isActive ? g.name : t('settings.disabledGenreLabel', { name: g.name });
     els.settingsGenreSelect.appendChild(opt);
   });
 
@@ -2358,7 +2358,7 @@ function populateSettingsGenreSelect() {
 
   const placeholderOpt = document.createElement('option');
   placeholderOpt.value = '';
-  placeholderOpt.textContent = '-- コピー元ジャンルを選択 --';
+  placeholderOpt.textContent = t('settings.copySourcePlaceholder');
   els.settingsCopySourceSelect.appendChild(placeholderOpt);
 
   genres.forEach(g => {
@@ -2377,10 +2377,10 @@ function renderSettingsGenreControls() {
   if (!genre) return;
 
   if (genre.isActive) {
-    els.settingsBtnGenreToggleActive.textContent = '無効化';
+    els.settingsBtnGenreToggleActive.textContent = t('settings.btnDisable');
     els.settingsBtnGenreToggleActive.className = 'btn btn-danger';
   } else {
-    els.settingsBtnGenreToggleActive.textContent = '有効化';
+    els.settingsBtnGenreToggleActive.textContent = t('settings.btnEnable');
     els.settingsBtnGenreToggleActive.className = 'btn btn-primary';
   }
 
@@ -2458,8 +2458,8 @@ export async function generateLocalBackupZipBlob() {
 
 // DB Backup Zip Creator
 async function handleBackupCreate() {
-  els.backupProgressTitle.textContent = 'バックアップを作成中...';
-  els.backupProgressMsg.textContent = 'データベースおよび画像をパッケージ化しています。';
+  els.backupProgressTitle.textContent = t('backup.progressCreatingTitle');
+  els.backupProgressMsg.textContent = t('backup.progressCreatingMsg');
   els.modalBackupProgress.classList.add('open');
 
   try {
@@ -2472,12 +2472,12 @@ async function handleBackupCreate() {
     link.click();
 
     localStorage.setItem('vreview_last_backup_time', new Date().toISOString());
-    els.backupLastTimeVal.textContent = new Date().toLocaleString();
+    els.backupLastTimeVal.textContent = new Date().toLocaleString(currentLocale === 'ja' ? 'ja-JP' : (currentLocale === 'zh-CN' ? 'zh-CN' : 'en-US'));
 
-    showToast('バックアップを作成しました。');
+    showToast(t('backup.toastCreated'));
   } catch (err) {
     console.error(err);
-    showToast(`バックアップ作成に失敗しました: ${err.message}`, 'error');
+    showToast(t('backup.toastCreateFailed', { error: err.message }), 'error');
   } finally {
     els.modalBackupProgress.classList.remove('open');
   }
@@ -2488,8 +2488,8 @@ async function handleBackupRestore(e) {
   const file = e.target.files[0];
   if (!file) return;
 
-  els.backupProgressTitle.textContent = 'バックアップを検証中...';
-  els.backupProgressMsg.textContent = 'ファイルを読み込んで内容を確認しています。';
+  els.backupProgressTitle.textContent = t('backup.progressVerifyingTitle');
+  els.backupProgressMsg.textContent = t('backup.progressVerifyingMsg');
   els.modalBackupProgress.classList.add('open');
 
   try {
@@ -2540,22 +2540,25 @@ async function handleBackupRestore(e) {
     const irreparableWarnings = validationResult.warnings.filter(w => !w.repaired);
     const repairedWarnings = validationResult.warnings.filter(w => w.repaired);
 
-    let confirmMsg = `バックアップデータを復元しますか？\n現在のデータは上書きされ、復元されたデータに置き換わります。\n\n` +
-      `作成日時: ${new Date(manifest.createdAt).toLocaleString()}\n` +
-      `動画数: ${manifest.counts.media_assets !== undefined ? manifest.counts.media_assets : manifest.counts.videos}本\n` +
-      `レビュー数: ${manifest.counts.reviews}件\n` +
-      `画像数: ${manifest.counts.images}枚\n\n`;
+    let confirmMsg = t('backup.confirmRestoreHeader', {
+      createdAt: new Date(manifest.createdAt).toLocaleString(currentLocale === 'ja' ? 'ja-JP' : (currentLocale === 'zh-CN' ? 'zh-CN' : 'en-US')),
+      videos: manifest.counts.media_assets !== undefined ? manifest.counts.media_assets : manifest.counts.videos,
+      reviews: manifest.counts.reviews,
+      images: manifest.counts.images
+    });
 
     if (repairedWarnings.length > 0) {
-      confirmMsg += `【自動修復】\n旧バージョンの孤立したタイムラインメモ ${repairedWarnings.length} 件を修復しました（レビューへの再紐付け）。\n\n`;
+      confirmMsg += t('backup.restoreAutoRepaired', { count: repairedWarnings.length });
     }
 
     if (irreparableWarnings.length > 0) {
-      confirmMsg += `【警告：孤立データの除外】\n以下の修復不可能な孤立したタイムラインメモ ${irreparableWarnings.length} 件を除外して復元します。これらは復旧できません。\n` +
-        `対象ID: ${irreparableWarnings.map(w => w.noteId).join(', ')}\n\n`;
+      confirmMsg += t('backup.restoreOrphanExcluded', {
+        count: irreparableWarnings.length,
+        ids: irreparableWarnings.map(w => w.noteId).join(', ')
+      });
     }
 
-    confirmMsg += `※ 復元前に現在のデータが自動でダウンロード退避されます。\n本当に復元しますか？`;
+    confirmMsg += t('backup.confirmRestoreNotice');
 
     if (!confirm(confirmMsg)) {
       els.backupRestoreFile.value = '';
@@ -2563,8 +2566,8 @@ async function handleBackupRestore(e) {
     }
 
     // Phase 1: Generate safety download ZIP of current state before restore starts
-    els.backupProgressTitle.textContent = '現在のデータを退避中...';
-    els.backupProgressMsg.textContent = '上書き前のデータを安全にZIPへ書き出しています。';
+    els.backupProgressTitle.textContent = t('backup.progressEvacuatingTitle');
+    els.backupProgressMsg.textContent = t('backup.progressEvacuatingMsg');
     els.modalBackupProgress.classList.add('open');
 
     const safetyZipBlob = await generateLocalBackupZipBlob();
@@ -2574,8 +2577,8 @@ async function handleBackupRestore(e) {
     safetyLink.download = `VideoReviewer-safety-backup-before-restore-${safetyTimestamp}.zip`;
     safetyLink.click();
 
-    els.backupProgressTitle.textContent = 'データを復元中...';
-    els.backupProgressMsg.textContent = 'データベースの上書き処理を実行しています。';
+    els.backupProgressTitle.textContent = t('backup.progressRestoringTitle');
+    els.backupProgressMsg.textContent = t('backup.progressRestoringMsg');
 
     // Phase 2: Extract images and execute production restore
     try {
@@ -2627,7 +2630,7 @@ async function handleBackupRestore(e) {
       await db.restoreWithRollback(validationResult.repairedDb, filteredImageEntries);
 
       els.modalBackupProgress.classList.remove('open');
-      showToast('データの復元が完了しました。自動再読み込みします。');
+      showToast(t('backup.toastRestored'));
       setTimeout(() => {
         window.location.reload();
       }, 1000);
@@ -2639,7 +2642,7 @@ async function handleBackupRestore(e) {
 
   } catch (err) {
     console.error(err);
-    alert(`復元に失敗しました: ${err.message}`);
+    alert(t('backup.alertRestoreFailed', { error: err.message }));
   } finally {
     els.backupRestoreFile.value = '';
     els.modalBackupProgress.classList.remove('open');
@@ -2652,14 +2655,14 @@ async function handleCleanOrphanData() {
     const { orphanNotes, unreferencedImageIds } = await db.checkOrphanData();
 
     if (orphanNotes.length === 0 && unreferencedImageIds.length === 0) {
-      alert('クリーンアップが必要な孤立データ（メモ・画像）は見つかりませんでした。');
+      alert(t('backup.alertNoOrphanFound'));
       return;
     }
 
-    let confirmMsg = 'データベース内の孤立データをクリーンアップしますか？\n\n' +
-      `孤立したタイムラインメモ: ${orphanNotes.length} 件\n` +
-      `参照されていない画像: ${unreferencedImageIds.length} 枚\n\n` +
-      '※ この操作は元に戻せません。本当に実行しますか？';
+    let confirmMsg = t('backup.confirmCleanOrphans', {
+      notes: orphanNotes.length,
+      images: unreferencedImageIds.length
+    });
 
     if (!confirm(confirmMsg)) {
       return;
@@ -2667,27 +2670,27 @@ async function handleCleanOrphanData() {
 
     const { notesCleanedCount, imagesCleanedCount } = await db.cleanOrphanData();
 
-    showToast(`クリーンアップを完了しました（タイムラインメモ: ${notesCleanedCount}件、画像: ${imagesCleanedCount}枚）。`);
+    showToast(t('backup.toastCleaned', { notes: notesCleanedCount, images: imagesCleanedCount }));
     renderLibrary();
   } catch (err) {
     console.error(err);
-    alert(`クリーンアップに失敗しました: ${err.message}`);
+    alert(t('backup.alertCleanFailed', { error: err.message }));
   }
 }
 
 // === CUSTOM POSTER UI MANAGEMENT ===
 
 export async function validateImageFile(file) {
-  if (!file) throw new Error('ファイルが選択されていません。');
+  if (!file) throw new Error(t('poster.errNoFile'));
   if (!file.type.startsWith('image/')) {
-    throw new Error('選択されたファイルは画像ではありません。');
+    throw new Error(t('poster.errNotImage'));
   }
   if (file.size === 0) {
-    throw new Error('空のファイルは設定できません。');
+    throw new Error(t('poster.errEmptyFile'));
   }
   const MAX_SIZE = 10 * 1024 * 1024; // 10MB
   if (file.size > MAX_SIZE) {
-    throw new Error('ファイルサイズが大きすぎます。10MB以下の画像を選択してください。');
+    throw new Error(t('poster.errTooLarge'));
   }
 
   // Verify browser can decode image successfully (reject malformed images)
@@ -2699,12 +2702,12 @@ export async function validateImageFile(file) {
         resolve(true);
       };
       img.onerror = () => {
-        reject(new Error('画像のデコードに失敗しました。ファイルが壊れているか、サポートされていない形式です。'));
+        reject(new Error(t('poster.errDecodeFailed')));
       };
       img.src = e.target.result;
     };
     reader.onerror = () => {
-      reject(new Error('ファイルの読み込みに失敗しました。'));
+      reject(new Error(t('poster.errReadFailed')));
     };
     reader.readAsDataURL(file);
   });
@@ -2732,10 +2735,10 @@ function triggerPosterImageUpload(videoId) {
     try {
       await validateImageFile(file);
       await setPosterImageAction(videoId, file);
-      showToast('ポスター画像を設定しました。', 'success');
+      showToast(t('poster.toastSetSuccess'), 'success');
     } catch (err) {
       console.error(err);
-      showToast(err.message || 'ポスター画像の設定に失敗しました。', 'error');
+      showToast(err.message || t('poster.toastSetFailure'), 'error');
     }
   };
   input.click();
@@ -2743,7 +2746,7 @@ function triggerPosterImageUpload(videoId) {
 
 export async function setPosterImageAction(videoId, file) {
   const video = db.getVideo(videoId);
-  if (!video) throw new Error('動画アセットが見つかりません。');
+  if (!video) throw new Error(t('poster.errAssetNotFound'));
 
   const posterId = `img-poster-${videoId}`;
   const originalPosterId = video.customPosterId;
@@ -2759,7 +2762,7 @@ export async function setPosterImageAction(videoId, file) {
       await db.putImage(posterId, file);
     }
   } catch (err) {
-    throw new Error('IndexedDB への画像保存に失敗しました。');
+    throw new Error(t('poster.errSaveFailed'));
   }
 
   // 2. Update media asset reference
@@ -2780,7 +2783,7 @@ export async function setPosterImageAction(videoId, file) {
         console.error('Failed to rollback poster Image during metadata write failure:', idbErr);
       }
     }
-    throw new Error('データベースの更新に失敗しました。');
+    throw new Error(t('poster.toastDbUpdateFailure'));
   }
 
   // 3. Immediately update UI
@@ -2803,7 +2806,7 @@ export async function deletePosterImageAction(videoId) {
   try {
     await db.updateVideo(videoId, { customPosterId: null });
   } catch (err) {
-    showToast('データベースの更新に失敗しました。', 'error');
+    showToast(t('poster.toastDbUpdateFailure'), 'error');
     return;
   }
 
@@ -2822,13 +2825,13 @@ export async function deletePosterImageAction(videoId) {
     } catch (rollbackErr) {
       console.error('Failed to rollback deletion failure:', rollbackErr);
     }
-    showToast('ポスター画像の消去に失敗しました。', 'error');
+    showToast(t('poster.toastDeleteFailure'), 'error');
     return;
   }
 
   // 3. Immediately update UI
   await updateUIPostPosters();
-  showToast('ポスター画像を削除しました。', 'success');
+  showToast(t('poster.toastDeleteSuccess'), 'success');
 }
 
 async function updateEditorPosterUI(videoId) {

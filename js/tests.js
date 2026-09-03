@@ -17,6 +17,7 @@ import { runTagManagementTests } from './tests/tag-management.tests.js';
 import { runSchemaCanonicalizationTests } from './tests/schema-canonicalization.tests.js';
 import { runCustomPosterTests } from './tests/custom-poster.tests.js';
 import { runI18nTests } from './tests/i18n.tests.js';
+import { t, setLocale, currentLocale } from './i18n.js';
 
 export const VALID_HASH_A = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
 export const VALID_HASH_B = 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
@@ -148,6 +149,16 @@ export async function runTests(groupFilter = null) {
 
   console.group('=== Running Video Annotation Studio Test Suite ===');
 
+  const suiteInitialLocale = currentLocale;
+  let suiteInitialStorage = null;
+  try {
+    suiteInitialStorage = localStorage.getItem('video_reviewer_locale');
+  } catch (e) {}
+
+  // Ensure deterministic test baseline regardless of OS/runner navigator.language
+  setLocale('ja');
+
+  try {
   const runAll = !groupFilter || groupFilter === 'all';
 
   if (runAll) {
@@ -2334,39 +2345,57 @@ export async function runTests(groupFilter = null) {
   });
 
   await runTest('13-2. Minimize and maximize toggles changes layout but preserves background verification state', async () => {
-    bgHashState.panelClosed = false;
-    bgHashState.panelMinimized = false;
-    bgHashState.targetKeys.clear();
-    bgHashState.targetKeys.add('test-key-1');
-    bgHashState.activeId = 'test-key-1';
-    bgHashState.activeName = 'my_video.mp4';
-    bgHashState.activePercent = 50;
+    const origLocale = currentLocale;
+    let origStorage = null;
+    try {
+      origStorage = localStorage.getItem('video_reviewer_locale');
+    } catch (e) {}
+    try {
+      setLocale('ja');
+      bgHashState.panelClosed = false;
+      bgHashState.panelMinimized = false;
+      bgHashState.targetKeys.clear();
+      bgHashState.targetKeys.add('test-key-1');
+      bgHashState.activeId = 'test-key-1';
+      bgHashState.activeName = 'my_video.mp4';
+      bgHashState.activePercent = 50;
 
-    updateBackgroundHashingUI(0, 1);
+      updateBackgroundHashingUI(0, 1);
 
-    const indicator = document.getElementById('bg-hash-indicator');
-    const fileEl = indicator.querySelector('.bg-hash-file');
-    const progressContainer = indicator.querySelector('.bg-hash-progress-container');
+      const indicator = document.getElementById('bg-hash-indicator');
+      const fileEl = indicator.querySelector('.bg-hash-file');
+      const progressContainer = indicator.querySelector('.bg-hash-progress-container');
 
-    assert(fileEl.style.display !== 'none', 'Active file name is visible when maximized');
-    assert(progressContainer.style.display !== 'none', 'Progress bar is visible when maximized');
+      assert(fileEl.style.display !== 'none', 'Active file name is visible when maximized');
+      assert(progressContainer.style.display !== 'none', 'Progress bar is visible when maximized');
 
-    const minBtn = indicator.querySelector('.bg-hash-btn-min');
-    minBtn.click();
+      const minBtn = indicator.querySelector('.bg-hash-btn-min');
+      minBtn.click();
 
-    assert(bgHashState.panelMinimized === true, 'Flag panelMinimized must be true after clicking');
-    assert(fileEl.style.display === 'none', 'Active file name must be hidden when minimized');
-    assert(progressContainer.style.display === 'none', 'Progress bar must be hidden when minimized');
+      assert(bgHashState.panelMinimized === true, 'Flag panelMinimized must be true after clicking');
+      assert(fileEl.style.display === 'none', 'Active file name must be hidden when minimized');
+      assert(progressContainer.style.display === 'none', 'Progress bar must be hidden when minimized');
 
-    const titleEl = indicator.querySelector('.bg-hash-title');
-    assert(titleEl.textContent === 'ハッシュ検証 0 / 1', 'Title text matches minimized 1-line layout: ハッシュ検証 0 / 1');
+      const titleEl = indicator.querySelector('.bg-hash-title');
+      const expectedTitle = t('hashing.titleProgress', { current: 0, total: 1 });
+      assert(titleEl.textContent === expectedTitle, `Title text matches minimized 1-line layout: ${expectedTitle}`);
 
-    minBtn.click();
-    assert(bgHashState.panelMinimized === false, 'Flag panelMinimized must be false after maximizing again');
-    assert(fileEl.style.display !== 'none', 'File name visible again');
+      minBtn.click();
+      assert(bgHashState.panelMinimized === false, 'Flag panelMinimized must be false after maximizing again');
+      assert(fileEl.style.display !== 'none', 'File name visible again');
 
-    bgHashState.targetKeys.clear();
-    updateBackgroundHashingUI(0, 0);
+      bgHashState.targetKeys.clear();
+      updateBackgroundHashingUI(0, 0);
+    } finally {
+      setLocale(origLocale);
+      try {
+        if (origStorage !== null) {
+          localStorage.setItem('video_reviewer_locale', origStorage);
+        } else {
+          localStorage.removeItem('video_reviewer_locale');
+        }
+      } catch (e) {}
+    }
   });
 
   await runTest('13-3. Closing progress panel hides it from view but keeps background verification running', async () => {
@@ -2650,6 +2679,16 @@ export async function runTests(groupFilter = null) {
     results.push(...i18nRes);
   }
 
-  console.groupEnd(); // main suite
+  } finally {
+    setLocale(suiteInitialLocale);
+    try {
+      if (suiteInitialStorage !== null) {
+        localStorage.setItem('video_reviewer_locale', suiteInitialStorage);
+      } else {
+        localStorage.removeItem('video_reviewer_locale');
+      }
+    } catch (e) {}
+    console.groupEnd(); // main suite
+  }
   return results;
 }

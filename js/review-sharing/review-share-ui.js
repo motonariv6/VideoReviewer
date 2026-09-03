@@ -3,6 +3,7 @@ import { exportReviews, isVideoEligibleForExport } from './review-share-exporter
 import { importPackage } from './review-share-importer.js';
 import { validateSharedReviewPackage } from './review-share-validator.js';
 import { scoreToGrade } from './review-share-model.js';
+import { t, currentLocale } from '../i18n.js';
 
 let dbRef = null;
 let stateRef = null;
@@ -110,7 +111,7 @@ function startExportMode() {
 
   updateExportSelectedCount();
   renderLibraryRef();
-  showToastRef('エクスポート選択モードを開始しました。アセットを選択してください。', 'success');
+  showToastRef(t('share.toastExportModeStarted'), 'success');
 }
 
 export function cancelExportMode() {
@@ -141,7 +142,7 @@ function selectAllExport() {
   updateExportSelectedCount();
   renderLibraryRef();
   if (count === 0) {
-    showToastRef('エクスポート可能な有効なハッシュ値とレビューを持つ動画がありません。', 'warning');
+    showToastRef(t('share.toastNoExportableVideos'), 'warning');
   }
 }
 
@@ -153,7 +154,7 @@ function deselectAllExport() {
 
 function submitExport() {
   if (!stateRef.selectedExportVideoIds || stateRef.selectedExportVideoIds.size === 0) {
-    showToastRef('エクスポート対象の動画が選択されていません。', 'error');
+    showToastRef(t('share.toastNoExportTargetsSelected'), 'error');
     return;
   }
 
@@ -170,7 +171,7 @@ function submitExport() {
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
 
-    showToastRef('共有レビューのエクスポートに成功しました。', 'success');
+    showToastRef(t('share.toastExportSuccess'), 'success');
     cancelExportMode();
   } catch (err) {
     showToastRef(err.message, 'error');
@@ -191,7 +192,7 @@ function handleFileImport(e) {
       // Perform validation before showing preview
       const validation = validateSharedReviewPackage(pkg);
       if (!validation.isValid) {
-        showToastRef('インポートパッケージの検証に失敗しました:\n' + validation.errors.join('; '), 'error');
+        showToastRef(t('share.toastImportValidationFailed', { errors: validation.errors.join('; ') }), 'error');
         elements.importFileInput.value = '';
         return;
       }
@@ -199,7 +200,7 @@ function handleFileImport(e) {
       currentImportPackage = pkg;
       openImportPreview(pkg);
     } catch (err) {
-      showToastRef('JSONの解析に失敗しました: ' + err.message, 'error');
+      showToastRef(t('share.toastImportJsonParseFailed', { error: err.message }), 'error');
       elements.importFileInput.value = '';
     }
   };
@@ -211,7 +212,7 @@ function openImportPreview(pkg) {
     elements.importExporterName.textContent = pkg.exporter.displayName;
   }
   if (elements.importExportedAt) {
-    elements.importExportedAt.textContent = new Date(pkg.exportedAt).toLocaleString('ja-JP');
+    elements.importExportedAt.textContent = new Date(pkg.exportedAt).toLocaleString(currentLocale === 'ja' ? 'ja-JP' : (currentLocale === 'zh-CN' ? 'zh-CN' : 'en-US'));
   }
 
   if (elements.importPreviewList) {
@@ -228,18 +229,18 @@ function openImportPreview(pkg) {
       const isDuplicatePending = dbRef.hasPendingSharedReview(videoHash, reviewId, reviewerId);
       const isDuplicate = isDuplicateImported || isDuplicatePending;
 
-      let titleText = '(動画未登録)';
-      let statusText = '未登録 (保留保存)';
+      let titleText = t('share.tableVideoNotRegistered');
+      let statusText = t('share.tableStatusPending');
       let statusStyle = 'color: var(--color-warning, #f59e0b); font-weight: 600;';
 
       if (matchedVideo) {
         titleText = matchedVideo.displayTitle || matchedVideo.title;
-        statusText = 'ローカル一致';
+        statusText = t('share.tableStatusMatched');
         statusStyle = 'color: var(--color-success, #10b981); font-weight: 600;';
       }
 
       if (isDuplicate) {
-        statusText = '重複 (スキップ予定)';
+        statusText = t('share.tableStatusDuplicate');
         statusStyle = 'color: var(--color-text-muted, #9ca3af); font-style: italic;';
       }
 
@@ -259,7 +260,7 @@ function openImportPreview(pkg) {
       if (isDuplicate) {
         chk.checked = false;
         chk.disabled = true;
-        chk.title = '既にインポート済み、または保留リストに存在します';
+        chk.title = t('share.tooltipAlreadyImportedOrPending');
       } else {
         chk.checked = true;
       }
@@ -294,7 +295,7 @@ function openImportPreview(pkg) {
       const tdRating = document.createElement('td');
       tdRating.style.padding = '10px';
       tdRating.style.textAlign = 'center';
-      tdRating.textContent = review.overallRating ? scoreToGrade(review.overallRating) : '未評価';
+      tdRating.textContent = review.overallRating ? scoreToGrade(review.overallRating) : t('share.unratedText');
       tr.appendChild(tdRating);
 
       // Tags Count TD
@@ -375,7 +376,7 @@ function submitImport() {
   });
 
   if (selectedIndices.length === 0) {
-    showToastRef('インポート対象が選択されていません。', 'error');
+    showToastRef(t('share.toastNoImportTargetsSelected'), 'error');
     return;
   }
 
@@ -383,19 +384,20 @@ function submitImport() {
     const summary = importPackage(dbRef, currentImportPackage, selectedIndices);
 
     // Display summary results
-    const summaryText = `インポート完了しました。\n` +
-      `インポート成功: ${summary.imported} 件\n` +
-      `保留保存(未登録): ${summary.pending} 件\n` +
-      `重複スキップ: ${summary.duplicate} 件\n` +
-      `保護/スキップ: ${summary.protected} 件\n` +
-      `失敗: ${summary.failed} 件`;
+    const summaryText = t('share.importSummaryAlert', {
+      imported: summary.imported,
+      pending: summary.pending,
+      duplicate: summary.duplicate,
+      protected: summary.protected,
+      failed: summary.failed
+    });
 
     alert(summaryText); // using standard alert as per requirement (or we can show modal/toast)
-    showToastRef('インポートが完了しました。', 'success');
+    showToastRef(t('share.toastImportCompleted'), 'success');
     closeImportPreview();
     renderLibraryRef();
   } catch (err) {
-    showToastRef('インポート中にエラーが発生しました: ' + err.message, 'error');
+    showToastRef(t('share.toastImportError', { error: err.message }), 'error');
   }
 }
 

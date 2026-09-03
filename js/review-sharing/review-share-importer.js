@@ -2,6 +2,8 @@
 import { validateSharedReviewPackage } from './review-share-validator.js';
 import { normalizeTag } from './review-share-model.js';
 
+export const DEFAULT_SHARED_REVIEWER_NAME = '共有レビュアー';
+
 function generateUUIDv4() {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
     return crypto.randomUUID();
@@ -126,7 +128,7 @@ export function importSharedReviewItem(db, { videoHash, review, exporterDisplayN
   let dbReviewer = db.findReviewerBySourceId(reviewerId);
   if (!dbReviewer) {
     dbReviewer = db.addImportedReviewer({
-      displayName: exporterDisplayName || '共有レビュアー',
+      displayName: (exporterDisplayName && exporterDisplayName.trim()) || DEFAULT_SHARED_REVIEWER_NAME,
       sourceReviewerId: reviewerId
     });
   }
