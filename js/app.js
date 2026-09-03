@@ -34,6 +34,7 @@ import {
 import { renderFolderSettingsUI, updateScanProgressUI } from './folder/folder-settings-ui.js';
 import { initShareUI } from './review-sharing/review-share-ui.js';
 import { isVideoEligibleForExport } from './review-sharing/review-share-exporter.js';
+import { initI18n, translateDOM, t, currentLocale } from './i18n.js';
 
 export {
   bgHashState,
@@ -43,7 +44,11 @@ export {
   clearCloseTimeout,
   handleLocationsRemoved,
   els,
-  openSettingsModal
+  openSettingsModal,
+  initI18n,
+  translateDOM,
+  t,
+  currentLocale
 };
 
 // Instantiate DB & components
@@ -278,6 +283,8 @@ export let reviewEditorController = new ReviewEditorController({
 // Initialize Application
 if (typeof window !== 'undefined' && !window.__TEST_ENV__) {
   document.addEventListener('DOMContentLoaded', async () => {
+    initI18n();
+    translateDOM();
     radar = new RadarChart(document.getElementById('radar-chart-container'));
     reviewEditorController.radar = radar;
 

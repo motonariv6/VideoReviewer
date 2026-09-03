@@ -133,22 +133,58 @@ header {
 .logo-container {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 12px;
 }
 
 .logo-icon {
-  width: 28px;
-  height: 28px;
-  color: var(--color-primary);
-  filter: drop-shadow(0 0 8px var(--color-primary-glow));
+  width: 32px;
+  height: 32px;
+  flex-shrink: 0;
+  filter: drop-shadow(0 0 8px rgba(99, 102, 241, 0.4));
 }
 
-.logo-text {
+.logo-text-group {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  line-height: 1.15;
+}
+
+.logo-title {
   font-size: 1.15rem;
   font-weight: 700;
-  background: linear-gradient(135deg, var(--color-text-main) 30%, var(--color-primary) 100%);
+  letter-spacing: -0.01em;
+  color: var(--color-text-main);
+  white-space: nowrap;
+}
+
+.brand-vrv {
+  font-weight: 800;
+  letter-spacing: 0.02em;
+  background: linear-gradient(135deg, #ffffff 40%, #a5b4fc 100%);
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
+}
+
+.brand-sep {
+  color: var(--color-primary);
+}
+
+.brand-name {
+  color: var(--color-text-main);
+}
+
+.brand-accent {
+  color: #38bdf8;
+  font-weight: 800;
+}
+
+.logo-tagline {
+  font-size: 0.6875rem;
+  font-weight: 500;
+  color: var(--color-text-muted);
+  letter-spacing: 0.02em;
+  white-space: nowrap;
 }
 
 .header-actions {
