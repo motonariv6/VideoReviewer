@@ -11,16 +11,39 @@
   <!-- Header Section -->
   <header class="glass-panel">
     <div class="logo-container">
-      <!-- VRV Film/Play + Check SVG Logo -->
-      <svg class="logo-icon vrv-logo-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" fill="none">
-        <rect x="2" y="4" width="28" height="24" rx="6" fill="#1e1b4b" stroke="#6366f1" stroke-width="2"/>
-        <path d="M7 8h2v2H7zm0 6h2v2H7zm0 6h2v2H7zm16-12h2v2h-2zm0 6h2v2h-2zm0 6h2v2h-2z" fill="#818cf8"/>
-        <path d="M12 11l7 5-7 5V11z" fill="#38bdf8"/>
-        <path d="M16 19l3 3 6-6" stroke="#10b981" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+      <!-- VRV Official Film/Play + Check SVG Logo -->
+      <svg class="logo-icon vrv-logo-icon" viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+        <defs>
+          <linearGradient id="vrv-check-grad" x1="20" y1="80" x2="80" y2="30" gradientUnits="userSpaceOnUse">
+            <stop offset="0%" stop-color="#2563eb" />
+            <stop offset="100%" stop-color="#38bdf8" />
+          </linearGradient>
+          <filter id="vrv-check-shadow" x="-20%" y="-20%" width="140%" height="140%">
+            <feDropShadow dx="0" dy="2" stdDeviation="3" flood-color="#000000" flood-opacity="0.4" />
+          </filter>
+        </defs>
+        <!-- Film Frame -->
+        <rect x="8" y="10" width="74" height="74" rx="14" fill="#ffffff" />
+        <!-- Perforations Left -->
+        <rect x="14" y="16" width="9" height="9" rx="2.5" fill="#0b1320" />
+        <rect x="14" y="29" width="9" height="9" rx="2.5" fill="#0b1320" />
+        <rect x="14" y="42" width="9" height="9" rx="2.5" fill="#0b1320" />
+        <rect x="14" y="55" width="9" height="9" rx="2.5" fill="#0b1320" />
+        <rect x="14" y="68" width="9" height="9" rx="2.5" fill="#0b1320" />
+        <!-- Perforations Right -->
+        <rect x="67" y="16" width="9" height="9" rx="2.5" fill="#0b1320" />
+        <rect x="67" y="29" width="9" height="9" rx="2.5" fill="#0b1320" />
+        <rect x="67" y="42" width="9" height="9" rx="2.5" fill="#0b1320" />
+        <rect x="67" y="55" width="9" height="9" rx="2.5" fill="#0b1320" />
+        <rect x="67" y="68" width="9" height="9" rx="2.5" fill="#0b1320" />
+        <!-- Play Triangle -->
+        <path d="M36 33.5 C36 32 38 31 39.5 32 L58.5 45.5 C60 46.5 60 48 58.5 49 L39.5 62.5 C38 63.5 36 62.5 36 61 Z" fill="#0b1320" />
+        <!-- Checkmark -->
+        <path d="M26 62 L41 77 L78 38" stroke="url(#vrv-check-grad)" stroke-width="12" stroke-linecap="round" stroke-linejoin="round" filter="url(#vrv-check-shadow)" />
       </svg>
       <div class="logo-text-group">
         <div class="logo-title">
-          <span class="brand-vrv">VRV</span><span class="brand-sep">:</span> <span class="brand-name">Video<span class="brand-accent">Re</span>Viewer</span>
+          <span class="brand-vrv"><span class="vrv-v">V</span><span class="vrv-r">R</span><span class="vrv-v">V</span></span><span class="brand-sep">:</span> <span class="brand-name">Video<span class="brand-re">Re</span>Viewer</span>
         </div>
         <div class="logo-tagline" data-i18n="brand.tagline">Review what you view.</div>
       </div>
