@@ -55,6 +55,14 @@ export function resolvePendingSharedReviewsForVideo({ db, mediaAssetId, contentH
       continue;
     }
 
+    // Duplicate Check 2: Already reviewed by this remote reviewer?
+    const alreadyReviewed = db.findReviewByMediaAndSourceReviewer(rawAsset.id, reviewerId);
+    if (alreadyReviewed) {
+      db.removePendingSharedReview(pending.id);
+      summary.duplicate++;
+      continue;
+    }
+
     // Atomicity: 1 pending item unit transaction
     const snapshot = db.createTransactionSnapshot();
     try {

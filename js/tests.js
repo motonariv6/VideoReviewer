@@ -17,6 +17,7 @@ import { runTagManagementTests } from './tests/tag-management.tests.js';
 import { runSchemaCanonicalizationTests } from './tests/schema-canonicalization.tests.js';
 import { runCustomPosterTests } from './tests/custom-poster.tests.js';
 import { runI18nTests } from './tests/i18n.tests.js';
+import { runReviewerIdentityTests } from './tests/reviewer-identity.tests.js';
 import { t, setLocale, currentLocale } from './i18n.js';
 
 export const VALID_HASH_A = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
@@ -2677,6 +2678,12 @@ export async function runTests(groupFilter = null) {
   if (!groupFilter || groupFilter === 'all' || groupFilter === 'i18n') {
     const i18nRes = await runI18nTests();
     results.push(...i18nRes);
+  }
+
+  // --- RUN GROUP 26: REVIEWER IDENTITY TESTS ---
+  if (!groupFilter || groupFilter === 'all' || groupFilter === 'reviewer-identity') {
+    const reviewerIdentityRes = await runReviewerIdentityTests();
+    results.push(...reviewerIdentityRes);
   }
 
   } finally {

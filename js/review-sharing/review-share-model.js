@@ -181,3 +181,28 @@ export function aggregateTimelineComments(reviews) {
 
   return allComments;
 }
+
+/**
+ * Extracts a compact 8-character identifier from a full reviewer ID.
+ * Strips the 'reviewer-' prefix if present and returns the first 8 characters.
+ * @param {string} reviewerId
+ * @returns {string} 8-char short identifier or empty string if invalid
+ */
+export function getReviewerShortId(reviewerId) {
+  if (!reviewerId || typeof reviewerId !== 'string') return '';
+  const clean = reviewerId.startsWith('reviewer-') ? reviewerId.slice(9) : reviewerId;
+  return clean.slice(0, 8);
+}
+
+/**
+ * Formats a user-facing reviewer identity string as "{displayName}@{shortId}".
+ * Does not mutate persistent state.
+ * @param {string} displayName
+ * @param {string} reviewerId
+ * @returns {string} Formatted string like "Morry@8f3a2d2e" or "Anonymous@8f3a2d2e"
+ */
+export function formatReviewerIdentity(displayName, reviewerId) {
+  const name = (displayName && String(displayName).trim()) || 'Anonymous';
+  const shortId = getReviewerShortId(reviewerId);
+  return shortId ? `${name}@${shortId}` : name;
+}

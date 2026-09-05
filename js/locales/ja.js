@@ -205,6 +205,10 @@ export const ja = {
   settings: {
     languageLabel: "Language / 言語",
     modalTitle: "個別評価項目設定",
+    reviewerSectionTitle: "レビュアー設定",
+    reviewerSectionDesc: "レビュー共有やエクスポート時に表示される名前です。レビュアーIDは変更されません。",
+    reviewerNamePlaceholder: "表示名を入力 (例: Morry)...",
+    reviewerNameSavedToast: "レビュアー名を更新しました",
     genreSectionTitle: "動画ジャンル設定",
     newGenrePlaceholder: "新しいジャンル名を入力 (例: インタビュー)...",
     genreReorderLabel: "ジャンル並べ替え：",

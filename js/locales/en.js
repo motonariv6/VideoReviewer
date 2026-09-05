@@ -205,6 +205,10 @@ export const en = {
   settings: {
     languageLabel: "Language",
     modalTitle: "Review Settings",
+    reviewerSectionTitle: "Reviewer Settings",
+    reviewerSectionDesc: "Your display name for review sharing and exports. Reviewer ID remains immutable.",
+    reviewerNamePlaceholder: "Enter display name (e.g. Morry)...",
+    reviewerNameSavedToast: "Reviewer name updated",
     genreSectionTitle: "Video Genre Settings",
     newGenrePlaceholder: "Enter new genre name (e.g. Interview)...",
     genreReorderLabel: "Genre Order:",

@@ -573,6 +573,29 @@
         <!-- Divider -->
         <div style="border-top: 1px solid var(--color-border); margin: 16px 0;"></div>
 
+        <!-- Reviewer Identity Section -->
+        <div class="editor-section" style="gap: 8px; margin-bottom: 20px;">
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 4px;">
+            <div style="display:flex; align-items:center; gap:8px;">
+              <svg xmlns="http://www.w3.org/2000/svg" style="width:18px;height:18px;flex-shrink:0;color:var(--color-primary, #6366f1)" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+              </svg>
+              <h4 data-i18n="settings.reviewerSectionTitle" style="font-size: 1rem; font-weight: 600; color: var(--color-text-main); margin: 0;">レビュアー設定</h4>
+            </div>
+            <span id="settings-reviewer-identity-badge" style="font-size:0.75rem; font-family:monospace; background:rgba(255,255,255,0.06); padding:2px 8px; border-radius:4px; border:1px solid var(--color-border); color:var(--color-primary);">Anonymous@--------</span>
+          </div>
+          <p data-i18n="settings.reviewerSectionDesc" style="color:var(--color-text-muted);font-size:0.8125rem;line-height:1.4;margin:0 0 6px 0;">
+            レビュー共有やエクスポート時に表示される名前です。レビュアーIDは変更されません。
+          </p>
+          <div style="display:flex; gap:8px; align-items: center;">
+            <input type="text" id="settings-reviewer-name-input" class="form-input" data-i18n="settings.reviewerNamePlaceholder" data-i18n-attr="placeholder" placeholder="表示名を入力 (例: Morry)..." style="flex:1; height:38px;">
+            <button id="settings-btn-reviewer-save" class="btn btn-secondary" data-i18n="common.save" style="height:38px; font-size:0.8125rem; padding: 0 16px;">保存</button>
+          </div>
+        </div>
+
+        <!-- Divider -->
+        <div style="border-top: 1px solid var(--color-border); margin: 16px 0;"></div>
+
         <!-- Genre Configuration Section -->
         <div class="editor-section" style="gap: 8px; margin-bottom: 20px;">
           <h4 data-i18n="settings.genreSectionTitle" style="font-size: 1rem; font-weight: 600; color: var(--color-text-main); margin-bottom: 4px;">動画ジャンル設定</h4>

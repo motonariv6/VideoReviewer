@@ -205,6 +205,10 @@ export const zhCN = {
   settings: {
     languageLabel: "Language / 语言",
     modalTitle: "评价项目设置",
+    reviewerSectionTitle: "审阅者设置",
+    reviewerSectionDesc: "在共享和导出评论时显示的名称。审阅者 ID 保持不变。",
+    reviewerNamePlaceholder: "输入显示名称 (例如: Morry)...",
+    reviewerNameSavedToast: "审阅者名称已更新",
     genreSectionTitle: "视频类型设置",
     newGenrePlaceholder: "输入新类型名称 (例如: 采访)...",
     genreReorderLabel: "类型排序：",

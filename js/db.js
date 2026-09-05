@@ -2892,9 +2892,9 @@ export class AppDatabase {
     }
     let local = this.reviewers.find(r => r.isLocal);
     if (!local) {
-      const reviewerName = (this.storage && (this.storage.getItem(`${this.prefix}reviewer_name`) || this.storage.getItem('vreview_reviewer_name') || this.storage.getItem('reviewerName'))) || '自分';
+      const reviewerName = (this.storage && (this.storage.getItem(`${this.prefix}reviewer_name`) || this.storage.getItem('vreview_reviewer_name') || this.storage.getItem('reviewerName'))) || 'Anonymous';
       local = {
-        id: 'reviewer-' + generateUUID(),
+        id: 'reviewer-' + generateUUIDv4(),
         displayName: reviewerName,
         isLocal: true,
         createdAt: new Date().toISOString(),
@@ -2903,6 +2903,18 @@ export class AppDatabase {
       this.reviewers.push(local);
       this._saveTable('reviewers', this.reviewers);
     }
+    return local;
+  }
+
+  updateLocalReviewerDisplayName(newDisplayName) {
+    const local = this.getLocalReviewer();
+    if (!local) {
+      throw new Error('Local reviewer not found');
+    }
+    const trimmed = (newDisplayName && String(newDisplayName).trim()) || 'Anonymous';
+    local.displayName = trimmed;
+    local.updatedAt = new Date().toISOString();
+    this._saveTable('reviewers', this.reviewers);
     return local;
   }
 
@@ -3302,6 +3314,15 @@ export class AppDatabase {
     );
   }
 
+  hasPendingSharedReviewForReviewer(videoHash, reviewerId) {
+    if (!videoHash || !reviewerId) return false;
+    const lowerHash = videoHash.toLowerCase();
+    return this.pendingSharedReviews.some(p =>
+      p.videoHash === lowerHash &&
+      (p.reviewerId === reviewerId || (p.payload && p.payload.reviewerId === reviewerId))
+    );
+  }
+
   getOrCreateTag(tagName) {
     if (!tagName) return null;
     const normalized = normalizeTag(tagName);
@@ -3326,6 +3347,26 @@ export class AppDatabase {
     return this.reviews.find(r => r.sourceReviewId === sourceReviewId && r.sourceReviewerId === sourceReviewerId) || null;
   }
 
+  findReviewByMediaAndReviewer(mediaAssetId, reviewerId) {
+    if (!mediaAssetId || !reviewerId) return null;
+    return this.reviews.find(r => r.mediaAssetId === mediaAssetId && r.reviewerId === reviewerId) || null;
+  }
+
+  findReviewByMediaAndSourceReviewer(mediaAssetId, sourceReviewerId) {
+    if (!mediaAssetId || !sourceReviewerId) return null;
+    return this.reviews.find(r => r.mediaAssetId === mediaAssetId && r.sourceReviewerId === sourceReviewerId) || null;
+  }
+
+  updateReviewerDisplayName(reviewerId, newDisplayName) {
+    const rev = this.getReviewerById(reviewerId);
+    if (!rev) return null;
+    const trimmed = (newDisplayName && String(newDisplayName).trim()) || 'Anonymous';
+    rev.displayName = trimmed;
+    rev.updatedAt = new Date().toISOString();
+    this._saveTable('reviewers', this.reviewers);
+    return rev;
+  }
+
   addImportedReviewer({ displayName, sourceReviewerId }) {
     const now = new Date().toISOString();
     const reviewer = {
@@ -3342,6 +3383,15 @@ export class AppDatabase {
   }
 
   addImportedReview({ mediaAssetId, reviewerId, overallScore, comment, sourceReviewId, sourceReviewerId }) {
+    // Guard: Logical uniqueness by mediaAssetId + reviewerId / sourceReviewerId
+    const existing = this.reviews.find(r =>
+      r.mediaAssetId === mediaAssetId &&
+      (r.reviewerId === reviewerId || (sourceReviewerId && r.sourceReviewerId === sourceReviewerId))
+    );
+    if (existing) {
+      throw new Error(`Duplicate review detected for mediaAssetId: ${mediaAssetId} and reviewerId: ${reviewerId}`);
+    }
+
     const now = new Date().toISOString();
     const review = {
       id: 'rev-' + generateUUIDv4(), // Always generate local UUIDv4
