@@ -36,6 +36,8 @@ import { initShareUI } from './review-sharing/review-share-ui.js';
 import { isVideoEligibleForExport } from './review-sharing/review-share-exporter.js';
 import { formatReviewerIdentity } from './review-sharing/review-share-model.js';
 import { initI18n, translateDOM, t, currentLocale, setLocale, translateBuiltInField, resolveUserEditedValue } from './i18n.js';
+import { buildCoreSnapshot } from './connect/core-snapshot-builder.js';
+import { ConnectClient } from './connect/connect-client.js';
 
 export {
   bgHashState,
@@ -46,6 +48,7 @@ export {
   handleLocationsRemoved,
   els,
   openSettingsModal,
+  handleConnectSync,
   initI18n,
   translateDOM,
   t,
@@ -187,6 +190,8 @@ const els = {
   settingsReviewerNameInput: document.getElementById('settings-reviewer-name-input'),
   settingsBtnReviewerSave: document.getElementById('settings-btn-reviewer-save'),
   settingsReviewerIdentityBadge: document.getElementById('settings-reviewer-identity-badge'),
+  settingsBtnConnectSync: document.getElementById('settings-btn-connect-sync'),
+  settingsConnectSyncStatus: document.getElementById('settings-connect-sync-status'),
   settingsCloseX: document.getElementById('settings-close-x'),
   settingsCriteriaList: document.getElementById('settings-criteria-list'),
   settingsNewNameInput: document.getElementById('settings-new-name-input'),
@@ -396,6 +401,11 @@ function initEventListeners() {
         handleSaveReviewerName();
       }
     });
+  }
+
+  // Settings VRV Connect sync event listener
+  if (els.settingsBtnConnectSync) {
+    els.settingsBtnConnectSync.addEventListener('click', handleConnectSync);
   }
 
   // Settings tag management event listeners
@@ -1934,6 +1944,11 @@ function openSettingsModal() {
     }
   }
 
+  // Reset Connect sync status
+  if (els.settingsConnectSyncStatus) {
+    els.settingsConnectSyncStatus.textContent = '';
+  }
+
   openModal(els.modalSettings);
 }
 
@@ -1950,6 +1965,58 @@ function handleSaveReviewerName() {
   // If review editor is open, refresh reviews
   if (state.currentVideoId && state.currentView === 'editor' && reviewEditorController) {
     reviewEditorController.renderSharedReviews();
+  }
+}
+
+let isConnectSyncing = false;
+async function handleConnectSync() {
+  if (isConnectSyncing) return;
+  isConnectSyncing = true;
+
+  if (els.settingsBtnConnectSync) {
+    els.settingsBtnConnectSync.disabled = true;
+  }
+  if (els.settingsConnectSyncStatus) {
+    els.settingsConnectSyncStatus.textContent = t('settings.connectSyncing');
+    els.settingsConnectSyncStatus.style.color = 'var(--color-text-muted)';
+  }
+
+  try {
+    const localReviewer = db.getLocalReviewer();
+    if (!localReviewer) {
+      throw new Error(t('settings.connectErrorNoReviewer'));
+    }
+
+    const snapshot = buildCoreSnapshot(db);
+    const client = new ConnectClient();
+    const result = await client.sendSnapshot(snapshot);
+
+    if (els.settingsConnectSyncStatus) {
+      const count = (result && typeof result.videoCount === 'number') ? result.videoCount : snapshot.videos.length;
+      els.settingsConnectSyncStatus.textContent = t('settings.connectSuccess', { count });
+      els.settingsConnectSyncStatus.style.color = 'var(--color-success, #10b981)';
+    }
+  } catch (err) {
+    console.error('[VRV Connect Sync Error]', err);
+    if (els.settingsConnectSyncStatus) {
+      let message = t('settings.connectErrorFailed');
+      if (err && err.message) {
+        if (err.message.includes('Connectに接続できません') || err.message.includes('Failed to fetch')) {
+          message = t('settings.connectErrorConnection');
+        } else if (err.message.includes('ローカルレビュアー')) {
+          message = t('settings.connectErrorNoReviewer');
+        } else {
+          message = err.message;
+        }
+      }
+      els.settingsConnectSyncStatus.textContent = message;
+      els.settingsConnectSyncStatus.style.color = 'var(--color-danger, #ef4444)';
+    }
+  } finally {
+    isConnectSyncing = false;
+    if (els.settingsBtnConnectSync) {
+      els.settingsBtnConnectSync.disabled = false;
+    }
   }
 }
 

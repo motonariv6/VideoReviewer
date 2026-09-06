@@ -596,6 +596,28 @@
         <!-- Divider -->
         <div style="border-top: 1px solid var(--color-border); margin: 16px 0;"></div>
 
+        <!-- VRV Connect Section -->
+        <div class="editor-section" style="gap: 8px; margin-bottom: 20px;">
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 4px;">
+            <div style="display:flex; align-items:center; gap:8px;">
+              <svg xmlns="http://www.w3.org/2000/svg" style="width:18px;height:18px;flex-shrink:0;color:var(--color-primary, #6366f1)" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4" />
+              </svg>
+              <h4 data-i18n="settings.connectSectionTitle" style="font-size: 1rem; font-weight: 600; color: var(--color-text-main); margin: 0;">VRV Connect</h4>
+            </div>
+          </div>
+          <p data-i18n="settings.connectSectionDesc" style="color:var(--color-text-muted);font-size:0.8125rem;line-height:1.4;margin:0 0 6px 0;">
+            VRV Connectとライブラリのスナップショットを手動同期します。
+          </p>
+          <div style="display:flex; gap:12px; align-items: center;">
+            <button id="settings-btn-connect-sync" class="btn btn-secondary" data-i18n="settings.connectSyncButton" style="height:38px; font-size:0.8125rem; padding: 0 16px;">Connectへ同期</button>
+            <span id="settings-connect-sync-status" style="font-size:0.8125rem; color:var(--color-text-muted);"></span>
+          </div>
+        </div>
+
+        <!-- Divider -->
+        <div style="border-top: 1px solid var(--color-border); margin: 16px 0;"></div>
+
         <!-- Genre Configuration Section -->
         <div class="editor-section" style="gap: 8px; margin-bottom: 20px;">
           <h4 data-i18n="settings.genreSectionTitle" style="font-size: 1rem; font-weight: 600; color: var(--color-text-main); margin-bottom: 4px;">動画ジャンル設定</h4>
