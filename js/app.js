@@ -286,24 +286,30 @@ export let reviewEditorController = new ReviewEditorController({
 });
 
 // Initialize Application
+async function startApp() {
+  initI18n();
+  translateDOM();
+  radar = new RadarChart(document.getElementById('radar-chart-container'));
+  reviewEditorController.radar = radar;
+
+  // Connect to IndexedDB and run legacy image migration
+  await db.initAsync();
+
+  // Query permission for active directory sources on boot
+  await syncActiveDirectoryPermissions();
+
+  initEventListeners();
+  initAutosaveTimer();
+  initShareUI(db, state, showToast, renderLibrary, getFilteredVideosList);
+  renderLibrary();
+}
+
 if (typeof window !== 'undefined' && !window.__TEST_ENV__) {
-  document.addEventListener('DOMContentLoaded', async () => {
-    initI18n();
-    translateDOM();
-    radar = new RadarChart(document.getElementById('radar-chart-container'));
-    reviewEditorController.radar = radar;
-
-    // Connect to IndexedDB and run legacy image migration
-    await db.initAsync();
-
-    // Query permission for active directory sources on boot
-    await syncActiveDirectoryPermissions();
-
-    initEventListeners();
-    initAutosaveTimer();
-    initShareUI(db, state, showToast, renderLibrary, getFilteredVideosList);
-    renderLibrary();
-  });
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', startApp);
+  } else {
+    startApp();
+  }
 }
 
 // Setup event bindings
@@ -1915,6 +1921,8 @@ function openSettingsModal() {
   if (els.settingsTagSearchInput) {
     els.settingsTagSearchInput.value = '';
   }
+  renderSettingsTagList();
+
   // Populate Reviewer Identity
   const localReviewer = db.getLocalReviewer();
   if (localReviewer) {

@@ -500,6 +500,32 @@ export async function runReviewerIdentityTests() {
     assert(getReviewerShortId('reviewer-abc') === 'abc', 'Shorter than 8 chars should yield available chars');
   });
 
+  // L. Schema v4 既定環境での local reviewer 自動初期化と表示名更新フォールバック
+  await runTest('L. Schema v4 既定環境での local reviewer 自動初期化と表示名更新フォールバック', async () => {
+    const mockStorage = new MemoryStorage();
+    mockStorage.setItem('test_schema_version', '4');
+    mockStorage.setItem('test_reviewers', JSON.stringify([]));
+
+    const testDb = new AppDatabase(mockStorage, 'test_');
+    assert(testDb.getLocalReviewer() === null, 'Initially without initAsync, local reviewer may be null');
+
+    await testDb.initAsync();
+    const local = testDb.getLocalReviewer();
+    assert(local !== null, 'initAsync must ensure local reviewer even if schema_version is already 4');
+    assert(local.isLocal === true, 'Local reviewer must have isLocal: true');
+    assert(local.displayName === 'Anonymous', 'Default displayName must be Anonymous');
+
+    const updated = testDb.updateLocalReviewerDisplayName('Morry');
+    assert(updated.displayName === 'Morry', 'DisplayName must update to Morry');
+    assert(testDb.getLocalReviewer().displayName === 'Morry', 'getLocalReviewer must return updated displayName');
+
+    // Test safe fallback if reviewers is emptied unexpectedly
+    testDb.reviewers = [];
+    const recovered = testDb.updateLocalReviewerDisplayName('RecoveredUser');
+    assert(recovered.displayName === 'RecoveredUser', 'Fallback must create and return new local reviewer');
+    assert(recovered.isLocal === true, 'Fallback local reviewer must have isLocal: true');
+  });
+
   console.groupEnd();
   return results;
 }

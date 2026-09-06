@@ -574,6 +574,9 @@ export class AppDatabase {
     // Perform multi-reviewer and Schema v4 migration (v4)
     await this._migrateToV4MultiReview();
 
+    // Ensure local reviewer invariant for Schema v4
+    this._ensureLocalReviewerDuringInitialization();
+
     // Startup canonicalization for legacy genres/templates data
     await this._canonicalizeLocalLegacyData();
 
@@ -2907,9 +2910,9 @@ export class AppDatabase {
   }
 
   updateLocalReviewerDisplayName(newDisplayName) {
-    const local = this.getLocalReviewer();
+    let local = this.getLocalReviewer();
     if (!local) {
-      throw new Error('Local reviewer not found');
+      local = this._ensureLocalReviewerDuringInitialization();
     }
     const trimmed = (newDisplayName && String(newDisplayName).trim()) || 'Anonymous';
     local.displayName = trimmed;
