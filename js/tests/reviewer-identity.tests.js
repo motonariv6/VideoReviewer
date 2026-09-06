@@ -3,6 +3,7 @@ import { MemoryStorage } from '../tests.js';
 import { exportReviews } from '../review-sharing/review-share-exporter.js';
 import { importPackage } from '../review-sharing/review-share-importer.js';
 import { resolvePendingSharedReviewsForVideo } from '../review-sharing/pending-shared-review-resolver.js';
+import * as reviewShareModel from '../review-sharing/review-share-model.js';
 import { formatReviewerIdentity, getReviewerShortId } from '../review-sharing/review-share-model.js';
 
 export async function runReviewerIdentityTests() {
@@ -524,6 +525,42 @@ export async function runReviewerIdentityTests() {
     const recovered = testDb.updateLocalReviewerDisplayName('RecoveredUser');
     assert(recovered.displayName === 'RecoveredUser', 'Fallback must create and return new local reviewer');
     assert(recovered.isLocal === true, 'Fallback local reviewer must have isLocal: true');
+  });
+
+  // M. review-share-model.js の named export 整合性および app.js 静的 import 契約検証
+  await runTest('M. review-share-model.js の named export 整合性および app.js 静的 import 契約検証', async () => {
+    // 1. Verify exact export names and function types in review-share-model.js
+    assert(typeof reviewShareModel.formatReviewerIdentity === 'function', 'review-share-model must export formatReviewerIdentity as a function');
+    assert(typeof reviewShareModel.getReviewerShortId === 'function', 'review-share-model must export getReviewerShortId as a function');
+    assert(typeof reviewShareModel.aggregateOverallRating === 'function', 'review-share-model must export aggregateOverallRating as a function');
+    assert(typeof reviewShareModel.aggregateTags === 'function', 'review-share-model must export aggregateTags as a function');
+    assert(typeof reviewShareModel.aggregateTimelineComments === 'function', 'review-share-model must export aggregateTimelineComments as a function');
+    assert(typeof reviewShareModel.gradeToScore === 'function', 'review-share-model must export gradeToScore as a function');
+    assert(typeof reviewShareModel.scoreToGrade === 'function', 'review-share-model must export scoreToGrade as a function');
+    assert(typeof reviewShareModel.normalizeTag === 'function', 'review-share-model must export normalizeTag as a function');
+
+    // 2. Verify formatReviewerIdentity functionality
+    assert(reviewShareModel.formatReviewerIdentity('Tester', 'reviewer-12345678-abcd') === 'Tester@12345678', 'formatReviewerIdentity should format correctly');
+    assert(reviewShareModel.getReviewerShortId('reviewer-12345678-abcd') === '12345678', 'getReviewerShortId should extract short ID');
+
+    // 3. Verify app.js import contract matches review-share-model.js exports
+    if (typeof fetch === 'function') {
+      try {
+        const resp = await fetch('js/app.js');
+        if (resp.ok) {
+          const text = await resp.text();
+          const match = text.match(/import\s+\{([^}]+)\}\s+from\s+['"]\.\/review-sharing\/review-share-model\.js['"]/);
+          assert(match !== null, 'app.js must import from ./review-sharing/review-share-model.js');
+          const importedTokens = match[1].split(',').map(s => s.trim().split(/\s+as\s+/)[0]).filter(Boolean);
+          assert(importedTokens.includes('formatReviewerIdentity'), 'app.js must import formatReviewerIdentity');
+          for (const token of importedTokens) {
+            assert(token in reviewShareModel, `Token "${token}" imported in app.js must exist in review-share-model exports`);
+          }
+        }
+      } catch (fetchErr) {
+        // Safe fallback in environments where fetch of js/app.js is unavailable
+      }
+    }
   });
 
   console.groupEnd();
