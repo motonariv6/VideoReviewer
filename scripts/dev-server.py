@@ -27,6 +27,36 @@ class NoCacheDevHandler(SimpleHTTPRequestHandler):
         self.send_header("Expires", "0")
         super().end_headers()
 
+    def do_POST(self):
+        import json
+        import urllib.parse
+
+        parsed_url = urllib.parse.urlparse(self.path)
+        if parsed_url.path == "/api/metric":
+            content_length = int(self.headers.get("Content-Length", 0))
+            body = self.rfile.read(content_length) if content_length > 0 else b"{}"
+            try:
+                data = json.loads(body.decode("utf-8")) if body else {}
+                msg = data.get("message", "")
+                if msg:
+                    sys.stderr.write(f"[METRIC] {msg}\n")
+            except Exception:
+                pass
+
+            response_body = json.dumps({"status": "ok"}).encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(response_body)))
+            self.end_headers()
+            self.wfile.write(response_body)
+        else:
+            response_body = json.dumps({"error": "Not found"}).encode("utf-8")
+            self.send_response(404)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(response_body)))
+            self.end_headers()
+            self.wfile.write(response_body)
+
     def log_message(self, format, *args):
         # Timestamped request logging
         sys.stderr.write(f"[{self.log_date_time_string()}] {format % args}\n")

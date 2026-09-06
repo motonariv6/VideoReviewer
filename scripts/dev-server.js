@@ -37,6 +37,46 @@ const port = parseInt(process.argv[2], 10) || 8000;
 
 const server = http.createServer((req, res) => {
   let reqPath = req.url.split('?')[0];
+
+  if (req.method === 'POST') {
+    if (reqPath === '/api/metric') {
+      let body = '';
+      req.on('data', chunk => {
+        body += chunk;
+      });
+      req.on('end', () => {
+        try {
+          const data = body ? JSON.parse(body) : {};
+          if (data.message) {
+            console.log(`[METRIC] ${data.message}`);
+          }
+        } catch (e) {
+          // ignore parse errors
+        }
+
+        const resp = JSON.stringify({ status: 'ok' });
+        res.writeHead(200, {
+          'Content-Type': 'application/json',
+          'Content-Length': Buffer.byteLength(resp),
+          'Cache-Control': 'no-cache, no-store, must-revalidate',
+          'Pragma': 'no-cache',
+          'Expires': '0'
+        });
+        res.end(resp);
+      });
+      return;
+    }
+
+    const errResp = JSON.stringify({ error: 'Not found' });
+    res.writeHead(404, {
+      'Content-Type': 'application/json',
+      'Content-Length': Buffer.byteLength(errResp),
+      'Cache-Control': 'no-cache, no-store, must-revalidate'
+    });
+    res.end(errResp);
+    return;
+  }
+
   if (reqPath === '/') reqPath = '/index.html';
 
   const safeSuffix = path.normalize(reqPath).replace(/^(\.\.[\/\\])+/, '');
