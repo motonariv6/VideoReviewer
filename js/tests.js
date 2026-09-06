@@ -19,6 +19,7 @@ import { runCustomPosterTests } from './tests/custom-poster.tests.js';
 import { runI18nTests } from './tests/i18n.tests.js';
 import { runReviewerIdentityTests } from './tests/reviewer-identity.tests.js';
 import { runCoreConnectSyncTests } from './tests/core-connect-sync.tests.js';
+import { runMediaLocatorProjectionTests } from './tests/media-locator-projection.tests.js';
 import { t, setLocale, currentLocale } from './i18n.js';
 
 export const VALID_HASH_A = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
@@ -2691,6 +2692,12 @@ export async function runTests(groupFilter = null) {
   if (!groupFilter || groupFilter === 'all' || groupFilter === 'connect-sync' || groupFilter === 'core-connect-sync') {
     const connectSyncRes = await runCoreConnectSyncTests();
     results.push(...connectSyncRes);
+  }
+
+  // --- RUN GROUP 28: MEDIA LOCATOR PROJECTION TESTS ---
+  if (!groupFilter || groupFilter === 'all' || groupFilter === 'media-locator' || groupFilter === 'media-locator-projection') {
+    const locatorRes = await runMediaLocatorProjectionTests();
+    results.push(...locatorRes);
   }
 
   } finally {

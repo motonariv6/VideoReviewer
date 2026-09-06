@@ -66,4 +66,50 @@ export class ConnectClient {
       throw new Error(`無効なレスポンス形式です: ${parseError.message}`);
     }
   }
+
+  /**
+   * Sends a private Media Locator projection DTO to VRV Connect.
+   *
+   * @param {object} locators - Valid Media Locator projection DTO
+   * @returns {Promise<object>} Parsed Connect response
+   * @throws {Error} for network failures, non-2xx status codes, or invalid responses
+   */
+  async sendMediaLocators(locators) {
+    if (!locators) {
+      throw new Error('Locator payload is required.');
+    }
+
+    const endpoint = `${this.baseUrl}/api/v1/core/media-locators`;
+    let response;
+
+    try {
+      response = await this.fetchFn(endpoint, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(locators)
+      });
+    } catch (networkError) {
+      throw new Error(`Connectに接続できません: ${networkError.message || networkError}`);
+    }
+
+    if (!response.ok) {
+      let detail = '';
+      try {
+        const errJson = await response.json();
+        detail = errJson.detail || errJson.message || errJson.error || JSON.stringify(errJson);
+      } catch (e) {
+        detail = response.statusText || String(response.status);
+      }
+      throw new Error(`メディアロケーター同期に失敗しました (${response.status}): ${detail}`);
+    }
+
+    try {
+      const data = await response.json();
+      return data;
+    } catch (parseError) {
+      throw new Error(`無効なレスポンス形式です: ${parseError.message}`);
+    }
+  }
 }
