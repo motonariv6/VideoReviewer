@@ -216,6 +216,7 @@ export const en = {
     connectSuccess: "Sync completed: {count} items",
     connectErrorConnection: "Cannot connect to Connect",
     connectErrorFailed: "Sync failed",
+    connectErrorPartial: "Snapshot synced, but media locator sync failed",
     connectErrorNoReviewer: "Local reviewer information cannot be retrieved.",
     genreSectionTitle: "Video Genre Settings",
     newGenrePlaceholder: "Enter new genre name (e.g. Interview)...",

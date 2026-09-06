@@ -216,6 +216,7 @@ export const ja = {
     connectSuccess: "同期完了: {count}件",
     connectErrorConnection: "Connectに接続できません",
     connectErrorFailed: "同期に失敗しました",
+    connectErrorPartial: "スナップショットは同期されましたが、メディアロケーターの同期に失敗しました",
     connectErrorNoReviewer: "ローカルレビュアー情報が取得できません。",
     genreSectionTitle: "動画ジャンル設定",
     newGenrePlaceholder: "新しいジャンル名を入力 (例: インタビュー)...",

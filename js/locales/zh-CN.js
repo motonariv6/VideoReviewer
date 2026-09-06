@@ -216,6 +216,7 @@ export const zhCN = {
     connectSuccess: "同步完成：{count} 项",
     connectErrorConnection: "无法连接到 Connect",
     connectErrorFailed: "同步失败",
+    connectErrorPartial: "快照已同步，但媒体定位器同步失败",
     connectErrorNoReviewer: "无法获取本地审阅者信息。",
     genreSectionTitle: "视频类型设置",
     newGenrePlaceholder: "输入新类型名称 (例如: 采访)...",
