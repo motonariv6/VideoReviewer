@@ -37,6 +37,7 @@ import { isVideoEligibleForExport } from './review-sharing/review-share-exporter
 import { formatReviewerIdentity } from './review-sharing/review-share-model.js';
 import { initI18n, translateDOM, t, currentLocale, setLocale, translateBuiltInField, resolveUserEditedValue } from './i18n.js';
 import { buildCoreSnapshot } from './connect/core-snapshot-builder.js';
+import { buildMediaLocators } from './connect/media-locator-builder.js';
 import { ConnectClient } from './connect/connect-client.js';
 
 export {
@@ -1987,12 +1988,31 @@ async function handleConnectSync() {
       throw new Error(t('settings.connectErrorNoReviewer'));
     }
 
-    const snapshot = buildCoreSnapshot(db);
     const client = new ConnectClient();
-    const result = await client.sendSnapshot(snapshot);
 
+    // 1. Build and send public snapshot first
+    const snapshot = buildCoreSnapshot(db);
+    const snapshotResult = await client.sendSnapshot(snapshot);
+
+    // 2. Build and send private media locator projection second
+    let locatorResult;
+    try {
+      const locators = buildMediaLocators(db);
+      locatorResult = await client.sendMediaLocators(locators);
+    } catch (locErr) {
+      console.error('[VRV Connect Media Locator Sync Error]', locErr);
+      const partialMsg = t('settings.connectErrorPartial') + (locErr && locErr.message ? `: ${locErr.message}` : '');
+      const partialErr = new Error(partialMsg);
+      partialErr.isPartial = true;
+      partialErr.originalError = locErr;
+      throw partialErr;
+    }
+
+    // 3. Report full success only when BOTH succeed
     if (els.settingsConnectSyncStatus) {
-      const count = (result && typeof result.videoCount === 'number') ? result.videoCount : snapshot.videos.length;
+      const count = (snapshotResult && typeof snapshotResult.videoCount === 'number')
+        ? snapshotResult.videoCount
+        : snapshot.videos.length;
       els.settingsConnectSyncStatus.textContent = t('settings.connectSuccess', { count });
       els.settingsConnectSyncStatus.style.color = 'var(--color-success, #10b981)';
     }
@@ -2001,7 +2021,9 @@ async function handleConnectSync() {
     if (els.settingsConnectSyncStatus) {
       let message = t('settings.connectErrorFailed');
       if (err && err.message) {
-        if (err.message.includes('Connectに接続できません') || err.message.includes('Failed to fetch')) {
+        if (err.isPartial) {
+          message = err.message;
+        } else if (err.message.includes('Connectに接続できません') || err.message.includes('Failed to fetch')) {
           message = t('settings.connectErrorConnection');
         } else if (err.message.includes('ローカルレビュアー')) {
           message = t('settings.connectErrorNoReviewer');

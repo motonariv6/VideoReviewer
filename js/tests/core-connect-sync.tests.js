@@ -1,6 +1,7 @@
 import { AppDatabase } from '../db.js';
 import { MemoryStorage } from '../tests.js';
 import { buildCoreSnapshot } from '../connect/core-snapshot-builder.js';
+import { buildMediaLocators } from '../connect/media-locator-builder.js';
 import { ConnectClient, DEFAULT_CONNECT_URL } from '../connect/connect-client.js';
 import { handleConnectSync, els, setDbForTesting } from '../app.js';
 
@@ -493,12 +494,20 @@ export async function runCoreConnectSyncTests() {
     els.settingsBtnConnectSync = fakeBtn;
     els.settingsConnectSyncStatus = fakeStatus;
 
-    // Trigger handleConnectSync with a fetch that takes time
-    let resolveFetch;
+    // Trigger handleConnectSync with a fetch that takes time on the first call
+    let resolveFirstFetch;
     let fetchCalls = 0;
     const slowFetch = () => new Promise(resolve => {
       fetchCalls++;
-      resolveFetch = resolve;
+      if (fetchCalls === 1) {
+        resolveFirstFetch = resolve;
+      } else {
+        resolve({
+          ok: true,
+          status: 200,
+          json: async () => ({ status: 'ok', locatorVersion: 1, mediaCount: 5 })
+        });
+      }
     });
 
     const origFetch = globalThis.fetch;
@@ -514,7 +523,7 @@ export async function runCoreConnectSyncTests() {
       assert(fetchCalls === 1, 'Concurrent sync must be rejected immediately (fetchCalls === 1)');
 
       // Complete the first fetch
-      resolveFetch({
+      resolveFirstFetch({
         ok: true,
         status: 200,
         json: async () => ({ status: 'ok', snapshotVersion: 1, videoCount: 5 })
@@ -525,6 +534,206 @@ export async function runCoreConnectSyncTests() {
 
       assert(fakeBtn.disabled === false, 'Button must be re-enabled after sync completes');
       assert(fakeStatus.textContent.includes('同期完了'), 'Status must show completion: ' + fakeStatus.textContent);
+    } finally {
+      globalThis.fetch = origFetch;
+    }
+  });
+
+  // Test 26: Full sync sends snapshot first, then media locators in sequence
+  await runTest('26. Full sync sends snapshot first, then media locators in sequence', async () => {
+    const db = await setupStandardDb();
+    setDbForTesting(db);
+
+    db.mediaAssets.push({ id: 'ast-seq-1', displayTitle: 'Sequence Test Video', duration: 120 });
+    db.fileLocations.push({ id: 'loc-seq-1', mediaAssetId: 'ast-seq-1', directoryId: 'dir-seq', relativePath: 'seq.mp4' });
+
+    const fakeBtn = { disabled: false, addEventListener: () => {} };
+    const fakeStatus = { textContent: '', style: {} };
+    els.settingsBtnConnectSync = fakeBtn;
+    els.settingsConnectSyncStatus = fakeStatus;
+
+    const capturedRequests = [];
+    const mockFetch = async (url, options) => {
+      capturedRequests.push({
+        url,
+        method: options.method,
+        body: JSON.parse(options.body),
+        timestamp: Date.now()
+      });
+      if (url.includes('/api/v1/core/snapshot')) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ status: 'ok', snapshotVersion: 1, videoCount: 1 })
+        };
+      }
+      if (url.includes('/api/v1/core/media-locators')) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ status: 'ok', locatorVersion: 1, mediaCount: 1 })
+        };
+      }
+      throw new Error(`Unexpected URL: ${url}`);
+    };
+
+    const origFetch = globalThis.fetch;
+    globalThis.fetch = mockFetch;
+
+    try {
+      await handleConnectSync();
+
+      assert(capturedRequests.length === 2, 'Exactly two requests must be sent (snapshot then locators)');
+      assert(capturedRequests[0].url.endsWith('/api/v1/core/snapshot'), 'Request 1 must be snapshot endpoint');
+      assert(capturedRequests[1].url.endsWith('/api/v1/core/media-locators'), 'Request 2 must be media-locators endpoint');
+      assert(capturedRequests[0].body.snapshotVersion === 1, 'Request 1 payload must be snapshot version 1');
+      assert(capturedRequests[1].body.locatorVersion === 1, 'Request 2 payload must be locator version 1');
+      assert(fakeStatus.textContent.includes('同期完了'), 'Status must show completion');
+      assert(fakeBtn.disabled === false, 'Button must be re-enabled');
+    } finally {
+      globalThis.fetch = origFetch;
+    }
+  });
+
+  // Test 27: Both payload builders are invoked and output formats match expected contracts
+  await runTest('27. Both payload builders are invoked with exact contract structures', async () => {
+    const db = await setupStandardDb();
+    setDbForTesting(db);
+
+    db.mediaAssets.push({ id: 'ast-payload-1', displayTitle: 'Payload Test', duration: 300 });
+    db.fileLocations.push({ id: 'loc-payload-1', mediaAssetId: 'ast-payload-1', directoryId: 'dir-pay', relativePath: 'pay.mp4' });
+
+    const fakeBtn = { disabled: false, addEventListener: () => {} };
+    const fakeStatus = { textContent: '', style: {} };
+    els.settingsBtnConnectSync = fakeBtn;
+    els.settingsConnectSyncStatus = fakeStatus;
+
+    let snapshotPayload = null;
+    let locatorsPayload = null;
+
+    const mockFetch = async (url, options) => {
+      const parsed = JSON.parse(options.body);
+      if (url.includes('/api/v1/core/snapshot')) {
+        snapshotPayload = parsed;
+        return { ok: true, status: 200, json: async () => ({ status: 'ok', snapshotVersion: 1, videoCount: 1 }) };
+      }
+      if (url.includes('/api/v1/core/media-locators')) {
+        locatorsPayload = parsed;
+        return { ok: true, status: 200, json: async () => ({ status: 'ok', locatorVersion: 1, mediaCount: 1 }) };
+      }
+      throw new Error(`Unexpected endpoint: ${url}`);
+    };
+
+    const origFetch = globalThis.fetch;
+    globalThis.fetch = mockFetch;
+
+    try {
+      await handleConnectSync();
+
+      assert(snapshotPayload !== null, 'Snapshot payload must be built');
+      assert(snapshotPayload.snapshotVersion === 1, 'snapshotVersion must be 1');
+      assert(snapshotPayload.videos.some(v => v.mediaAssetId === 'ast-payload-1'), 'Video must be present in snapshot');
+      assert(snapshotPayload.videos[0].relativePath === undefined, 'No relativePath in public snapshot');
+      assert(snapshotPayload.videos[0].directoryId === undefined, 'No directoryId in public snapshot');
+
+      assert(locatorsPayload !== null, 'Locators payload must be built');
+      assert(locatorsPayload.locatorVersion === 1, 'locatorVersion must be 1');
+      const mediaEntry = locatorsPayload.media.find(m => m.mediaAssetId === 'ast-payload-1');
+      assert(mediaEntry, 'Media entry must be in locator payload');
+      assert(mediaEntry.locations[0].directoryId === 'dir-pay', 'directoryId must match');
+      assert(mediaEntry.locations[0].relativePath === 'pay.mp4', 'relativePath must match');
+      assert(mediaEntry.rating === undefined, 'No rating in locators');
+      assert(mediaEntry.tags === undefined, 'No tags in locators');
+    } finally {
+      globalThis.fetch = origFetch;
+    }
+  });
+
+  // Test 28: Snapshot failure prevents media locator sync and avoids false success
+  await runTest('28. Snapshot failure prevents media locator sync and avoids false success', async () => {
+    const db = await setupStandardDb();
+    setDbForTesting(db);
+
+    const fakeBtn = { disabled: false, addEventListener: () => {} };
+    const fakeStatus = { textContent: '', style: {} };
+    els.settingsBtnConnectSync = fakeBtn;
+    els.settingsConnectSyncStatus = fakeStatus;
+
+    let locatorFetchAttempted = false;
+    const mockFetch = async (url) => {
+      if (url.includes('/api/v1/core/snapshot')) {
+        return {
+          ok: false,
+          status: 500,
+          json: async () => ({ detail: 'Database unavailable' })
+        };
+      }
+      if (url.includes('/api/v1/core/media-locators')) {
+        locatorFetchAttempted = true;
+        return { ok: true, status: 200, json: async () => ({ status: 'ok' }) };
+      }
+      throw new Error(`Unexpected endpoint: ${url}`);
+    };
+
+    const origFetch = globalThis.fetch;
+    globalThis.fetch = mockFetch;
+
+    try {
+      await handleConnectSync();
+
+      assert(locatorFetchAttempted === false, 'Media locator sync must NOT be attempted when snapshot fails');
+      assert(!fakeStatus.textContent.includes('同期完了'), 'Must NOT report success');
+      assert(fakeStatus.textContent.includes('同期に失敗しました') || fakeStatus.textContent.includes('Database unavailable'), 'Must display error message');
+      assert(fakeBtn.disabled === false, 'Button must be re-enabled');
+    } finally {
+      globalThis.fetch = origFetch;
+    }
+  });
+
+  // Test 29: Locator failure after snapshot success reports partial failure
+  await runTest('29. Locator failure after snapshot success reports partial failure', async () => {
+    const db = await setupStandardDb();
+    setDbForTesting(db);
+
+    const fakeBtn = { disabled: false, addEventListener: () => {} };
+    const fakeStatus = { textContent: '', style: {} };
+    els.settingsBtnConnectSync = fakeBtn;
+    els.settingsConnectSyncStatus = fakeStatus;
+
+    let snapshotSucceeded = false;
+    let locatorAttempted = false;
+
+    const mockFetch = async (url) => {
+      if (url.includes('/api/v1/core/snapshot')) {
+        snapshotSucceeded = true;
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ status: 'ok', snapshotVersion: 1, videoCount: 3 })
+        };
+      }
+      if (url.includes('/api/v1/core/media-locators')) {
+        locatorAttempted = true;
+        return {
+          ok: false,
+          status: 500,
+          json: async () => ({ detail: 'Disk full' })
+        };
+      }
+      throw new Error(`Unexpected endpoint: ${url}`);
+    };
+
+    const origFetch = globalThis.fetch;
+    globalThis.fetch = mockFetch;
+
+    try {
+      await handleConnectSync();
+
+      assert(snapshotSucceeded === true, 'Snapshot request must have succeeded');
+      assert(locatorAttempted === true, 'Media locator request must have been attempted');
+      assert(!fakeStatus.textContent.includes('同期完了'), 'Must NOT report success when locators fail');
+      assert(fakeStatus.textContent.includes('メディアロケーター') || fakeStatus.textContent.includes('Disk full'), 'Must report partial locator failure');
+      assert(fakeBtn.disabled === false, 'Button must be re-enabled');
     } finally {
       globalThis.fetch = origFetch;
     }
