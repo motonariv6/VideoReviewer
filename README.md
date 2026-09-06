@@ -292,21 +292,35 @@ node run-tests-node.js --group tag-management
 
 ## 12. Running the App (起動方法)
 
-本アプリケーションは、完全にクライアントサイドのみで動作する静的な Web アプリケーションです。セキュリティ上の制約（Web Worker や一部 API の Origin 制約）のため、ローカルファイルをダブルクリックで開くのではなく、簡易的なローカル HTTP サーバーを立ててブラウザでアクセスする必要があります。
+本アプリケーションは、完全にクライアントサイドのみで動作する静的な Web アプリケーションです。セキュリティ上の制約（Web Worker や一部 API の Origin 制約）のため、ローカルファイルをダブルクリックで開くのではなく、ローカル HTTP サーバーを立ててブラウザでアクセスする必要があります。
 
-1. **ローカルサーバーの起動**:
-   リポジトリのルートディレクトリで以下のいずれかのコマンドを実行します。
-   * Pythonを使用する場合:
+> [!IMPORTANT]
+> **開発時のモジュールキャッシュ事故の防止について**:
+> 標準の `python3 -m http.server` 等は `Cache-Control` ヘッダーを返さないため、ブラウザ（Chrome 等）が ES Module の一部をディスクキャッシュしてしまい、更新後のコードと古いモジュールが混在して `SyntaxError`（`does not provide an export named ...`）が発生する原因となります。
+> また、キャッシュ解消のためにブラウザの **「Clear site data（サイトデータの消去）」を実行しないでください**。IndexedDB や LocalStorage に蓄積されたローカルレビューデータや設定が失われてしまいます。
+> 開発時は以下の `scripts/dev-server.py`（または `scripts/dev-server.js`）を使用することで、全リソースに自動で `Cache-Control: no-cache, no-store, must-revalidate` が付与され、データを保持したまま常に最新コードで安全に開発・確認できます。
+
+1. **ローカル開発サーバーの起動**:
+   リポジトリのルートディレクトリで以下のいずれかのコマンドを実行します（ポートは省略時 `8000`）。
+   * **Pythonを使用する場合 (推奨)**:
      ```bash
-     python3 -m http.server 8000
+     python3 scripts/dev-server.py 8000
      ```
-   * Node.jsを使用する場合:
+   * **Node.jsを使用する場合**:
      ```bash
-     npx http-server -p 8000
+     node scripts/dev-server.js 8000
      ```
+     ※ `http-server` パッケージを利用する場合は、キャッシュを無効化する `-c-1` オプションを必ず付与してください:
+     ```bash
+     npx http-server -p 8000 -c-1
+     ```
+
 2. **ブラウザでのアクセス**:
    Google Chrome などの対応ブラウザで以下のURLを開きます。
    [http://localhost:8000](http://localhost:8000)
+
+> [!TIP]
+> 開発中にブラウザ側のキャッシュを強制更新したい場合は、サイトデータを消去するのではなく、Chrome DevTools を開いた状態で **「ハード再読み込み（Cmd + Shift + R）」** を行うか、Network タブの **"Disable cache"** を有効にしてください。
 
 ---
 

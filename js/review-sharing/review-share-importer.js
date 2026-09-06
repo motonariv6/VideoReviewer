@@ -51,12 +51,16 @@ export function importPackage(db, pkg, selectedIndices) {
   };
 
   try {
+    const localReviewer = db.getLocalReviewer();
+
     for (const idx of indices) {
       const item = pkg.items[idx];
       const { videoHash, review } = item;
       const { reviewId, reviewerId } = review;
 
-      // Duplicate Check 1: Already imported?
+      const isSelf = Boolean(localReviewer && (reviewerId === localReviewer.id || (pkg.exporter && pkg.exporter.reviewerId === localReviewer.id)));
+
+      // Duplicate Check 1: Already imported by source review ID?
       const alreadyImported = db.findReviewBySourceId(reviewId, reviewerId);
       if (alreadyImported) {
         summary.duplicate++;
@@ -64,7 +68,8 @@ export function importPackage(db, pkg, selectedIndices) {
       }
 
       // Duplicate Check 2: Already pending?
-      const alreadyPending = db.hasPendingSharedReview(videoHash, reviewId, reviewerId);
+      const alreadyPending = db.hasPendingSharedReview(videoHash, reviewId, reviewerId) ||
+                             db.hasPendingSharedReviewForReviewer(videoHash, reviewerId);
       if (alreadyPending) {
         summary.duplicate++;
         continue;
@@ -74,6 +79,13 @@ export function importPackage(db, pkg, selectedIndices) {
       const matchedVideo = db.findVideoByContentHash(videoHash);
 
       if (matchedVideo) {
+        // Duplicate Check 3: Review already exists for this media asset by this remote reviewer?
+        const existingReview = db.findReviewByMediaAndSourceReviewer(matchedVideo.id, reviewerId);
+        if (existingReview) {
+          summary.duplicate++;
+          continue;
+        }
+
         importSharedReviewItem(db, {
           videoHash,
           review,
@@ -126,7 +138,13 @@ export function importSharedReviewItem(db, { videoHash, review, exporterDisplayN
 
   // Resolve/Register Remote Reviewer
   let dbReviewer = db.findReviewerBySourceId(reviewerId);
-  if (!dbReviewer) {
+  if (dbReviewer) {
+    // If displayName has been updated by the exporter, synchronize it
+    const cleanName = exporterDisplayName && exporterDisplayName.trim();
+    if (cleanName && cleanName !== DEFAULT_SHARED_REVIEWER_NAME && cleanName !== dbReviewer.displayName) {
+      db.updateReviewerDisplayName(dbReviewer.id, cleanName);
+    }
+  } else {
     dbReviewer = db.addImportedReviewer({
       displayName: (exporterDisplayName && exporterDisplayName.trim()) || DEFAULT_SHARED_REVIEWER_NAME,
       sourceReviewerId: reviewerId

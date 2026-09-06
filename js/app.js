@@ -34,6 +34,7 @@ import {
 import { renderFolderSettingsUI, updateScanProgressUI } from './folder/folder-settings-ui.js';
 import { initShareUI } from './review-sharing/review-share-ui.js';
 import { isVideoEligibleForExport } from './review-sharing/review-share-exporter.js';
+import { formatReviewerIdentity } from './review-sharing/review-share-model.js';
 import { initI18n, translateDOM, t, currentLocale, setLocale, translateBuiltInField, resolveUserEditedValue } from './i18n.js';
 
 export {
@@ -180,9 +181,12 @@ const els = {
   btnSaveReview: document.getElementById('editor-btn-save'),
   autosaveIndicator: document.getElementById('autosave-indicator'),
 
-  // Settings Modal (Evaluation)
+  // Settings Modal (Evaluation & Identity)
   modalSettings: document.getElementById('modal-settings'),
   settingsLanguageSelect: document.getElementById('settings-language-select'),
+  settingsReviewerNameInput: document.getElementById('settings-reviewer-name-input'),
+  settingsBtnReviewerSave: document.getElementById('settings-btn-reviewer-save'),
+  settingsReviewerIdentityBadge: document.getElementById('settings-reviewer-identity-badge'),
   settingsCloseX: document.getElementById('settings-close-x'),
   settingsCriteriaList: document.getElementById('settings-criteria-list'),
   settingsNewNameInput: document.getElementById('settings-new-name-input'),
@@ -282,24 +286,30 @@ export let reviewEditorController = new ReviewEditorController({
 });
 
 // Initialize Application
+async function startApp() {
+  initI18n();
+  translateDOM();
+  radar = new RadarChart(document.getElementById('radar-chart-container'));
+  reviewEditorController.radar = radar;
+
+  // Connect to IndexedDB and run legacy image migration
+  await db.initAsync();
+
+  // Query permission for active directory sources on boot
+  await syncActiveDirectoryPermissions();
+
+  initEventListeners();
+  initAutosaveTimer();
+  initShareUI(db, state, showToast, renderLibrary, getFilteredVideosList);
+  renderLibrary();
+}
+
 if (typeof window !== 'undefined' && !window.__TEST_ENV__) {
-  document.addEventListener('DOMContentLoaded', async () => {
-    initI18n();
-    translateDOM();
-    radar = new RadarChart(document.getElementById('radar-chart-container'));
-    reviewEditorController.radar = radar;
-
-    // Connect to IndexedDB and run legacy image migration
-    await db.initAsync();
-
-    // Query permission for active directory sources on boot
-    await syncActiveDirectoryPermissions();
-
-    initEventListeners();
-    initAutosaveTimer();
-    initShareUI(db, state, showToast, renderLibrary, getFilteredVideosList);
-    renderLibrary();
-  });
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', startApp);
+  } else {
+    startApp();
+  }
 }
 
 // Setup event bindings
@@ -371,6 +381,19 @@ function initEventListeners() {
       if (selectedLocale && selectedLocale !== currentLocale) {
         setLocale(selectedLocale);
         window.location.reload();
+      }
+    });
+  }
+
+  // Settings reviewer identity event listeners
+  if (els.settingsBtnReviewerSave) {
+    els.settingsBtnReviewerSave.addEventListener('click', handleSaveReviewerName);
+  }
+  if (els.settingsReviewerNameInput) {
+    els.settingsReviewerNameInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        handleSaveReviewerName();
       }
     });
   }
@@ -1900,7 +1923,34 @@ function openSettingsModal() {
   }
   renderSettingsTagList();
 
+  // Populate Reviewer Identity
+  const localReviewer = db.getLocalReviewer();
+  if (localReviewer) {
+    if (els.settingsReviewerNameInput) {
+      els.settingsReviewerNameInput.value = localReviewer.displayName || 'Anonymous';
+    }
+    if (els.settingsReviewerIdentityBadge) {
+      els.settingsReviewerIdentityBadge.textContent = formatReviewerIdentity(localReviewer.displayName, localReviewer.id);
+    }
+  }
+
   openModal(els.modalSettings);
+}
+
+function handleSaveReviewerName() {
+  if (!els.settingsReviewerNameInput) return;
+  const rawName = els.settingsReviewerNameInput.value;
+  const updatedLocal = db.updateLocalReviewerDisplayName(rawName);
+  els.settingsReviewerNameInput.value = updatedLocal.displayName;
+  if (els.settingsReviewerIdentityBadge) {
+    els.settingsReviewerIdentityBadge.textContent = formatReviewerIdentity(updatedLocal.displayName, updatedLocal.id);
+  }
+  showToast(t('settings.reviewerNameSavedToast'));
+
+  // If review editor is open, refresh reviews
+  if (state.currentVideoId && state.currentView === 'editor' && reviewEditorController) {
+    reviewEditorController.renderSharedReviews();
+  }
 }
 
 function closeSettingsModal() {

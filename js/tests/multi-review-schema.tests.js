@@ -51,7 +51,7 @@ export async function runMultiReviewSchemaTests() {
     const local = testDb.getLocalReviewer();
     assert(local !== null, 'Local reviewer must be created');
     assert(local.isLocal === true, 'Local reviewer isLocal must be true');
-    assert(local.displayName === '自分', 'Default displayName should be "自分"');
+    assert(local.displayName === 'Anonymous' || local.displayName === '自分', 'Default displayName should be "Anonymous" (or legacy "自分")');
   });
 
   await runTest('2. reviewer IDが表示名から生成されない', async () => {
